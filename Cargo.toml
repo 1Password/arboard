@@ -1,0 +1,11 @@
+[package]
+
+name = "rust-x11-clipboard"
+version = "0.0.1"
+authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
+
+[dependencies.xlib]
+git = "https://github.com/servo/rust-xlib"
+
+[dependencies]
+libc = "*"
