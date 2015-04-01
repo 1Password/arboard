@@ -63,7 +63,7 @@ impl ClipboardContext {
                 _ => panic!("unexpected format for mach_itemsize: {}", format),
             }
         }
-        fn xcout(dpy: *mut Display, win: Window, evt: &mut Vec<u8>,
+        fn xcout(dpy: *mut Display, win: Window, evt: &mut XEvent,
                 sel: Atom, target: Atom, type_: &mut Atom, dest: &mut Vec<u8>,
                 context: &mut XCOutState) {
             let pty_atom = unsafe { XInternAtom(dpy, b"SERVO_CLIPBOARD_OUT\0".as_ptr() as *mut i8, 0) };
@@ -81,7 +81,7 @@ impl ClipboardContext {
                     return;
                 },
                 XCOutState::SentConvSel => {
-                    let event: &mut XSelectionEvent = unsafe { transmute(evt.as_mut_ptr()) };
+                    let event: &mut XSelectionEvent = unsafe { transmute(evt) };
                     if event._type != SelectionNotify {
                         return;
                     }
@@ -114,7 +114,7 @@ impl ClipboardContext {
                 },
                 XCOutState::BadTarget => panic!("should be unreachable"),
                 XCOutState::Incr => {
-                    let event: &mut XPropertyEvent = unsafe { transmute(evt.as_mut_ptr()) };
+                    let event: &mut XPropertyEvent = unsafe { transmute(evt) };
                     if event._type != PropertyNotify {
                         return;
                     }
@@ -149,11 +149,11 @@ impl ClipboardContext {
         let mut sel_buf = vec![];
         let mut sel_type = 0;
         let mut state = XCOutState::None;
-        let mut event: Vec<u8> = vec![0; get_size_for_XEvent()];
+        let mut event = XEvent { _type: 0, pad: [0; 24] };
         let mut target = self.utf8string;
         loop {
             if let XCOutState::None = state {} else {
-                unsafe { XNextEvent(self.display, event.as_mut_ptr() as *mut XEvent) };
+                unsafe { XNextEvent(self.display, &mut event) };
             }
             xcout(self.display, self.window, &mut event, self.selection, target, &mut sel_type, &mut sel_buf, &mut state);
             if let XCOutState::BadTarget = state {
