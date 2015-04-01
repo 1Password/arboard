@@ -1,6 +1,6 @@
 [package]
 
-name = "rust-x11-clipboard"
+name = "clipboard"
 version = "0.0.1"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 

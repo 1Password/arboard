@@ -1,3 +1,7 @@
+#![crate_name = "clipboard"]
+#![crate_type = "lib"]
+#![crate_type = "dylib"]
+#![crate_type = "rlib"]
 #![feature(collections, core)]
 
 extern crate libc;
