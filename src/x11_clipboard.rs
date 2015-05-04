@@ -163,7 +163,7 @@ impl ClipboardContext {
                 break;
             }
         }
-        Ok(String::from_utf8_lossy(sel_buf.as_slice()).into_owned())
+        Ok(String::from_utf8_lossy(&sel_buf).into_owned())
     }
 }
 

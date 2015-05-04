@@ -2,7 +2,7 @@
 #![crate_type = "lib"]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
-#![feature(collections, core)]
+#![feature(collections)]
 
 #[cfg(target_os="linux")]
 extern crate libc;
