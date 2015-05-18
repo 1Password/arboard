@@ -4,8 +4,9 @@ name = "clipboard"
 version = "0.0.1"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 
-[dependencies.xlib]
-git = "https://github.com/servo/rust-xlib"
+[dependencies.x11]
+version = "1.1.0"
+features = ["xlib", "xmu"]
 
 [dependencies]
 libc = "*"
