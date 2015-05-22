@@ -5,7 +5,7 @@ version = "0.0.1"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 
 [dependencies.x11]
-version = "1.1.0"
+version = "1.1.1"
 features = ["xlib", "xmu"]
 
 [dependencies]
