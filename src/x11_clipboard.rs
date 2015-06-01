@@ -1,7 +1,8 @@
-use std::mem::{size_of, transmute};
+use std::mem::{size_of, transmute, uninitialized};
 
 use libc::*;
-use xlib::*;
+use x11::xlib::*;
+use x11::xmu::*;
 
 use std::{ptr,slice};
 
@@ -23,7 +24,7 @@ impl ClipboardContext {
         if win == 0 {
             return Err("XCreateSimpleWindow")
         }
-        if unsafe { XSelectInput(dpy, win, PropertyChangeMask.bits()) } == 0 {
+        if unsafe { XSelectInput(dpy, win, PropertyChangeMask) } == 0 {
             return Err("XSelectInput");
         }
         let sel = unsafe { XmuInternAtom(dpy, _XA_CLIPBOARD) };
@@ -75,7 +76,7 @@ impl ClipboardContext {
                 },
                 XCOutState::SentConvSel => {
                     let event: &mut XSelectionEvent = unsafe { transmute(evt) };
-                    if event._type != SelectionNotify {
+                    if event.type_ != SelectionNotify {
                         return;
                     }
                     if event.property == 0 {
@@ -83,7 +84,7 @@ impl ClipboardContext {
                         return;
                     }
                     unsafe {
-                        XGetWindowProperty(dpy, win, pty_atom, 0, 0, 0, 0, type_, 
+                        XGetWindowProperty(dpy, win, pty_atom, 0, 0, 0, 0, type_,
                                             &mut pty_format, &mut pty_items, &mut pty_size,
                                             &mut buffer);
                         XFree(buffer as *mut c_void);
@@ -97,7 +98,7 @@ impl ClipboardContext {
                         return;
                     }
                     unsafe {
-                        XGetWindowProperty(dpy, win, pty_atom, 0, pty_size as c_long, 0, 0, type_, 
+                        XGetWindowProperty(dpy, win, pty_atom, 0, pty_size as c_long, 0, 0, type_,
                                             &mut pty_format, &mut pty_items, &mut pty_size,
                                             &mut buffer);
                     }
@@ -108,14 +109,14 @@ impl ClipboardContext {
                 XCOutState::BadTarget => panic!("should be unreachable"),
                 XCOutState::Incr => {
                     let event: &mut XPropertyEvent = unsafe { transmute(evt) };
-                    if event._type != PropertyNotify {
+                    if event.type_ != PropertyNotify {
                         return;
                     }
                     if event.state != 0 { // 0 == PropertyNewValue
                         return;
                     }
                     unsafe {
-                        XGetWindowProperty(dpy, win, pty_atom, 0, 0, 0, 0, type_, 
+                        XGetWindowProperty(dpy, win, pty_atom, 0, 0, 0, 0, type_,
                                             &mut pty_format, &mut pty_items, &mut pty_size,
                                             &mut buffer);
                         XFree(buffer as *mut c_void);
@@ -129,7 +130,7 @@ impl ClipboardContext {
                         return;
                     }
                     unsafe {
-                        XGetWindowProperty(dpy, win, pty_atom, 0, pty_size as c_long, 0, 0, type_, 
+                        XGetWindowProperty(dpy, win, pty_atom, 0, pty_size as c_long, 0, 0, type_,
                                             &mut pty_format, &mut pty_items, &mut pty_size,
                                             &mut buffer);
                     }
@@ -142,7 +143,7 @@ impl ClipboardContext {
         let mut sel_buf = vec![];
         let mut sel_type = 0;
         let mut state = XCOutState::None;
-        let mut event = XEvent { _type: 0, pad: [0; 24] };
+        let mut event: XEvent = unsafe { uninitialized() };
         let mut target = self.utf8string;
         loop {
             if let XCOutState::None = state {} else {

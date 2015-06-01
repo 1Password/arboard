@@ -7,7 +7,7 @@
 #[cfg(target_os="linux")]
 extern crate libc;
 #[cfg(target_os="linux")]
-extern crate xlib;
+extern crate x11;
 
 #[cfg(target_os="linux")]
 mod x11_clipboard;
