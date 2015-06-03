@@ -1,1 +1,1 @@
-This is a library for getting and setting the clipboard contents under the X window system, intended to be used in servo. It contains code derived from xclip.
+This is a library for getting and setting the contents of the OS-level clipboard (currently only works with the X window system, eventually will be cross-platform), intended to be used in servo. It contains code derived from xclip.
