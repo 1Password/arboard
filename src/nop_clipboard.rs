@@ -8,4 +8,8 @@ impl ClipboardContext {
         println!("Attempting to get the contents of the clipboard, which hasn't yet been implemented on this platform.");
         Ok("".to_string())
     }
+    pub fn set_contents(&self, _: String) -> Result<(), &str> {
+        println!("Attempting to set the contents of the clipboard, which hasn't yet been implemented on this platform.");
+        Ok(())
+    }
 }
