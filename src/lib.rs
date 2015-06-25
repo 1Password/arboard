@@ -3,7 +3,7 @@
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 
-#![cfg_attr(target_os="linux", feature(collections))]
+#![cfg_attr(target_os="linux", feature(vec_push_all))]
 
 #[cfg(target_os="linux")]
 extern crate libc;
