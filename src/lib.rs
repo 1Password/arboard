@@ -4,7 +4,6 @@
 #![crate_type = "rlib"]
 
 #![cfg_attr(target_os="linux", feature(vec_push_all))]
-#![feature(cstr_to_str)]
 
 #[cfg(target_os="linux")]
 extern crate libc;
