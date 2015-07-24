@@ -333,8 +333,8 @@ impl ClipboardContext {
             let mut pty = unsafe { uninitialized() };
             let target = XA_STRING;
 
-            let targets = unsafe { XInternAtom(display, b"TARGETS\0".as_ptr() as *mut i8, 0) };
-            let incr_atom = unsafe { XInternAtom(display, b"INCR\0".as_ptr() as *mut i8, 0) };
+            let targets = unsafe { XInternAtom(display, b"TARGETS\0".as_ptr() as *mut ::libc::c_char, 0) };
+            let incr_atom = unsafe { XInternAtom(display, b"INCR\0".as_ptr() as *mut ::libc::c_char, 0) };
 
             // https://github.com/rust-lang/rust/issues/25343
             'outer: loop {
