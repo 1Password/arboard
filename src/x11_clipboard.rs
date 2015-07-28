@@ -220,12 +220,11 @@ impl ClipboardContext {
         enum XCInState {
             None,
             //SeqRel, // this is defined in xclib.h, but never used
-            Incr,
+            Incr(Window, Atom, usize),
         }
 
         // result indicates whether the transfer is finished
-        fn xcin(dpy: *mut Display, win: &mut Window, evt: &XEvent,
-                pty: &mut Atom, target: Atom, txt: &[u8], pos: &mut usize,
+        fn xcin(dpy: *mut Display, evt: &XEvent, target: Atom, txt: &[u8],
                 context: &mut XCInState, &targets: &Atom, &incr_atom: &Atom) -> bool {
             // xclip cites ICCCM 2.5 for this heuristic
             let mut chunk_size = unsafe { XExtendedMaxRequestSize(dpy) / 4 } as usize;
@@ -240,26 +239,22 @@ impl ClipboardContext {
                     }
                     let event: &XSelectionRequestEvent = unsafe { transmute(evt) };
 
-                    *win = event.requestor;
-                    *pty = event.property;
-
-                    *pos = 0;
                     if event.target == targets {
                         let types: *mut u8 = unsafe { transmute([targets, target].as_mut_ptr()) };
-                        unsafe { XChangeProperty(dpy, *win, *pty, XA_ATOM, 32, PropModeReplace, types, 2) };
+                        unsafe { XChangeProperty(dpy, event.requestor, event.property, XA_ATOM, 32, PropModeReplace, types, 2) };
                     }
                     else if txt.len() > chunk_size {
                         unsafe {
-                            XChangeProperty(dpy, *win, *pty, incr_atom, 32, PropModeReplace, ptr::null(), 0);
-                            XSelectInput(dpy, *win, PropertyChangeMask);
+                            XChangeProperty(dpy, event.requestor, event.property, incr_atom, 32, PropModeReplace, ptr::null(), 0);
+                            XSelectInput(dpy, event.requestor, PropertyChangeMask);
                         }
-                        *context = XCInState::Incr;
+                        *context = XCInState::Incr(event.requestor, event.property, 0);
                     }
                     else {
-                        unsafe { XChangeProperty(dpy, *win, *pty, target, 8, PropModeReplace, txt.as_ptr(), txt.len() as c_int) };
+                        unsafe { XChangeProperty(dpy, event.requestor, event.property, target, 8, PropModeReplace, txt.as_ptr(), txt.len() as c_int) };
                     }
                     let mut response: XEvent = XSelectionEvent {
-                        property: *pty,
+                        property: event.property,
                         type_: SelectionNotify,
                         display: event.display,
                         requestor: event.requestor,
@@ -278,7 +273,7 @@ impl ClipboardContext {
                     }
                     return if txt.len() > chunk_size { false } else { true };
                 },
-                XCInState::Incr => {
+                XCInState::Incr(win, pty, pos) => {
                     if evt.get_type() != PropertyNotify {
                         return false;
                     };
@@ -287,25 +282,26 @@ impl ClipboardContext {
                         return false;
                     }
                     let mut chunk_len = chunk_size;
-                    if (*pos + chunk_len) > txt.len() {
-                        chunk_len = txt.len() - *pos;
+                    if (pos + chunk_len) > txt.len() {
+                        chunk_len = txt.len() - pos;
                     }
-                    if *pos > txt.len() {
+                    if pos > txt.len() {
                         chunk_len = 0;
                     }
                     unsafe {
                         if chunk_len != 0 {
-                            XChangeProperty(dpy, *win, *pty, target, 8, PropModeReplace, &txt[*pos], chunk_len as c_int);
+                            XChangeProperty(dpy, win, pty, target, 8, PropModeReplace, &txt[*pos], chunk_len as c_int);
                         }
                         else {
-                            XChangeProperty(dpy, *win, *pty, target, 8, PropModeReplace, ptr::null(), 0);
+                            XChangeProperty(dpy, win, pty, target, 8, PropModeReplace, ptr::null(), 0);
                         }
                         XFlush(dpy);
                     }
                     if chunk_len != 0 {
                         *context = XCInState::None
+                    } else {
+                        *context = XCInState::Incr(win, pty, pos + chunk_size);
                     }
-                    *pos += chunk_size;
                     return if chunk_len > 0 { false } else { true };
                 },
             }
@@ -328,9 +324,6 @@ impl ClipboardContext {
             let mut event: XEvent = unsafe { uninitialized() };
             let mut clear = false;
             let mut context = XCInState::None;
-            let mut position = 0;
-            let mut cwin = unsafe { uninitialized() };
-            let mut pty = unsafe { uninitialized() };
             let target = XA_STRING;
 
             let targets = unsafe { XInternAtom(display, b"TARGETS\0".as_ptr() as *mut ::libc::c_char, 0) };
@@ -340,7 +333,7 @@ impl ClipboardContext {
             'outer: loop {
                 'inner: loop {
                     unsafe { XNextEvent(display, &mut event) };
-                    let finished = xcin(display, &mut cwin, &event, &mut pty, target, string_to_copy.as_bytes(), &mut position, &mut context, &targets, &incr_atom);
+                    let finished = xcin(display, &event, target, string_to_copy.as_bytes(), &mut context, &targets, &incr_atom);
                     if event.get_type() == SelectionClear {
                         clear = true;
                     }
