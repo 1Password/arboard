@@ -7,9 +7,14 @@ use x11::xmu::*;
 use std::{ptr, slice, thread};
 use std::env::set_current_dir;
 use std::path::Path;
+use std::sync::mpsc::{channel, Sender, Receiver};
+use std::error::Error;
 
 pub struct ClipboardContext {
     getter: ClipboardContextGetter,
+    transmit_clear: Sender<()>,
+    transmit_data: Sender<String>,
+    first_send: bool,
 }
 
 pub struct ClipboardContextGetter {
@@ -17,6 +22,14 @@ pub struct ClipboardContextGetter {
     window: Window,
     selection: Atom,
     utf8string: Atom,
+}
+
+pub struct ClipboardContextSetter {
+    display: *mut Display,
+    window: Window,
+    selection: Atom,
+    chunk_size: usize,
+    receive_clear: Receiver<()>,
 }
 
 impl ClipboardContextGetter {
@@ -175,47 +188,64 @@ impl ClipboardContextGetter {
     }
 }
 
-impl Drop for ClipboardContextGetter {
-    fn drop(&mut self) {
-        let retcode = unsafe { XCloseDisplay(self.display) };
-        if retcode != 0 {
-            panic!("XCloseDisplay failed. (return code {})", retcode);
+// Under x11, "copying data into the clipboard" is actually
+//  accomplished by starting a "server" process that owns the
+//  copied data, and streams copied chunks of it through an
+//  event loop when another process requests it.
+
+// xclip uses fork(2) to ensure that the clipboard "server"
+//  outlives the process that generated the data.
+
+// Since there are potential complications of using fork(2)
+//  from rust (e.g. multiple calls of destructors), threads are
+//  used for now (until the complications are reviewed in more
+//  detail). As such, the clipboard "server" provided by 
+//  ClipboardContext::set_contents will not outlive the calling 
+//  process.
+
+// ClipboardContextSetter is intended to be created {on the thread,
+//  in the process} that will be serving the clipboard data.
+
+impl ClipboardContextSetter {
+    pub fn new(receive_clear: Receiver<()>) -> Result<ClipboardContextSetter, &'static str> {
+        let dpy = unsafe { XOpenDisplay(0 as *mut c_char) };
+        if dpy.is_null() {
+            return Err("XOpenDisplay")
         }
-    }
-}
-
-impl ClipboardContext {
-    pub fn new() -> Result<ClipboardContext, &'static str> {
-        let getter = try!(ClipboardContextGetter::new());
-        Ok(ClipboardContext {
-            getter: getter,
-        })
-    }
-
-    pub fn get_contents(&self) -> Result<String, &str> {
-        self.getter.get_contents()
-    }
-
-    pub fn set_contents(&self, string_to_copy: String) -> Result<(), &str> {
-        // Under x11, "copying data into the clipboard" is actually
-        //  accomplished by starting a "server" process that owns the
-        //  copied data, and streams copied chunks of it through an
-        //  event loop when another process requests it.
-
-        // xclip uses fork(2) to ensure that the clipboard "server"
-        //  outlives the process that generated the data.
-
-        // Since there are potential complications of using fork(2)
-        //  from rust (e.g. multiple calls of destructors), threads are
-        //  used for now (until the complications are reviewed in more
-        //  detail). As such, the clipboard "server" provided by this
-        //  function will not outlive the calling process.
+        let win = unsafe { XCreateSimpleWindow(dpy, XDefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0) };
+        if win == 0 {
+            return Err("XCreateSimpleWindow")
+        }
+        if unsafe { XSelectInput(dpy, win, PropertyChangeMask) } == 0 {
+            return Err("XSelectInput");
+        }
+        let sel = unsafe { XmuInternAtom(dpy, _XA_CLIPBOARD) };
+        if sel == 0 {
+            return Err("XA_CLIPBOARD")
+        }
+        // xclip cites ICCCM 2.5 for this heuristic
+        let mut chunk_size = unsafe { XExtendedMaxRequestSize(dpy) / 4 } as usize;
+        if chunk_size == 0 {
+            chunk_size = unsafe { XMaxRequestSize(dpy) / 4 } as usize;
+        }
+        if chunk_size == 0 {
+            return Err("XExtendedMaxRequestSize/XMaxRequestSize");
+        }
 
         // chdir to / in case the directory of the program is removed/unmounted
         if let Err(_) = set_current_dir(Path::new("/")) {
             return Err("set_current_dir");
         }
 
+        Ok(ClipboardContextSetter {
+            display: dpy,
+            window: win,
+            selection: sel,
+            chunk_size: chunk_size,
+            receive_clear: receive_clear,
+        })
+    }
+    pub fn set_contents(&self, string_to_copy: String) {
         #[derive(Debug)]
         enum XCInState {
             None,
@@ -224,14 +254,8 @@ impl ClipboardContext {
         }
 
         // result indicates whether the transfer is finished
-        fn xcin(dpy: *mut Display, evt: &XEvent, target: Atom, txt: &[u8],
-                context: &mut XCInState, &targets: &Atom, &incr_atom: &Atom) -> bool {
-            // xclip cites ICCCM 2.5 for this heuristic
-            let mut chunk_size = unsafe { XExtendedMaxRequestSize(dpy) / 4 } as usize;
-            if chunk_size == 0 {
-                chunk_size = unsafe { XMaxRequestSize(dpy) / 4 } as usize;
-            }
-
+        fn xcin(dpy: *mut Display, evt: &XEvent, target: Atom, txt: &[u8], context: &mut XCInState,
+                &targets: &Atom, &incr_atom: &Atom, chunk_size: usize) -> bool {
             match *context {
                 XCInState::None => {
                     if evt.get_type() != SelectionRequest {
@@ -290,7 +314,7 @@ impl ClipboardContext {
                     }
                     unsafe {
                         if chunk_len != 0 {
-                            XChangeProperty(dpy, win, pty, target, 8, PropModeReplace, &txt[*pos], chunk_len as c_int);
+                            XChangeProperty(dpy, win, pty, target, 8, PropModeReplace, &txt[pos], chunk_len as c_int);
                         }
                         else {
                             XChangeProperty(dpy, win, pty, target, 8, PropModeReplace, ptr::null(), 0);
@@ -307,47 +331,92 @@ impl ClipboardContext {
             }
         }
 
-        // TODO: some mechanism for reusing the clipboard-server thread / avoiding resource leaks
-        thread::spawn(move || {
-            let display: *mut Display = unsafe { XOpenDisplay(0 as *mut c_char) };
-            if display.is_null() { return; }
-            let win = unsafe { XCreateSimpleWindow(display, XDefaultRootWindow(display), 0, 0, 1, 1, 0, 0, 0) };
-            if win == 0 { return; }
-            let sel = unsafe { XmuInternAtom(display, _XA_CLIPBOARD) };
-            if sel == 0 { return; }
+        unsafe {
+            XSetSelectionOwner(self.display, self.selection, self.window, CurrentTime);
+        }
 
-            unsafe {
-                XSelectInput(display, win, PropertyChangeMask);
-                XSetSelectionOwner(display, sel, win, CurrentTime);
-            }
+        let mut event: XEvent = unsafe { uninitialized() };
+        let mut clear = false;
+        let mut context = XCInState::None;
+        let target = XA_STRING;
 
-            let mut event: XEvent = unsafe { uninitialized() };
-            let mut clear = false;
-            let mut context = XCInState::None;
-            let target = XA_STRING;
+        let targets = unsafe { XInternAtom(self.display, b"TARGETS\0".as_ptr() as *mut ::libc::c_char, 0) };
+        let incr_atom = unsafe { XInternAtom(self.display, b"INCR\0".as_ptr() as *mut ::libc::c_char, 0) };
 
-            let targets = unsafe { XInternAtom(display, b"TARGETS\0".as_ptr() as *mut ::libc::c_char, 0) };
-            let incr_atom = unsafe { XInternAtom(display, b"INCR\0".as_ptr() as *mut ::libc::c_char, 0) };
-
-            // https://github.com/rust-lang/rust/issues/25343
-            'outer: loop {
-                'inner: loop {
-                    unsafe { XNextEvent(display, &mut event) };
-                    let finished = xcin(display, &event, target, string_to_copy.as_bytes(), &mut context, &targets, &incr_atom);
-                    if event.get_type() == SelectionClear {
-                        clear = true;
-                    }
-                    if let XCInState::None = context {
-                        if clear {
-                            break 'outer;
-                        }
-                    }
-                    if finished {
-                        break 'inner;
+        'outer: loop {
+            'inner: loop {
+                unsafe { XNextEvent(self.display, &mut event) };
+                let finished = xcin(self.display, &event, target, string_to_copy.as_bytes(), &mut context, &targets, &incr_atom, self.chunk_size);
+                if event.get_type() == SelectionClear {
+                    clear = true;
+                }
+                if let Ok(()) = self.receive_clear.try_recv() {
+                    clear = true;
+                }
+                if let XCInState::None = context {
+                    if clear {
+                        break 'outer;
                     }
                 }
+                if finished {
+                    break 'inner;
+                }
+            }
+        }
+    }
+}
+
+fn close_display_or_panic(display: *mut Display) {
+    let retcode = unsafe { XCloseDisplay(display) };
+    if retcode != 0 {
+        panic!("XCloseDisplay failed. (return code {})", retcode);
+    }
+}
+
+impl Drop for ClipboardContextGetter {
+    fn drop(&mut self) {
+        close_display_or_panic(self.display);
+    }
+}
+
+impl Drop for ClipboardContextSetter {
+    fn drop(&mut self) {
+        close_display_or_panic(self.display);
+    }
+}
+
+impl ClipboardContext {
+    pub fn new() -> Result<ClipboardContext, &'static str> {
+        let getter = try!(ClipboardContextGetter::new());
+
+        let (transmit_clear, receive_clear) = channel();
+        let (transmit_data, receive_data) = channel();
+
+        thread::spawn(move || {
+            let setter = ClipboardContextSetter::new(receive_clear).unwrap();
+            for data in receive_data.iter() {
+                setter.set_contents(data);
             }
         });
+
+        Ok(ClipboardContext {
+            getter: getter,
+            transmit_clear: transmit_clear,
+            transmit_data: transmit_data,
+            first_send: true,
+        })
+    }
+
+    pub fn get_contents(&self) -> Result<String, &str> {
+        self.getter.get_contents()
+    }
+
+    pub fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
+        if !self.first_send {
+            try!(self.transmit_clear.send(()));
+        }
+        try!(self.transmit_data.send(data));
+        self.first_send = false;
         Ok(())
     }
 }
