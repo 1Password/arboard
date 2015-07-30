@@ -1,1 +1,1 @@
-This is a library for getting and setting the contents of the OS-level clipboard (currently only works with the X window system, eventually will be cross-platform), intended to be used in servo. It contains code derived from xclip.
+This is a cross-platform library for getting and setting the contents of the OS-level clipboard (currently works on Windows and X11). It is used in Mozilla Servo. It contains code derived from xclip.

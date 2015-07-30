@@ -10,12 +10,22 @@ extern crate libc;
 #[cfg(target_os="linux")]
 extern crate x11;
 
+#[cfg(windows)]
+extern crate clipboard_win;
+
+
 #[cfg(target_os="linux")]
 mod x11_clipboard;
 #[cfg(target_os="linux")]
 pub use x11_clipboard::*;
 
-#[cfg(not(target_os="linux"))]
+#[cfg(windows)]
+mod windows_clipboard;
+#[cfg(windows)]
+pub use windows_clipboard::*;
+
+
+#[cfg(not(any(target_os="linux", windows)))]
 mod nop_clipboard;
-#[cfg(not(target_os="linux"))]
+#[cfg(not(any(target_os="linux", windows)))]
 pub use nop_clipboard::*;

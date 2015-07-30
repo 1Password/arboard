@@ -1,11 +1,17 @@
 [package]
 
 name = "clipboard"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 
 [dependencies]
 libc = "*"
+
+[target.i686-pc-windows-gnu.dependencies.clipboard-win]
+git = "https://github.com/DoumanAsh/clipboard-win"
+
+[target.x86_64-pc-windows-gnu.dependencies.clipboard-win]
+git = "https://github.com/DoumanAsh/clipboard-win"
 
 [target.i686-unknown-linux-gnu.dependencies.x11]
 version = "2.0.0"
