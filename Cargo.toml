@@ -13,6 +13,16 @@ git = "https://github.com/DoumanAsh/clipboard-win"
 [target.x86_64-pc-windows-gnu.dependencies.clipboard-win]
 git = "https://github.com/DoumanAsh/clipboard-win"
 
+[target.i686-apple-darwin.dependencies]
+objc = "0.1.5"
+objc_id = "0.0.1"
+objc-foundation = "0.0.1"
+
+[target.x86_64-apple-darwin.dependencies]
+objc = "0.1.5"
+objc_id = "0.0.1"
+objc-foundation = "0.0.1"
+
 [target.i686-unknown-linux-gnu.dependencies.x11]
 version = "2.0.0"
 features = ["xlib", "xmu"]

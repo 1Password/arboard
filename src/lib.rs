@@ -13,6 +13,13 @@ extern crate x11;
 #[cfg(windows)]
 extern crate clipboard_win;
 
+#[cfg(target_os="macos")]
+#[macro_use]
+extern crate objc;
+#[cfg(target_os="macos")]
+extern crate objc_id;
+#[cfg(target_os="macos")]
+extern crate objc_foundation;
 
 #[cfg(target_os="linux")]
 mod x11_clipboard;
@@ -24,8 +31,13 @@ mod windows_clipboard;
 #[cfg(windows)]
 pub use windows_clipboard::*;
 
+#[cfg(target_os="macos")]
+mod osx_clipboard;
+#[cfg(target_os="macos")]
+pub use osx_clipboard::*;
 
-#[cfg(not(any(target_os="linux", windows)))]
+
+#[cfg(not(any(target_os="linux", windows, target_os="macos")))]
 mod nop_clipboard;
-#[cfg(not(any(target_os="linux", windows)))]
+#[cfg(not(any(target_os="linux", windows, target_os="macos")))]
 pub use nop_clipboard::*;
