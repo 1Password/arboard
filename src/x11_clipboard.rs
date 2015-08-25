@@ -1,3 +1,4 @@
+use util::err;
 use std::mem::{size_of, transmute, uninitialized};
 
 use libc::*;
@@ -33,26 +34,26 @@ pub struct ClipboardContextSetter {
 }
 
 impl ClipboardContextGetter {
-    pub fn new() -> Result<ClipboardContextGetter, &'static str> {
+    pub fn new() -> Result<ClipboardContextGetter, Box<Error>> {
         // http://sourceforge.net/p/xclip/code/HEAD/tree/trunk/xclip.c
         let dpy = unsafe { XOpenDisplay(0 as *mut c_char) };
         if dpy.is_null() {
-            return Err("XOpenDisplay")
+            return Err(err("XOpenDisplay"))
         }
         let win = unsafe { XCreateSimpleWindow(dpy, XDefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0) };
         if win == 0 {
-            return Err("XCreateSimpleWindow")
+            return Err(err("XCreateSimpleWindow"))
         }
         if unsafe { XSelectInput(dpy, win, PropertyChangeMask) } == 0 {
-            return Err("XSelectInput");
+            return Err(err("XSelectInput"));
         }
         let sel = unsafe { XmuInternAtom(dpy, _XA_CLIPBOARD) };
         if sel == 0 {
-            return Err("XA_CLIPBOARD")
+            return Err(err("XA_CLIPBOARD"))
         }
         let utf8 = unsafe { XmuInternAtom(dpy, _XA_UTF8_STRING) };
         if utf8 == 0 {
-            return Err("XA_UTF8_STRING")
+            return Err(err("XA_UTF8_STRING"))
         }
         Ok(ClipboardContextGetter {
             display: dpy,
@@ -62,7 +63,7 @@ impl ClipboardContextGetter {
         })
     }
 
-    pub fn get_contents(&self) -> Result<String, &str> {
+    pub fn get_contents(&self) -> Result<String, Box<Error>> {
         enum XCOutState {
             None,
             SentConvSel,
@@ -177,7 +178,7 @@ impl ClipboardContextGetter {
                     continue;
                 }
                 else {
-                    return Err("unable to negotiate format");
+                    return Err(err("unable to negotiate format"));
                 }
             }
             if let XCOutState::None = state {
@@ -207,21 +208,21 @@ impl ClipboardContextGetter {
 //  in the process} that will be serving the clipboard data.
 
 impl ClipboardContextSetter {
-    pub fn new(receive_clear: Receiver<()>) -> Result<ClipboardContextSetter, &'static str> {
+    pub fn new(receive_clear: Receiver<()>) -> Result<ClipboardContextSetter, Box<Error>> {
         let dpy = unsafe { XOpenDisplay(0 as *mut c_char) };
         if dpy.is_null() {
-            return Err("XOpenDisplay")
+            return Err(err("XOpenDisplay"))
         }
         let win = unsafe { XCreateSimpleWindow(dpy, XDefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0) };
         if win == 0 {
-            return Err("XCreateSimpleWindow")
+            return Err(err("XCreateSimpleWindow"))
         }
         if unsafe { XSelectInput(dpy, win, PropertyChangeMask) } == 0 {
-            return Err("XSelectInput");
+            return Err(err("XSelectInput"));
         }
         let sel = unsafe { XmuInternAtom(dpy, _XA_CLIPBOARD) };
         if sel == 0 {
-            return Err("XA_CLIPBOARD")
+            return Err(err("XA_CLIPBOARD"))
         }
         // xclip cites ICCCM 2.5 for this heuristic
         let mut chunk_size = unsafe { XExtendedMaxRequestSize(dpy) / 4 } as usize;
@@ -229,12 +230,12 @@ impl ClipboardContextSetter {
             chunk_size = unsafe { XMaxRequestSize(dpy) / 4 } as usize;
         }
         if chunk_size == 0 {
-            return Err("XExtendedMaxRequestSize/XMaxRequestSize");
+            return Err(err("XExtendedMaxRequestSize/XMaxRequestSize"));
         }
 
         // chdir to / in case the directory of the program is removed/unmounted
         if let Err(_) = set_current_dir(Path::new("/")) {
-            return Err("set_current_dir");
+            return Err(err("set_current_dir"));
         }
 
         Ok(ClipboardContextSetter {
@@ -386,7 +387,7 @@ impl Drop for ClipboardContextSetter {
 }
 
 impl ClipboardContext {
-    pub fn new() -> Result<ClipboardContext, &'static str> {
+    pub fn new() -> Result<ClipboardContext, Box<Error>> {
         let getter = try!(ClipboardContextGetter::new());
 
         let (transmit_clear, receive_clear) = channel();
@@ -407,7 +408,7 @@ impl ClipboardContext {
         })
     }
 
-    pub fn get_contents(&self) -> Result<String, &str> {
+    pub fn get_contents(&self) -> Result<String, Box<Error>> {
         self.getter.get_contents()
     }
 

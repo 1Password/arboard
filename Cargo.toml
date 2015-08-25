@@ -1,17 +1,17 @@
 [package]
 
 name = "clipboard"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 
 [dependencies]
 libc = "*"
 
-[target.i686-pc-windows-gnu.dependencies.clipboard-win]
-git = "https://github.com/DoumanAsh/clipboard-win"
+[target.i686-pc-windows-gnu.dependencies]
+clipboard-win = "1.5.1"
 
-[target.x86_64-pc-windows-gnu.dependencies.clipboard-win]
-git = "https://github.com/DoumanAsh/clipboard-win"
+[target.x86_64-pc-windows-gnu.dependencies]
+clipboard-win = "1.5.1"
 
 [target.i686-apple-darwin.dependencies]
 objc = "0.1.5"

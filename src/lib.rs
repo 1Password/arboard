@@ -21,6 +21,8 @@ extern crate objc_id;
 #[cfg(target_os="macos")]
 extern crate objc_foundation;
 
+mod util;
+
 #[cfg(target_os="linux")]
 mod x11_clipboard;
 #[cfg(target_os="linux")]

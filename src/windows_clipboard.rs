@@ -11,7 +11,7 @@ impl ClipboardContext {
     pub fn get_contents(&self) -> Result<String, Box<Error>> {
         Ok(try!(get_clipboard_string()))
     }
-    pub fn set_contents(&self, data: String) -> Result<(), Box<Error>> {
+    pub fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
         Ok(try!(set_clipboard(&data)))
     }
 }
