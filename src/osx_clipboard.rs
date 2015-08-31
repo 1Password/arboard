@@ -18,7 +18,11 @@ extern {}
 impl ClipboardContext {
     pub fn new() -> Result<ClipboardContext, Box<Error>> {
         let cls = try!(Class::get("NSPasteboard").ok_or(err("Class::get(\"NSPasteboard\")")));
-        let pasteboard = unsafe { Id::from_ptr(msg_send![cls, generalPasteboard]) };
+        let pasteboard: *mut Object = unsafe { msg_send![cls, generalPasteboard] };
+        if pasteboard.is_null() {
+            return Err(err("NSPasteboard#generalPasteboard returned null"));
+        }
+        let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
         Ok(ClipboardContext {
             pasteboard: pasteboard,
         })
