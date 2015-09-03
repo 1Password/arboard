@@ -5,7 +5,6 @@ use objc_foundation::{NSArray, NSDictionary, NSString, NSObject};
 use objc_id::{Id, Owned};
 use std::error::Error;
 use std::mem::transmute;
-use std::io::{stderr, Write};
 
 pub struct ClipboardContext {
     pasteboard: Id<Object>,
@@ -34,20 +33,18 @@ impl ClipboardContext {
         };
         let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![string_class]);
         let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
-        let string_array: *mut Object = unsafe { msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options] };
-        if string_array.is_null() {
-            return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
-        }
-        let length: usize = unsafe { msg_send![string_array, count] };
-        if length == 0 {
-            return Err(err("pasteboard#readObjectsForClasses:options: returned empty"));
-        }
-        let string: Id<NSString> = {
-            let obj: *mut Object = unsafe { msg_send![string_array, objectAtIndex:0] };
-            let wrapped: Id<Object> = unsafe { Id::from_ptr(obj) };
-            unsafe { transmute(wrapped) }
+        let string_array: Id<NSArray<NSString>> = unsafe {
+            let obj: *mut _ = msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
+            if obj.is_null() {
+                return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
+            }
+            Id::from_ptr(obj)
         };
-        Ok(string.as_str().to_owned())
+        if string_array.count() == 0 {
+            Err(err("pasteboard#readObjectsForClasses:options: returned empty"))
+        } else {
+            Ok(string_array[0].as_str().to_owned())
+        }
     }
     pub fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
         let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);

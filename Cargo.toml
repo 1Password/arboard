@@ -14,14 +14,14 @@ clipboard-win = "1.5.1"
 clipboard-win = "1.5.1"
 
 [target.i686-apple-darwin.dependencies]
-objc = "0.1.5"
-objc_id = "0.0.1"
-objc-foundation = "0.0.1"
+objc = "0.1.6"
+objc_id = "0.0.2"
+objc-foundation = "0.0.2"
 
 [target.x86_64-apple-darwin.dependencies]
-objc = "0.1.5"
-objc_id = "0.0.1"
-objc-foundation = "0.0.1"
+objc = "0.1.6"
+objc_id = "0.0.2"
+objc-foundation = "0.0.2"
 
 [target.i686-unknown-linux-gnu.dependencies.x11]
 version = "2.0.0"

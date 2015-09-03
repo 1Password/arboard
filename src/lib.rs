@@ -43,3 +43,10 @@ pub use osx_clipboard::*;
 mod nop_clipboard;
 #[cfg(not(any(target_os="linux", windows, target_os="macos")))]
 pub use nop_clipboard::*;
+
+#[test]
+fn test_clipboard() {
+    let mut ctx = ClipboardContext::new().unwrap();
+    ctx.set_contents("some string".to_owned()).unwrap();
+    assert!(ctx.get_contents().unwrap() == "some string");
+}
