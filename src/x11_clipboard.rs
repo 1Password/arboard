@@ -233,11 +233,6 @@ impl ClipboardContextSetter {
             return Err(err("XExtendedMaxRequestSize/XMaxRequestSize"));
         }
 
-        // chdir to / in case the directory of the program is removed/unmounted
-        if let Err(_) = set_current_dir(Path::new("/")) {
-            return Err(err("set_current_dir"));
-        }
-
         Ok(ClipboardContextSetter {
             display: dpy,
             window: win,
