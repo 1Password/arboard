@@ -1,11 +1,11 @@
 [package]
 
 name = "clipboard"
-version = "0.0.3"
+version = "0.1.0"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 
 [dependencies]
-libc = "*"
+libc = "0.2"
 
 [target.i686-pc-windows-gnu.dependencies]
 clipboard-win = "1.5.1"
