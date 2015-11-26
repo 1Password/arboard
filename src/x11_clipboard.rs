@@ -1,12 +1,12 @@
 use util::err;
 use std::mem::{size_of, transmute, uninitialized};
 
-use libc::*;
 use x11::xlib::*;
 use x11::xmu::*;
 
 use std::{ptr, slice, thread};
 use std::env::set_current_dir;
+use std::os::raw::*;
 use std::path::Path;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::error::Error;
@@ -81,8 +81,8 @@ impl ClipboardContextGetter {
         fn xcout(dpy: *mut Display, win: Window, evt: &mut XEvent,
                 sel: Atom, target: Atom, type_: &mut Atom, dest: &mut Vec<u8>,
                 context: &mut XCOutState) {
-            let pty_atom = unsafe { XInternAtom(dpy, b"SERVO_CLIPBOARD_OUT\0".as_ptr() as *mut ::libc::c_char, 0) };
-            let incr_atom = unsafe { XInternAtom(dpy, b"INCR\0".as_ptr() as *mut ::libc::c_char, 0) };
+            let pty_atom = unsafe { XInternAtom(dpy, b"SERVO_CLIPBOARD_OUT\0".as_ptr() as *mut c_char, 0) };
+            let incr_atom = unsafe { XInternAtom(dpy, b"INCR\0".as_ptr() as *mut c_char, 0) };
 
             let mut buffer: *mut c_uchar = ptr::null_mut();
             let mut pty_format: c_int = 0;
@@ -336,8 +336,8 @@ impl ClipboardContextSetter {
         let mut context = XCInState::None;
         let target = XA_STRING;
 
-        let targets = unsafe { XInternAtom(self.display, b"TARGETS\0".as_ptr() as *mut ::libc::c_char, 0) };
-        let incr_atom = unsafe { XInternAtom(self.display, b"INCR\0".as_ptr() as *mut ::libc::c_char, 0) };
+        let targets = unsafe { XInternAtom(self.display, b"TARGETS\0".as_ptr() as *mut c_char, 0) };
+        let incr_atom = unsafe { XInternAtom(self.display, b"INCR\0".as_ptr() as *mut c_char, 0) };
 
         'outer: loop {
             'inner: loop {

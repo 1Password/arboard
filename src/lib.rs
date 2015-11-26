@@ -6,8 +6,6 @@
 #![cfg_attr(target_os="linux", feature(vec_push_all))]
 
 #[cfg(target_os="linux")]
-extern crate libc;
-#[cfg(target_os="linux")]
 extern crate x11;
 
 #[cfg(windows)]

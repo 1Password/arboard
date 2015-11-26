@@ -4,9 +4,6 @@ name = "clipboard"
 version = "0.0.3"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 
-[dependencies]
-libc = "*"
-
 [target.i686-pc-windows-gnu.dependencies]
 clipboard-win = "1.5.1"
 
