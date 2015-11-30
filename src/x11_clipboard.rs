@@ -108,7 +108,7 @@ impl ClipboardContextGetter {
                         XGetWindowProperty(dpy, win, pty_atom, 0, 0, 0, 0, type_,
                                             &mut pty_format, &mut pty_items, &mut pty_size,
                                             &mut buffer);
-                        XFree(buffer as *mut c_void);
+                        XFree(buffer as *mut _);
                     }
                     if *type_ == incr_atom {
                         unsafe {
@@ -140,7 +140,7 @@ impl ClipboardContextGetter {
                         XGetWindowProperty(dpy, win, pty_atom, 0, 0, 0, 0, type_,
                                             &mut pty_format, &mut pty_items, &mut pty_size,
                                             &mut buffer);
-                        XFree(buffer as *mut c_void);
+                        XFree(buffer as *mut _);
                     }
                     if pty_size == 0 {
                         unsafe {
@@ -200,8 +200,8 @@ impl ClipboardContextGetter {
 // Since there are potential complications of using fork(2)
 //  from rust (e.g. multiple calls of destructors), threads are
 //  used for now (until the complications are reviewed in more
-//  detail). As such, the clipboard "server" provided by 
-//  ClipboardContext::set_contents will not outlive the calling 
+//  detail). As such, the clipboard "server" provided by
+//  ClipboardContext::set_contents will not outlive the calling
 //  process.
 
 // ClipboardContextSetter is intended to be created {on the thread,
