@@ -5,9 +5,7 @@ use x11::xlib::*;
 use x11::xmu::*;
 
 use std::{ptr, slice, thread};
-use std::env::set_current_dir;
 use std::os::raw::*;
-use std::path::Path;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::error::Error;
 
@@ -124,7 +122,7 @@ impl ClipboardContextGetter {
                                             &mut buffer);
                     }
                     let pty_machsize: c_ulong = pty_items * (mach_itemsize(pty_format) as c_ulong);
-                    dest.push_all(unsafe { slice::from_raw_parts_mut(buffer, (pty_machsize as usize) / size_of::<u8>()) });
+                    dest.extend_from_slice(unsafe { slice::from_raw_parts_mut(buffer, (pty_machsize as usize) / size_of::<u8>()) });
                     *context = XCOutState::None;
                 },
                 XCOutState::BadTarget => panic!("should be unreachable"),
@@ -156,7 +154,7 @@ impl ClipboardContextGetter {
                                             &mut buffer);
                     }
                     let pty_machsize: c_ulong = pty_items * (mach_itemsize(pty_format) as c_ulong);
-                    dest.push_all(unsafe { slice::from_raw_parts_mut(buffer, (pty_machsize as usize) / size_of::<u8>()) });
+                    dest.extend_from_slice(unsafe { slice::from_raw_parts_mut(buffer, (pty_machsize as usize) / size_of::<u8>()) });
                     *context = XCOutState::None;
                 },
             }
