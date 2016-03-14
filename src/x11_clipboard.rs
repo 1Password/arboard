@@ -5,9 +5,7 @@ use x11::xlib::*;
 use x11::xmu::*;
 
 use std::{ptr, slice, thread};
-use std::env::set_current_dir;
 use std::os::raw::*;
-use std::path::Path;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::error::Error;
 
