@@ -24,4 +24,6 @@ fn set_contents(&mut ClipboardContext, String) -> Result<(), Box<Error>>
 `ClipboardContext` is an opaque struct that is defined in different ways based on the OS via conditional compilation.
 
 ## License
-Since the x11 backend contains code derived from xclip (which is GPLv2), rust-clipboard is also GPLv2.
+Since the x11 backend contains code derived from xclip (which is GPLv2), rust-clipboard must currently be treated as GPLv2.
+I plan to rewrite `x11-clipboard.rs` by strictly referencing the ICCCM standard, and relicense to Apache2.
+All the other code in `rust-clipboard` may be treated as Apache2.
