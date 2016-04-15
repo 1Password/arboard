@@ -14,6 +14,12 @@ clipboard-win = "1.5.1"
 [target.x86_64-pc-windows-gnu.dependencies]
 clipboard-win = "1.5.1"
 
+[target.i686-pc-windows-msvc.dependencies]
+clipboard-win = "1.5.1"
+
+[target.x86_64-pc-windows-msvc.dependencies]
+clipboard-win = "1.5.1"
+
 [target.i686-apple-darwin.dependencies]
 objc = "0.2"
 objc_id = "0.1"
