@@ -3,6 +3,15 @@ rust-clipboard is a cross-platform library for getting and setting the contents 
 It has been tested on Windows, Mac OSX, and GNU/Linux.
 It is used in Mozilla Servo.
 
+
+## Prerequisites
+
+On Linux you need the x11 library, install it with something like:
+
+```bash
+sudo apt-get install xorg-dev
+```
+
 ## Example
 
 ```rust
