@@ -1,1 +1,3 @@
+install:
+    - apt-get install xorg-dev
 language: rust
