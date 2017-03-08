@@ -14,20 +14,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use clipboard_win::{get_clipboard_string, set_clipboard};
+use clipboard_win::Clipboard;
 
 use std::error::Error;
 
-pub struct ClipboardContext;
+pub struct ClipboardContext(Clipboard);
 
 impl ClipboardContext {
     pub fn new() -> Result<ClipboardContext, Box<Error>> {
-        Ok(ClipboardContext)
+        Ok(ClipboardContext(Clipboard::new()?))
     }
     pub fn get_contents(&self) -> Result<String, Box<Error>> {
-        Ok(try!(get_clipboard_string()))
+        Ok(self.0.get_string()?)
     }
     pub fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
-        Ok(try!(set_clipboard(&data)))
+        Ok(self.0.set_string(&data)?)
     }
 }
