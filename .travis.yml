@@ -1,3 +1,4 @@
+sudo: required
 install:
-    - apt-get install xorg-dev
+    - sudo apt-get install xorg-dev
 language: rust
