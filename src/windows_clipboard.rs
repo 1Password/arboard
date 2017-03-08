@@ -16,15 +16,16 @@ limitations under the License.
 
 use clipboard_win::Clipboard;
 
+use common::ClipboardProvider;
 use std::error::Error;
 
-pub struct ClipboardContext(Clipboard);
+pub struct WindowsClipboardContext(Clipboard);
 
-impl ClipboardContext {
-    pub fn new() -> Result<ClipboardContext, Box<Error>> {
-        Ok(ClipboardContext(Clipboard::new()?))
+impl WindowsClipboardContext {
+    pub fn new() -> Result<Self, Box<Error>> {
+        Ok(WindowsClipboardContext(Clipboard::new()?))
     }
-    pub fn get_contents(&self) -> Result<String, Box<Error>> {
+    pub fn get_contents(&mut self) -> Result<String, Box<Error>> {
         Ok(self.0.get_string()?)
     }
     pub fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {

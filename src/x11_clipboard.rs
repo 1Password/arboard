@@ -16,7 +16,7 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-use util::err;
+use common::*;
 use std::mem::{size_of, transmute, uninitialized};
 
 use x11::xlib::*;
@@ -27,21 +27,21 @@ use std::os::raw::*;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::error::Error;
 
-pub struct ClipboardContext {
-    getter: ClipboardContextGetter,
+pub struct X11ClipboardContext {
+    getter: X11ClipboardContextGetter,
     transmit_clear: Sender<()>,
     transmit_data: Sender<String>,
     first_send: bool,
 }
 
-pub struct ClipboardContextGetter {
+pub struct X11ClipboardContextGetter {
     display: *mut Display,
     window: Window,
     selection: Atom,
     utf8string: Atom,
 }
 
-pub struct ClipboardContextSetter {
+pub struct X11ClipboardContextSetter {
     display: *mut Display,
     window: Window,
     selection: Atom,
@@ -49,8 +49,8 @@ pub struct ClipboardContextSetter {
     receive_clear: Receiver<()>,
 }
 
-impl ClipboardContextGetter {
-    pub fn new() -> Result<ClipboardContextGetter, Box<Error>> {
+impl X11ClipboardContextGetter {
+    pub fn new() -> Result<X11ClipboardContextGetter, Box<Error>> {
         // http://sourceforge.net/p/xclip/code/HEAD/tree/trunk/xclip.c
         let dpy = unsafe { XOpenDisplay(0 as *mut c_char) };
         if dpy.is_null() {
@@ -71,7 +71,7 @@ impl ClipboardContextGetter {
         if utf8 == 0 {
             return Err(err("XA_UTF8_STRING"))
         }
-        Ok(ClipboardContextGetter {
+        Ok(X11ClipboardContextGetter {
             display: dpy,
             window: win,
             selection: sel,
@@ -79,7 +79,7 @@ impl ClipboardContextGetter {
         })
     }
 
-    pub fn get_contents(&self) -> Result<String, Box<Error>> {
+    pub fn get_contents(&mut self) -> Result<String, Box<Error>> {
         enum XCOutState {
             None,
             SentConvSel,
@@ -217,14 +217,14 @@ impl ClipboardContextGetter {
 //  from rust (e.g. multiple calls of destructors), threads are
 //  used for now (until the complications are reviewed in more
 //  detail). As such, the clipboard "server" provided by
-//  ClipboardContext::set_contents will not outlive the calling
+//  X11ClipboardContext::set_contents will not outlive the calling
 //  process.
 
-// ClipboardContextSetter is intended to be created {on the thread,
+// X11ClipboardContextSetter is intended to be created {on the thread,
 //  in the process} that will be serving the clipboard data.
 
-impl ClipboardContextSetter {
-    pub fn new(receive_clear: Receiver<()>) -> Result<ClipboardContextSetter, Box<Error>> {
+impl X11ClipboardContextSetter {
+    pub fn new(receive_clear: Receiver<()>) -> Result<X11ClipboardContextSetter, Box<Error>> {
         let dpy = unsafe { XOpenDisplay(0 as *mut c_char) };
         if dpy.is_null() {
             return Err(err("XOpenDisplay"))
@@ -249,7 +249,7 @@ impl ClipboardContextSetter {
             return Err(err("XExtendedMaxRequestSize/XMaxRequestSize"));
         }
 
-        Ok(ClipboardContextSetter {
+        Ok(X11ClipboardContextSetter {
             display: dpy,
             window: win,
             selection: sel,
@@ -385,33 +385,33 @@ fn close_display_or_panic(display: *mut Display) {
     }
 }
 
-impl Drop for ClipboardContextGetter {
+impl Drop for X11ClipboardContextGetter {
     fn drop(&mut self) {
         close_display_or_panic(self.display);
     }
 }
 
-impl Drop for ClipboardContextSetter {
+impl Drop for X11ClipboardContextSetter {
     fn drop(&mut self) {
         close_display_or_panic(self.display);
     }
 }
 
-impl ClipboardContext {
-    pub fn new() -> Result<ClipboardContext, Box<Error>> {
-        let getter = try!(ClipboardContextGetter::new());
+impl X11ClipboardContext {
+    pub fn new() -> Result<X11ClipboardContext, Box<Error>> {
+        let getter = try!(X11ClipboardContextGetter::new());
 
         let (transmit_clear, receive_clear) = channel();
         let (transmit_data, receive_data) = channel();
 
         thread::spawn(move || {
-            let setter = ClipboardContextSetter::new(receive_clear).unwrap();
+            let setter = X11ClipboardContextSetter::new(receive_clear).unwrap();
             for data in receive_data.iter() {
                 setter.set_contents(data);
             }
         });
 
-        Ok(ClipboardContext {
+        Ok(X11ClipboardContext {
             getter: getter,
             transmit_clear: transmit_clear,
             transmit_data: transmit_data,
@@ -419,7 +419,7 @@ impl ClipboardContext {
         })
     }
 
-    pub fn get_contents(&self) -> Result<String, Box<Error>> {
+    pub fn get_contents(&mut self) -> Result<String, Box<Error>> {
         self.getter.get_contents()
     }
 

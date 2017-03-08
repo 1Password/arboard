@@ -33,28 +33,28 @@ extern crate objc_id;
 #[cfg(target_os="macos")]
 extern crate objc_foundation;
 
-mod util;
+mod common;
+pub use common::ClipboardProvider;
 
 #[cfg(target_os="linux")]
-mod x11_clipboard;
+pub mod x11_clipboard;
+
+#[cfg(windows)]
+pub mod windows_clipboard;
+
+#[cfg(target_os="macos")]
+pub mod osx_clipboard;
+
+pub mod nop_clipboard;
+
 #[cfg(target_os="linux")]
-pub use x11_clipboard::*;
-
+pub type ClipboardContext = x11_clipboard::X11ClipboardContext;
 #[cfg(windows)]
-mod windows_clipboard;
-#[cfg(windows)]
-pub use windows_clipboard::*;
-
+pub type ClipboardContext = windows_clipboard::WindowsClipboardContext;
 #[cfg(target_os="macos")]
-mod osx_clipboard;
-#[cfg(target_os="macos")]
-pub use osx_clipboard::*;
-
-
+pub type ClipboardContext = osx_clipboard::OSXClipboardContext;
 #[cfg(not(any(target_os="linux", windows, target_os="macos")))]
-mod nop_clipboard;
-#[cfg(not(any(target_os="linux", windows, target_os="macos")))]
-pub use nop_clipboard::*;
+pub type ClipboardContext = nop_clipboard::NopClipboardContext;
 
 #[test]
 fn test_clipboard() {

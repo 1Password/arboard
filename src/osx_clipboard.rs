@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use util::err;
+use common::*;
 use objc::runtime::{Object, Class};
 use objc_foundation::{INSArray, INSString, INSObject};
 use objc_foundation::{NSArray, NSDictionary, NSString, NSObject};
@@ -22,7 +22,7 @@ use objc_id::{Id, Owned};
 use std::error::Error;
 use std::mem::transmute;
 
-pub struct ClipboardContext {
+pub struct OSXClipboardContext {
     pasteboard: Id<Object>,
 }
 
@@ -30,19 +30,19 @@ pub struct ClipboardContext {
 #[link(name = "AppKit", kind = "framework")]
 extern {}
 
-impl ClipboardContext {
-    pub fn new() -> Result<ClipboardContext, Box<Error>> {
+impl ClipboardProvider for OSXClipboardContext {
+    pub fn new() -> Result<OSXClipboardContext, Box<Error>> {
         let cls = try!(Class::get("NSPasteboard").ok_or(err("Class::get(\"NSPasteboard\")")));
         let pasteboard: *mut Object = unsafe { msg_send![cls, generalPasteboard] };
         if pasteboard.is_null() {
             return Err(err("NSPasteboard#generalPasteboard returned null"));
         }
         let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
-        Ok(ClipboardContext {
+        Ok(OSXClipboardContext {
             pasteboard: pasteboard,
         })
     }
-    pub fn get_contents(&self) -> Result<String, Box<Error>> {
+    pub fn get_contents(&mut self) -> Result<String, Box<Error>> {
         let string_class: Id<NSObject> = {
             let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
             unsafe { transmute(cls) }

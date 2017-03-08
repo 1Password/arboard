@@ -14,17 +14,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-pub struct ClipboardContext;
+use common::ClipboardProvider;
+use std::error::Error;
 
-impl ClipboardContext {
-    pub fn new() -> Result<ClipboardContext, &'static str> {
-        Ok(ClipboardContext)
+pub struct NopClipboardContext;
+
+impl ClipboardProvider for NopClipboardContext {
+    fn new() -> Result<NopClipboardContext, Box<Error>> {
+        Ok(NopClipboardContext)
     }
-    pub fn get_contents(&self) -> Result<String, &str> {
+    fn get_contents(&mut self) -> Result<String, Box<Error>> {
         println!("Attempting to get the contents of the clipboard, which hasn't yet been implemented on this platform.");
         Ok("".to_string())
     }
-    pub fn set_contents(&self, _: String) -> Result<(), &str> {
+    fn set_contents(&mut self, _: String) -> Result<(), Box<Error>> {
         println!("Attempting to set the contents of the clipboard, which hasn't yet been implemented on this platform.");
         Ok(())
     }
