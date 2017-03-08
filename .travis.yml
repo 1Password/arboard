@@ -1,4 +1,8 @@
-sudo: required
-install:
-    - sudo apt-get install xorg-dev
 language: rust
+sudo: required
+matrix:
+    include:
+        - os: osx
+        ## TODO: figure out how to get headless X11 working
+        #- install:
+        #    - sudo apt-get install xorg-dev
