@@ -21,14 +21,14 @@ use std::error::Error;
 
 pub struct WindowsClipboardContext(Clipboard);
 
-impl WindowsClipboardContext {
-    pub fn new() -> Result<Self, Box<Error>> {
+impl ClipboardProvider for WindowsClipboardContext {
+    fn new() -> Result<Self, Box<Error>> {
         Ok(WindowsClipboardContext(Clipboard::new()?))
     }
-    pub fn get_contents(&mut self) -> Result<String, Box<Error>> {
+    fn get_contents(&mut self) -> Result<String, Box<Error>> {
         Ok(self.0.get_string()?)
     }
-    pub fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
+    fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
         Ok(self.0.set_string(&data)?)
     }
 }
