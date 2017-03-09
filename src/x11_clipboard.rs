@@ -503,8 +503,8 @@ impl Drop for X11ClipboardContextSetter {
     }
 }
 
-impl X11ClipboardContext {
-    pub fn new() -> Result<X11ClipboardContext, Box<Error>> {
+impl ClipboardProvider for X11ClipboardContext {
+    fn new() -> Result<X11ClipboardContext, Box<Error>> {
         let getter = try!(X11ClipboardContextGetter::new());
 
         let (transmit_clear, receive_clear) = channel();
@@ -525,11 +525,11 @@ impl X11ClipboardContext {
         })
     }
 
-    pub fn get_contents(&mut self) -> Result<String, Box<Error>> {
+    fn get_contents(&mut self) -> Result<String, Box<Error>> {
         self.getter.get_contents()
     }
 
-    pub fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
+    fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
         if !self.first_send {
             try!(self.transmit_clear.send(()));
         }

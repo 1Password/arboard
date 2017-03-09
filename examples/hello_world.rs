@@ -8,5 +8,5 @@ fn main() {
 
     let the_string = "Hello, world!";
 
-    ctx.set_contents(the_string.to_owned());
+    ctx.set_contents(the_string.to_owned()).unwrap();
 }
