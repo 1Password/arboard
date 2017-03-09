@@ -17,7 +17,7 @@ limitations under the License.
 use std::error::Error;
 
 pub fn err(s: &str) -> Box<Error> {
-    Box::<Error+Send+Sync>::from(s)
+    Box::<Error + Send + Sync>::from(s)
 }
 
 /// Trait for clipboard access
@@ -29,5 +29,6 @@ pub trait ClipboardProvider: Sized {
     fn get_contents(&mut self) -> Result<String, Box<Error>>;
     /// Method to set the clipboard contents as a String
     fn set_contents(&mut self, String) -> Result<(), Box<Error>>;
-    // TODO: come up with some platform-agnostic API for richer types than just strings (c.f. issue #31)
+    // TODO: come up with some platform-agnostic API for richer types
+    // than just strings (c.f. issue #31)
 }

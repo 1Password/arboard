@@ -54,22 +54,22 @@ impl X11ClipboardContextGetter {
         // http://sourceforge.net/p/xclip/code/HEAD/tree/trunk/xclip.c
         let dpy = unsafe { XOpenDisplay(0 as *mut c_char) };
         if dpy.is_null() {
-            return Err(err("XOpenDisplay"))
+            return Err(err("XOpenDisplay"));
         }
         let win = unsafe { XCreateSimpleWindow(dpy, XDefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0) };
         if win == 0 {
-            return Err(err("XCreateSimpleWindow"))
+            return Err(err("XCreateSimpleWindow"));
         }
         if unsafe { XSelectInput(dpy, win, PropertyChangeMask) } == 0 {
             return Err(err("XSelectInput"));
         }
         let sel = unsafe { XmuInternAtom(dpy, _XA_CLIPBOARD) };
         if sel == 0 {
-            return Err(err("XA_CLIPBOARD"))
+            return Err(err("XA_CLIPBOARD"));
         }
         let utf8 = unsafe { XmuInternAtom(dpy, _XA_UTF8_STRING) };
         if utf8 == 0 {
-            return Err(err("XA_UTF8_STRING"))
+            return Err(err("XA_UTF8_STRING"));
         }
         Ok(X11ClipboardContextGetter {
             display: dpy,
@@ -94,10 +94,16 @@ impl X11ClipboardContextGetter {
                 _ => panic!("unexpected format for mach_itemsize: {}", format),
             }
         }
-        fn xcout(dpy: *mut Display, win: Window, evt: &mut XEvent,
-                sel: Atom, target: Atom, type_: &mut Atom, dest: &mut Vec<u8>,
-                context: &mut XCOutState) {
-            let pty_atom = unsafe { XInternAtom(dpy, b"SERVO_CLIPBOARD_OUT\0".as_ptr() as *mut c_char, 0) };
+        fn xcout(dpy: *mut Display,
+                 win: Window,
+                 evt: &mut XEvent,
+                 sel: Atom,
+                 target: Atom,
+                 type_: &mut Atom,
+                 dest: &mut Vec<u8>,
+                 context: &mut XCOutState) {
+            let pty_atom =
+                unsafe { XInternAtom(dpy, b"SERVO_CLIPBOARD_OUT\0".as_ptr() as *mut c_char, 0) };
             let incr_atom = unsafe { XInternAtom(dpy, b"INCR\0".as_ptr() as *mut c_char, 0) };
 
             let mut buffer: *mut c_uchar = ptr::null_mut();
@@ -107,10 +113,12 @@ impl X11ClipboardContextGetter {
 
             match *context {
                 XCOutState::None => {
-                    unsafe { XConvertSelection(dpy, sel, target, pty_atom, win, CurrentTime); }
+                    unsafe {
+                        XConvertSelection(dpy, sel, target, pty_atom, win, CurrentTime);
+                    }
                     *context = XCOutState::SentConvSel;
                     return;
-                },
+                }
                 XCOutState::SentConvSel => {
                     let event: &mut XSelectionEvent = unsafe { transmute(evt) };
                     if event.type_ != SelectionNotify {
@@ -121,9 +129,18 @@ impl X11ClipboardContextGetter {
                         return;
                     }
                     unsafe {
-                        XGetWindowProperty(dpy, win, pty_atom, 0, 0, 0, 0, type_,
-                                            &mut pty_format, &mut pty_items, &mut pty_size,
-                                            &mut buffer);
+                        XGetWindowProperty(dpy,
+                                           win,
+                                           pty_atom,
+                                           0,
+                                           0,
+                                           0,
+                                           0,
+                                           type_,
+                                           &mut pty_format,
+                                           &mut pty_items,
+                                           &mut pty_size,
+                                           &mut buffer);
                         XFree(buffer as *mut _);
                     }
                     if *type_ == incr_atom {
@@ -135,14 +152,25 @@ impl X11ClipboardContextGetter {
                         return;
                     }
                     unsafe {
-                        XGetWindowProperty(dpy, win, pty_atom, 0, pty_size as c_long, 0, 0, type_,
-                                            &mut pty_format, &mut pty_items, &mut pty_size,
-                                            &mut buffer);
+                        XGetWindowProperty(dpy,
+                                           win,
+                                           pty_atom,
+                                           0,
+                                           pty_size as c_long,
+                                           0,
+                                           0,
+                                           type_,
+                                           &mut pty_format,
+                                           &mut pty_items,
+                                           &mut pty_size,
+                                           &mut buffer);
                     }
                     let pty_machsize: c_ulong = pty_items * (mach_itemsize(pty_format) as c_ulong);
-                    dest.extend_from_slice(unsafe { slice::from_raw_parts_mut(buffer, (pty_machsize as usize) / size_of::<u8>()) });
+                    dest.extend_from_slice(unsafe {
+                        slice::from_raw_parts_mut(buffer, (pty_machsize as usize) / size_of::<u8>())
+                    });
                     *context = XCOutState::None;
-                },
+                }
                 XCOutState::BadTarget => panic!("should be unreachable"),
                 XCOutState::Incr => {
                     let event: &mut XPropertyEvent = unsafe { transmute(evt) };
@@ -153,9 +181,18 @@ impl X11ClipboardContextGetter {
                         return;
                     }
                     unsafe {
-                        XGetWindowProperty(dpy, win, pty_atom, 0, 0, 0, 0, type_,
-                                            &mut pty_format, &mut pty_items, &mut pty_size,
-                                            &mut buffer);
+                        XGetWindowProperty(dpy,
+                                           win,
+                                           pty_atom,
+                                           0,
+                                           0,
+                                           0,
+                                           0,
+                                           type_,
+                                           &mut pty_format,
+                                           &mut pty_items,
+                                           &mut pty_size,
+                                           &mut buffer);
                         XFree(buffer as *mut _);
                     }
                     if pty_size == 0 {
@@ -167,14 +204,25 @@ impl X11ClipboardContextGetter {
                         return;
                     }
                     unsafe {
-                        XGetWindowProperty(dpy, win, pty_atom, 0, pty_size as c_long, 0, 0, type_,
-                                            &mut pty_format, &mut pty_items, &mut pty_size,
-                                            &mut buffer);
+                        XGetWindowProperty(dpy,
+                                           win,
+                                           pty_atom,
+                                           0,
+                                           pty_size as c_long,
+                                           0,
+                                           0,
+                                           type_,
+                                           &mut pty_format,
+                                           &mut pty_items,
+                                           &mut pty_size,
+                                           &mut buffer);
                     }
                     let pty_machsize: c_ulong = pty_items * (mach_itemsize(pty_format) as c_ulong);
-                    dest.extend_from_slice(unsafe { slice::from_raw_parts_mut(buffer, (pty_machsize as usize) / size_of::<u8>()) });
+                    dest.extend_from_slice(unsafe {
+                        slice::from_raw_parts_mut(buffer, (pty_machsize as usize) / size_of::<u8>())
+                    });
                     *context = XCOutState::None;
-                },
+                }
             }
         }
         let mut sel_buf = vec![];
@@ -183,17 +231,24 @@ impl X11ClipboardContextGetter {
         let mut event: XEvent = unsafe { uninitialized() };
         let mut target = self.utf8string;
         loop {
-            if let XCOutState::None = state {} else {
+            if let XCOutState::None = state {
+            } else {
                 unsafe { XNextEvent(self.display, &mut event) };
             }
-            xcout(self.display, self.window, &mut event, self.selection, target, &mut sel_type, &mut sel_buf, &mut state);
+            xcout(self.display,
+                  self.window,
+                  &mut event,
+                  self.selection,
+                  target,
+                  &mut sel_type,
+                  &mut sel_buf,
+                  &mut state);
             if let XCOutState::BadTarget = state {
                 if target == self.utf8string {
                     state = XCOutState::None;
                     target = XA_STRING;
                     continue;
-                }
-                else {
+                } else {
                     return Err(err("unable to negotiate format"));
                 }
             }
@@ -227,18 +282,18 @@ impl X11ClipboardContextSetter {
     pub fn new(receive_clear: Receiver<()>) -> Result<X11ClipboardContextSetter, Box<Error>> {
         let dpy = unsafe { XOpenDisplay(0 as *mut c_char) };
         if dpy.is_null() {
-            return Err(err("XOpenDisplay"))
+            return Err(err("XOpenDisplay"));
         }
         let win = unsafe { XCreateSimpleWindow(dpy, XDefaultRootWindow(dpy), 0, 0, 1, 1, 0, 0, 0) };
         if win == 0 {
-            return Err(err("XCreateSimpleWindow"))
+            return Err(err("XCreateSimpleWindow"));
         }
         if unsafe { XSelectInput(dpy, win, PropertyChangeMask) } == 0 {
             return Err(err("XSelectInput"));
         }
         let sel = unsafe { XmuInternAtom(dpy, _XA_CLIPBOARD) };
         if sel == 0 {
-            return Err(err("XA_CLIPBOARD"))
+            return Err(err("XA_CLIPBOARD"));
         }
         // xclip cites ICCCM 2.5 for this heuristic
         let mut chunk_size = unsafe { XExtendedMaxRequestSize(dpy) / 4 } as usize;
@@ -266,8 +321,15 @@ impl X11ClipboardContextSetter {
         }
 
         // result indicates whether the transfer is finished
-        fn xcin(dpy: *mut Display, evt: &XEvent, target: Atom, txt: &[u8], context: &mut XCInState,
-                &targets: &Atom, &incr_atom: &Atom, chunk_size: usize) -> bool {
+        fn xcin(dpy: *mut Display,
+                evt: &XEvent,
+                target: Atom,
+                txt: &[u8],
+                context: &mut XCInState,
+                &targets: &Atom,
+                &incr_atom: &Atom,
+                chunk_size: usize)
+                -> bool {
             match *context {
                 XCInState::None => {
                     if evt.get_type() != SelectionRequest {
@@ -277,29 +339,53 @@ impl X11ClipboardContextSetter {
 
                     if event.target == targets {
                         let types: *mut u8 = unsafe { transmute([targets, target].as_mut_ptr()) };
-                        unsafe { XChangeProperty(dpy, event.requestor, event.property, XA_ATOM, 32, PropModeReplace, types, 2) };
-                    }
-                    else if txt.len() > chunk_size {
                         unsafe {
-                            XChangeProperty(dpy, event.requestor, event.property, incr_atom, 32, PropModeReplace, ptr::null(), 0);
+                            XChangeProperty(dpy,
+                                            event.requestor,
+                                            event.property,
+                                            XA_ATOM,
+                                            32,
+                                            PropModeReplace,
+                                            types,
+                                            2)
+                        };
+                    } else if txt.len() > chunk_size {
+                        unsafe {
+                            XChangeProperty(dpy,
+                                            event.requestor,
+                                            event.property,
+                                            incr_atom,
+                                            32,
+                                            PropModeReplace,
+                                            ptr::null(),
+                                            0);
                             XSelectInput(dpy, event.requestor, PropertyChangeMask);
                         }
                         *context = XCInState::Incr(event.requestor, event.property, 0);
-                    }
-                    else {
-                        unsafe { XChangeProperty(dpy, event.requestor, event.property, target, 8, PropModeReplace, txt.as_ptr(), txt.len() as c_int) };
+                    } else {
+                        unsafe {
+                            XChangeProperty(dpy,
+                                            event.requestor,
+                                            event.property,
+                                            target,
+                                            8,
+                                            PropModeReplace,
+                                            txt.as_ptr(),
+                                            txt.len() as c_int)
+                        };
                     }
                     let mut response: XEvent = XSelectionEvent {
-                        property: event.property,
-                        type_: SelectionNotify,
-                        display: event.display,
-                        requestor: event.requestor,
-                        selection: event.selection,
-                        target: event.target,
-                        time: event.time,
-                        serial: unsafe { uninitialized() },
-                        send_event: unsafe { uninitialized() },
-                    }.into();
+                            property: event.property,
+                            type_: SelectionNotify,
+                            display: event.display,
+                            requestor: event.requestor,
+                            selection: event.selection,
+                            target: event.target,
+                            time: event.time,
+                            serial: unsafe { uninitialized() },
+                            send_event: unsafe { uninitialized() },
+                        }
+                        .into();
                     unsafe {
                         XSendEvent(dpy, event.requestor, 0, 0, &mut response);
                         XFlush(dpy);
@@ -308,7 +394,7 @@ impl X11ClipboardContextSetter {
                         return false;
                     }
                     return if txt.len() > chunk_size { false } else { true };
-                },
+                }
                 XCInState::Incr(win, pty, pos) => {
                     if evt.get_type() != PropertyNotify {
                         return false;
@@ -326,10 +412,23 @@ impl X11ClipboardContextSetter {
                     }
                     unsafe {
                         if chunk_len != 0 {
-                            XChangeProperty(dpy, win, pty, target, 8, PropModeReplace, &txt[pos], chunk_len as c_int);
-                        }
-                        else {
-                            XChangeProperty(dpy, win, pty, target, 8, PropModeReplace, ptr::null(), 0);
+                            XChangeProperty(dpy,
+                                            win,
+                                            pty,
+                                            target,
+                                            8,
+                                            PropModeReplace,
+                                            &txt[pos],
+                                            chunk_len as c_int);
+                        } else {
+                            XChangeProperty(dpy,
+                                            win,
+                                            pty,
+                                            target,
+                                            8,
+                                            PropModeReplace,
+                                            ptr::null(),
+                                            0);
                         }
                         XFlush(dpy);
                     }
@@ -339,7 +438,7 @@ impl X11ClipboardContextSetter {
                         *context = XCInState::Incr(win, pty, pos + chunk_size);
                     }
                     return if chunk_len > 0 { false } else { true };
-                },
+                }
             }
         }
 
@@ -358,7 +457,14 @@ impl X11ClipboardContextSetter {
         'outer: loop {
             'inner: loop {
                 unsafe { XNextEvent(self.display, &mut event) };
-                let finished = xcin(self.display, &event, target, string_to_copy.as_bytes(), &mut context, &targets, &incr_atom, self.chunk_size);
+                let finished = xcin(self.display,
+                                    &event,
+                                    target,
+                                    string_to_copy.as_bytes(),
+                                    &mut context,
+                                    &targets,
+                                    &incr_atom,
+                                    self.chunk_size);
                 if event.get_type() == SelectionClear {
                     clear = true;
                 }

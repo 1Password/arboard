@@ -28,7 +28,7 @@ pub struct OSXClipboardContext {
 
 // required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
-extern {}
+extern "C" {}
 
 impl ClipboardProvider for OSXClipboardContext {
     fn new() -> Result<OSXClipboardContext, Box<Error>> {
@@ -38,9 +38,7 @@ impl ClipboardProvider for OSXClipboardContext {
             return Err(err("NSPasteboard#generalPasteboard returned null"));
         }
         let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
-        Ok(OSXClipboardContext {
-            pasteboard: pasteboard,
-        })
+        Ok(OSXClipboardContext { pasteboard: pasteboard })
     }
     fn get_contents(&mut self) -> Result<String, Box<Error>> {
         let string_class: Id<NSObject> = {
@@ -50,7 +48,8 @@ impl ClipboardProvider for OSXClipboardContext {
         let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![string_class]);
         let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
         let string_array: Id<NSArray<NSString>> = unsafe {
-            let obj: *mut _ = msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
+            let obj: *mut _ =
+                msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
             if obj.is_null() {
                 return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
             }
@@ -66,9 +65,11 @@ impl ClipboardProvider for OSXClipboardContext {
         let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
         let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
         let success: bool = unsafe { msg_send![self.pasteboard, writeObjects:string_array] };
-        return if success { Ok(()) } else {
+        return if success {
+            Ok(())
+        } else {
             Err(err("NSPasteboard#writeObjects: returned false"))
-        }
+        };
     }
 }
 
@@ -77,7 +78,5 @@ impl ClipboardProvider for OSXClipboardContext {
 //  Option::None has the same representation as a null pointer
 #[inline]
 pub fn class(name: &str) -> *mut Class {
-    unsafe {
-        transmute(Class::get(name))
-    }
+    unsafe { transmute(Class::get(name)) }
 }
