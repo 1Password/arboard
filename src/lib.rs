@@ -20,7 +20,7 @@ limitations under the License.
 #![crate_type = "rlib"]
 
 #[cfg(target_os="linux")]
-extern crate x11;
+extern crate x11_clipboard as x11_clipboard_crate;
 
 #[cfg(windows)]
 extern crate clipboard_win;
