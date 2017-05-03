@@ -45,6 +45,4 @@ fn set_contents(&mut self, String) -> Result<(), Box<Error>>;
 
 ## License
 
-Since the x11 backend contains code derived from xclip (which is GPLv2), rust-clipboard must currently be treated as GPLv2.  
-I plan to rewrite `x11_clipboard.rs` by strictly referencing the ICCCM standard, and relicense to Apache2.  
-All the other code in `rust-clipboard` may be treated as Apache2.
+`rust-clipboard` is licensed under Apache2.
