@@ -14,21 +14,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use clipboard_win::Clipboard;
+use clipboard_win::{get_clipboard_string, set_clipboard_string};
 
 use common::ClipboardProvider;
 use std::error::Error;
 
-pub struct WindowsClipboardContext(Clipboard);
+pub struct WindowsClipboardContext;
 
 impl ClipboardProvider for WindowsClipboardContext {
     fn new() -> Result<Self, Box<Error>> {
-        Ok(WindowsClipboardContext(Clipboard::new()?))
+        Ok(WindowsClipboardContext)
     }
     fn get_contents(&mut self) -> Result<String, Box<Error>> {
-        Ok(self.0.get_string()?)
+        Ok(get_clipboard_string()?)
     }
     fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
-        Ok(self.0.set_string(&data)?)
+        Ok(set_clipboard_string(&data)?)
     }
 }
