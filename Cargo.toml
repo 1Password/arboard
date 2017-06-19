@@ -1,10 +1,10 @@
 [package]
 name = "clipboard"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 description = "rust-clipboard is a cross-platform library for getting and setting the contents of the OS-level clipboard."
 repository = "https://github.com/aweinstock314/rust-clipboard"
-license = "Apache-2.0"
+license = "MIT / Apache-2.0"
 keywords = ["clipboard"]
 
 [target.'cfg(windows)'.dependencies]

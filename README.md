@@ -45,4 +45,4 @@ fn set_contents(&mut self, String) -> Result<(), Box<Error>>;
 
 ## License
 
-`rust-clipboard` is licensed under Apache2.
+`rust-clipboard` is dual-licensed under MIT and Apache2.
