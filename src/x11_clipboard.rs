@@ -16,35 +16,58 @@ limitations under the License.
 
 use std::error::Error;
 use std::time::Duration;
+use std::marker::PhantomData;
 use common::*;
-use x11_clipboard_crate::Clipboard;
+use x11_clipboard_crate::Atoms;
+use x11_clipboard_crate::Clipboard as X11Clipboard;
+use x11_clipboard_crate::xcb::xproto::Atom;
 
-pub struct X11ClipboardContext(Clipboard);
+pub trait Selection {
+    fn atom(atoms: &Atoms) -> Atom;
+}
 
-impl ClipboardProvider for X11ClipboardContext {
-    fn new() -> Result<X11ClipboardContext, Box<Error>> {
-        Clipboard::new()
-            .map(X11ClipboardContext)
-            .map_err(Into::into)
+pub struct Primary;
+
+impl Selection for Primary {
+    fn atom(atoms: &Atoms) -> Atom {
+        atoms.primary
+    }
+}
+
+pub struct Clipboard;
+
+impl Selection for Clipboard {
+    fn atom(atoms: &Atoms) -> Atom {
+        atoms.clipboard
+    }
+}
+
+pub struct X11ClipboardContext<S = Clipboard>(X11Clipboard, PhantomData<S>)
+where
+    S: Selection;
+
+impl<S> ClipboardProvider for X11ClipboardContext<S>
+where
+    S: Selection,
+{
+    fn new() -> Result<X11ClipboardContext<S>, Box<Error>> {
+        Ok(X11ClipboardContext(X11Clipboard::new()?, PhantomData))
     }
 
     fn get_contents(&mut self) -> Result<String, Box<Error>> {
-        self.0.load(
-            self.0.getter.atoms.clipboard,
+        Ok(String::from_utf8(self.0.load(
+            S::atom(&self.0.getter.atoms),
             self.0.getter.atoms.utf8_string,
             self.0.getter.atoms.property,
-            Duration::from_secs(3)
-        )
-            .map_err(Into::into)
-            .and_then(|vec| String::from_utf8(vec).map_err(Into::into))
+            Duration::from_secs(3),
+        )?)?)
     }
 
     fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
-        self.0.store(
-            self.0.setter.atoms.clipboard,
+        Ok(self.0.store(
+            S::atom(&self.0.setter.atoms),
             self.0.setter.atoms.utf8_string,
-            data
-        )
-            .map_err(Into::into)
+            data,
+        )?)
     }
 }
