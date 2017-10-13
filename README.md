@@ -26,8 +26,8 @@ use clipboard::ClipboardContext;
 
 fn example() {
     let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-    println!("{}", ctx.get_contents());
-    ctx.set_contents("some string".to_owned());
+    println!("{:?}", ctx.get_contents());
+    ctx.set_contents("some string".to_owned()).unwrap();
 }
 ```
 
