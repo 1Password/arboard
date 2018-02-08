@@ -1,8 +1,15 @@
 language: rust
-sudo: required
-matrix:
-    include:
-        - os: osx
-#        # TODO: figure out how to get headless X11 working
-#        - install:
-#            - sudo apt-get install xorg-dev
+
+os:
+- linux
+- osx
+
+# TODO: figure out how to get headless X11 working
+script: |
+  #!/bin/bash
+  cargo build --verbose
+  if [[ $TRAVIS_OS_NAME == 'linux' ]]; then
+    cargo build --tests --verbose
+  else
+    cargo test --verbose
+  fi
