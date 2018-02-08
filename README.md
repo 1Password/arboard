@@ -1,7 +1,7 @@
 # rust-clipboard
 
 rust-clipboard is a cross-platform library for getting and setting the contents of the OS-level clipboard.  
-It has been tested on Windows, Mac OSX, and GNU/Linux.  
+It has been tested on Windows, Mac OSX, GNU/Linux, and FreeBSD.
 It is used in Mozilla Servo.
 
 [![](http://meritbadge.herokuapp.com/clipboard)](https://crates.io/crates/clipboard)

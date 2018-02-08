@@ -1,6 +1,6 @@
 [package]
 name = "clipboard"
-version = "0.4.2"
+version = "0.4.3"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 description = "rust-clipboard is a cross-platform library for getting and setting the contents of the OS-level clipboard."
 repository = "https://github.com/aweinstock314/rust-clipboard"
@@ -15,5 +15,5 @@ objc = "0.2"
 objc_id = "0.1"
 objc-foundation = "0.1"
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(target_os = "unix")'.dependencies]
 x11-clipboard = "0.2"
