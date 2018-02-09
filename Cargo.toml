@@ -1,6 +1,6 @@
 [package]
 name = "clipboard"
-version = "0.4.3"
+version = "0.4.4"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
 description = "rust-clipboard is a cross-platform library for getting and setting the contents of the OS-level clipboard."
 repository = "https://github.com/aweinstock314/rust-clipboard"
