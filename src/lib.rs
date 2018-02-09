@@ -19,7 +19,7 @@ limitations under the License.
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 
-#[cfg(target_os="unix")]
+#[cfg(all(unix, not(target_os="macos")))]
 extern crate x11_clipboard as x11_clipboard_crate;
 
 #[cfg(windows)]
@@ -36,7 +36,7 @@ extern crate objc_foundation;
 mod common;
 pub use common::ClipboardProvider;
 
-#[cfg(target_os="unix")]
+#[cfg(all(unix, not(target_os="macos")))]
 pub mod x11_clipboard;
 
 #[cfg(windows)]
@@ -47,13 +47,13 @@ pub mod osx_clipboard;
 
 pub mod nop_clipboard;
 
-#[cfg(target_os="unix")]
+#[cfg(all(unix, not(target_os="macos")))]
 pub type ClipboardContext = x11_clipboard::X11ClipboardContext;
 #[cfg(windows)]
 pub type ClipboardContext = windows_clipboard::WindowsClipboardContext;
 #[cfg(target_os="macos")]
 pub type ClipboardContext = osx_clipboard::OSXClipboardContext;
-#[cfg(not(any(target_os="unix", windows, target_os="macos")))]
+#[cfg(not(any(unix, windows, target_os="macos")))]
 pub type ClipboardContext = nop_clipboard::NopClipboardContext;
 
 #[test]
