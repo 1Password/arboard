@@ -47,13 +47,15 @@ pub mod osx_clipboard;
 
 pub mod nop_clipboard;
 
-#[cfg(all(unix, not(target_os="macos")))]
+#[cfg(all(unix, not(any(target_os="macos", android))))]
 pub type ClipboardContext = x11_clipboard::X11ClipboardContext;
 #[cfg(windows)]
 pub type ClipboardContext = windows_clipboard::WindowsClipboardContext;
 #[cfg(target_os="macos")]
 pub type ClipboardContext = osx_clipboard::OSXClipboardContext;
-#[cfg(not(any(unix, windows, target_os="macos")))]
+#[cfg(android)]
+pub type ClipboardContext = nop_clipboard::NopClipboardContext; // TODO: implement AndroidClipboardContext (see #52)
+#[cfg(not(any(unix, windows, target_os="macos", android)))]
 pub type ClipboardContext = nop_clipboard::NopClipboardContext;
 
 #[test]
