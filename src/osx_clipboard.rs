@@ -48,7 +48,7 @@ impl ClipboardProvider for OSXClipboardContext {
         let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![string_class]);
         let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
         let string_array: Id<NSArray<NSString>> = unsafe {
-            let obj: *mut _ =
+            let obj: *mut NSArray<NSString> =
                 msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
             if obj.is_null() {
                 return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
