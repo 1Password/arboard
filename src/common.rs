@@ -39,5 +39,5 @@ pub trait ClipboardProvider: Sized {
     /// Method to set the clipboard contents as a String
     fn set_contents(&mut self, String) -> Result<(), Box<Error>>;
     /// Method to get clipboard contents not necessarily string
-    fn get_binary_contents(&mut self) -> Result<ClipboardContent, Box<Error>>;
+    fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<Error>>;
 }

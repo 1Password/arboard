@@ -61,7 +61,7 @@ impl ClipboardProvider for OSXClipboardContext {
             Ok(string_array[0].as_str().to_owned())
         }
     }
-    fn get_binary_contents(&mut self) -> Result<ClipboardContent, Box<Error>> {
+    fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<Error>> {
         let string_class: Id<NSObject> = {
             let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
             unsafe { transmute(cls) }
@@ -86,12 +86,12 @@ impl ClipboardProvider for OSXClipboardContext {
             Id::from_ptr(obj)
         };
         if contents.count() == 0 {
-            Err(err("pasteboard#readObjectsForClasses:options: returned empty"))
+            Ok(None)
         } else {
             let obj = &contents[0];
             if obj.is_kind_of(Class::get("NSString").unwrap()) {
                 let s: &NSString = unsafe { transmute(obj) };
-                Ok(ClipboardContent::Utf8(s.as_str().to_owned()))
+                Ok(Some(ClipboardContent::Utf8(s.as_str().to_owned())))
             } else if obj.is_kind_of(Class::get("NSImage").unwrap()) {
                 let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
                 let len: usize = unsafe { msg_send![tiff, length] };
@@ -99,10 +99,10 @@ impl ClipboardProvider for OSXClipboardContext {
                 let vec = unsafe { std::slice::from_raw_parts(bytes, len) };
                 // Here we copy the entire &[u8] into a new owned `Vec`
                 // Is there another way that doesn't copy multiple megabytes?
-                Ok(ClipboardContent::Tiff(vec.into()))
+                Ok(Some(ClipboardContent::Tiff(vec.into())))
             } else if obj.is_kind_of(Class::get("NSURL").unwrap()) {
                 let s: &NSString = unsafe { msg_send![obj, absoluteString] };
-                Ok(ClipboardContent::Utf8(s.as_str().to_owned()))
+                Ok(Some(ClipboardContent::Utf8(s.as_str().to_owned())))
             } else {
                 // let cls: &Class = unsafe { msg_send![obj, class] };
                 // println!("{}", cls.name());
