@@ -14,6 +14,7 @@ clipboard-win = "3.0"
 objc = "0.2"
 objc_id = "0.1"
 objc-foundation = "0.1"
+image = { version = "0.23", default-features = false, features = ["tiff"] }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
 x11-clipboard = "0.5"

@@ -30,6 +30,37 @@ pub enum ClipboardContent {
     __Nonexhaustive,
 }
 
+/// Stores pixel data of an image.
+///
+/// Each element in `bytes` stores the value of a channel of a single pixel.
+/// This struct stores four channels (red, green, blue, alpha) so
+/// a 3*3 image is going to be stored by 3*3*4 = 36 bytes of data.
+///
+/// The pixels are stored in row-major order meaning that the second pixel
+/// in `bytes` corresponds to the pixel form the first row and second column.
+/// 
+/// Assigning a 2*1 image would for example look like this
+/// ```
+/// use std::borrow::Cow;
+/// let bytes = [
+///     // A red pixel
+///     255, 0, 0, 255,
+/// 
+///     // A green pixel
+///     0, 255, 0, 255,
+/// ];
+/// let img = ImageData {
+///     width: 2,
+///     height: 1,
+///     bytes: Cow::from(bytes.as_ref())
+/// };
+/// ```
+pub struct ImageData<'a> {
+    pub width: usize,
+    pub height: usize,
+    pub bytes: Cow<'a, [u8]>,
+}
+
 /// Trait for clipboard access
 pub trait ClipboardProvider: Sized {
     /// Create a context with which to access the clipboard
@@ -41,4 +72,5 @@ pub trait ClipboardProvider: Sized {
     fn set_text(&mut self, text: String) -> Result<(), Box<Error>>;
     /// Method to get clipboard contents not necessarily string
     fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<Error>>;
+    fn get_image(&mut self) -> Result<ImageData, Box<Error>>;
 }

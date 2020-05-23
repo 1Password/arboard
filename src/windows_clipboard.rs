@@ -16,7 +16,7 @@ limitations under the License.
 
 use clipboard_win::{get_clipboard_string, set_clipboard_string};
 
-use common::{ClipboardProvider, ClipboardContent};
+use common::{ClipboardProvider, ClipboardContent, ImageData};
 use std::error::Error;
 
 pub struct WindowsClipboardContext;
@@ -32,6 +32,9 @@ impl ClipboardProvider for WindowsClipboardContext {
         Ok(set_clipboard_string(&data)?)
     }
     fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<Error>> {
+        Err("get_binary_contents is not yet implemented for windows.".into())
+    }
+    fn get_image(&mut self) -> Result<ImageData, Box<Error>> {
         Err("get_binary_contents is not yet implemented for windows.".into())
     }
 }
