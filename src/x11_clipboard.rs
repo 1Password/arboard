@@ -54,7 +54,7 @@ where
         Ok(X11ClipboardContext(X11Clipboard::new()?, PhantomData))
     }
 
-    fn get_contents(&mut self) -> Result<String, Box<Error>> {
+    fn get_text(&mut self) -> Result<String, Box<Error>> {
         Ok(String::from_utf8(self.0.load(
             S::atom(&self.0.getter.atoms),
             self.0.getter.atoms.utf8_string,
@@ -63,7 +63,7 @@ where
         )?)?)
     }
 
-    fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
+    fn set_text(&mut self, data: String) -> Result<(), Box<Error>> {
         Ok(self.0.store(
             S::atom(&self.0.setter.atoms),
             self.0.setter.atoms.utf8_string,

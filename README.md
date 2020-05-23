@@ -1,12 +1,7 @@
-# rust-clipboard
+# arboard
 
-rust-clipboard is a cross-platform library for getting and setting the contents of the OS-level clipboard.  
-It has been tested on Windows, Mac OSX, GNU/Linux, and FreeBSD.
-It is used in Mozilla Servo.
-
-[![](http://meritbadge.herokuapp.com/clipboard)](https://crates.io/crates/clipboard)
-[![Appveyor Build Status](https://ci.appveyor.com/api/projects/status/github/aweinstock314/rust-clipboard)](https://ci.appveyor.com/project/aweinstock314/rust-clipboard)
-[![Travis Build Status](https://travis-ci.org/aweinstock314/rust-clipboard.svg?branch=master)](https://travis-ci.org/aweinstock314/rust-clipboard)
+This crate is a fork of rust-clipboard and a cross-platform library for getting and setting the contents of the OS-level clipboard.
+It adds wayland support 
 
 ## Prerequisites
 
@@ -26,8 +21,8 @@ use clipboard::ClipboardContext;
 
 fn example() {
     let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-    println!("{:?}", ctx.get_contents());
-    ctx.set_contents("some string".to_owned()).unwrap();
+    println!("{:?}", ctx.get_text());
+    ctx.set_text("some string".to_owned()).unwrap();
 }
 ```
 
@@ -37,8 +32,8 @@ The `ClipboardProvider` trait has the following functions:
 
 ```rust
 fn new() -> Result<Self, Box<Error>>;
-fn get_contents(&mut self) -> Result<String, Box<Error>>;
-fn set_contents(&mut self, String) -> Result<(), Box<Error>>;
+fn get_text(&mut self) -> Result<String, Box<Error>>;
+fn set_text(&mut self, String) -> Result<(), Box<Error>>;
 ```
 
 `ClipboardContext` is a type alias for one of {`WindowsClipboardContext`, `OSXClipboardContext`, `X11ClipboardContext`, `NopClipboardContext`}, all of which implement `ClipboardProvider`. Which concrete type is chosen for `ClipboardContext` depends on the OS (via conditional compilation).
