@@ -20,6 +20,15 @@ pub fn err(s: &str) -> Box<Error> {
     Box::<Error + Send + Sync>::from(s)
 }
 
+pub enum ClipboardContent {
+    Utf8(String),
+    Tiff(Vec<u8>),
+    // TODO: extend this enum by more types
+    // Url, RichText, ....
+    #[doc(hidden)]
+    __Nonexhaustive,
+}
+
 /// Trait for clipboard access
 pub trait ClipboardProvider: Sized {
     /// Create a context with which to access the clipboard
@@ -29,6 +38,6 @@ pub trait ClipboardProvider: Sized {
     fn get_contents(&mut self) -> Result<String, Box<Error>>;
     /// Method to set the clipboard contents as a String
     fn set_contents(&mut self, String) -> Result<(), Box<Error>>;
-    // TODO: come up with some platform-agnostic API for richer types
-    // than just strings (c.f. issue #31)
+    /// Method to get clipboard contents not necessarily string
+    fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<Error>>;
 }

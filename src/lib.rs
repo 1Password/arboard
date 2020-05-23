@@ -35,6 +35,7 @@ extern crate objc_foundation;
 
 mod common;
 pub use common::ClipboardProvider;
+pub use common::ClipboardContent;
 
 #[cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))]
 pub mod x11_clipboard;

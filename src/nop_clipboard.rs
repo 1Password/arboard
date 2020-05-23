@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 use common::ClipboardProvider;
+use common::ClipboardContent;
 use std::error::Error;
 
 pub struct NopClipboardContext;
@@ -27,6 +28,11 @@ impl ClipboardProvider for NopClipboardContext {
         println!("Attempting to get the contents of the clipboard, which hasn't yet been \
                   implemented on this platform.");
         Ok("".to_string())
+    }
+    fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<Error>> {
+        println!("Attempting to get the contents of the clipboard, which hasn't yet been \
+                  implemented on this platform.");
+        Ok(None)
     }
     fn set_contents(&mut self, _: String) -> Result<(), Box<Error>> {
         println!("Attempting to set the contents of the clipboard, which hasn't yet been \
