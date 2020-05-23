@@ -40,7 +40,7 @@ impl ClipboardProvider for OSXClipboardContext {
         let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
         Ok(OSXClipboardContext { pasteboard: pasteboard })
     }
-    fn get_contents(&mut self) -> Result<String, Box<Error>> {
+    fn get_text(&mut self) -> Result<String, Box<Error>> {
         let string_class: Id<NSObject> = {
             let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
             unsafe { transmute(cls) }
@@ -61,7 +61,7 @@ impl ClipboardProvider for OSXClipboardContext {
             Ok(string_array[0].as_str().to_owned())
         }
     }
-    fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
+    fn set_text(&mut self, data: String) -> Result<(), Box<Error>> {
         let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
         let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
         let success: bool = unsafe { msg_send![self.pasteboard, writeObjects:string_array] };
