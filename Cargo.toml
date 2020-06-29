@@ -9,6 +9,7 @@ keywords = ["clipboard"]
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "3.0"
+image = "0.23"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

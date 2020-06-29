@@ -24,6 +24,8 @@ extern crate x11_clipboard as x11_clipboard_crate;
 
 #[cfg(windows)]
 extern crate clipboard_win;
+#[cfg(windows)]
+extern crate image;
 
 #[cfg(target_os="macos")]
 #[macro_use]
@@ -36,6 +38,7 @@ extern crate objc_foundation;
 mod common;
 pub use common::ClipboardProvider;
 pub use common::ClipboardContent;
+pub use common::ImageData;
 
 #[cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))]
 pub mod x11_clipboard;
@@ -54,7 +57,7 @@ pub type ClipboardContext = windows_clipboard::WindowsClipboardContext;
 pub type ClipboardContext = osx_clipboard::OSXClipboardContext;
 
 #[test]
-fn test_clipboard() {
+fn test_text() {
     let mut ctx = ClipboardContext::new().unwrap();
     ctx.set_text("some string".to_owned()).unwrap();
     assert!(ctx.get_text().unwrap() == "some string");

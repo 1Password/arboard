@@ -65,12 +65,13 @@ pub struct ImageData<'a> {
 pub trait ClipboardProvider: Sized {
     /// Create a context with which to access the clipboard
     // TODO: consider replacing Box<Error> with an associated type?
-    fn new() -> Result<Self, Box<Error>>;
+    fn new() -> Result<Self, Box<dyn Error>>;
     /// Method to get the clipboard contents as a String
-    fn get_text(&mut self) -> Result<String, Box<Error>>;
+    fn get_text(&mut self) -> Result<String, Box<dyn Error>>;
     /// Method to set the clipboard contents as a String
-    fn set_text(&mut self, text: String) -> Result<(), Box<Error>>;
+    fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>>;
     /// Method to get clipboard contents not necessarily string
-    fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<Error>>;
-    fn get_image(&mut self) -> Result<ImageData, Box<Error>>;
+    fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn Error>>;
+    fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>>;
+    fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn Error>>;
 }
