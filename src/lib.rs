@@ -26,6 +26,8 @@ extern crate x11_clipboard as x11_clipboard_crate;
 extern crate clipboard_win;
 #[cfg(windows)]
 extern crate image;
+#[cfg(windows)]
+extern crate byteorder;
 
 #[cfg(target_os="macos")]
 #[macro_use]
