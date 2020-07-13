@@ -19,48 +19,50 @@ limitations under the License.
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 
-#[cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 extern crate x11_clipboard as x11_clipboard_crate;
 
+#[cfg(windows)]
+extern crate byteorder;
 #[cfg(windows)]
 extern crate clipboard_win;
 #[cfg(windows)]
 extern crate image;
-#[cfg(windows)]
-extern crate byteorder;
 
-#[cfg(target_os="macos")]
+#[cfg(target_os = "macos")]
 #[macro_use]
 extern crate objc;
-#[cfg(target_os="macos")]
-extern crate objc_id;
-#[cfg(target_os="macos")]
+#[cfg(target_os = "macos")]
+extern crate core_graphics;
+#[cfg(target_os = "macos")]
 extern crate objc_foundation;
+#[cfg(target_os = "macos")]
+extern crate objc_id;
 
 mod common;
-pub use common::ClipboardProvider;
 pub use common::ClipboardContent;
+pub use common::ClipboardProvider;
 pub use common::ImageData;
 
-#[cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 pub mod x11_clipboard;
 
 #[cfg(windows)]
 pub mod windows_clipboard;
 
-#[cfg(target_os="macos")]
+#[cfg(target_os = "macos")]
 pub mod osx_clipboard;
 
-#[cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 pub type ClipboardContext = x11_clipboard::X11ClipboardContext;
 #[cfg(windows)]
 pub type ClipboardContext = windows_clipboard::WindowsClipboardContext;
-#[cfg(target_os="macos")]
+#[cfg(target_os = "macos")]
 pub type ClipboardContext = osx_clipboard::OSXClipboardContext;
 
 #[test]
 fn test_text() {
-    let mut ctx = ClipboardContext::new().unwrap();
-    ctx.set_text("some string".to_owned()).unwrap();
-    assert!(ctx.get_text().unwrap() == "some string");
+	let mut ctx = ClipboardContext::new().unwrap();
+	ctx.set_text("some string".to_owned()).unwrap();
+	assert!(ctx.get_text().unwrap() == "some string");
 }

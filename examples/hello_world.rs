@@ -1,12 +1,12 @@
 extern crate clipboard;
 
-use clipboard::ClipboardProvider;
 use clipboard::ClipboardContext;
+use clipboard::ClipboardProvider;
 
 fn main() {
-    let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+	let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
 
-    let the_string = "Hello, world!";
+	let the_string = "Hello, world!";
 
-    ctx.set_text(the_string.to_owned()).unwrap();
+	ctx.set_text(the_string.to_owned()).unwrap();
 }

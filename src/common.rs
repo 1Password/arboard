@@ -14,20 +14,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use std::error::Error;
 use std::borrow::Cow;
+use std::error::Error;
 
-pub fn err(s: &str) -> Box<Error> {
-    Box::<Error + Send + Sync>::from(s)
+pub fn err(s: &str) -> Box<dyn Error> {
+	Box::<dyn Error + Send + Sync>::from(s)
 }
 
 pub enum ClipboardContent {
-    Utf8(String),
-    Tiff(Vec<u8>),
-    // TODO: extend this enum by more types
-    // Url, RichText, ....
-    #[doc(hidden)]
-    __Nonexhaustive,
+	Utf8(String),
+	Tiff(Vec<u8>),
+	// TODO: extend this enum by more types
+	// Url, RichText, ....
+	#[doc(hidden)]
+	__Nonexhaustive,
 }
 
 /// Stores pixel data of an image.
@@ -38,14 +38,14 @@ pub enum ClipboardContent {
 ///
 /// The pixels are stored in row-major order meaning that the second pixel
 /// in `bytes` corresponds to the pixel form the first row and second column.
-/// 
+///
 /// Assigning a 2*1 image would for example look like this
 /// ```
 /// use std::borrow::Cow;
 /// let bytes = [
 ///     // A red pixel
 ///     255, 0, 0, 255,
-/// 
+///
 ///     // A green pixel
 ///     0, 255, 0, 255,
 /// ];
@@ -56,22 +56,22 @@ pub enum ClipboardContent {
 /// };
 /// ```
 pub struct ImageData<'a> {
-    pub width: usize,
-    pub height: usize,
-    pub bytes: Cow<'a, [u8]>,
+	pub width: usize,
+	pub height: usize,
+	pub bytes: Cow<'a, [u8]>,
 }
 
 /// Trait for clipboard access
 pub trait ClipboardProvider: Sized {
-    /// Create a context with which to access the clipboard
-    // TODO: consider replacing Box<Error> with an associated type?
-    fn new() -> Result<Self, Box<dyn Error>>;
-    /// Method to get the clipboard contents as a String
-    fn get_text(&mut self) -> Result<String, Box<dyn Error>>;
-    /// Method to set the clipboard contents as a String
-    fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>>;
-    /// Method to get clipboard contents not necessarily string
-    fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn Error>>;
-    fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>>;
-    fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn Error>>;
+	/// Create a context with which to access the clipboard
+	// TODO: consider replacing Box<Error> with an associated type?
+	fn new() -> Result<Self, Box<dyn Error>>;
+	/// Method to get the clipboard contents as a String
+	fn get_text(&mut self) -> Result<String, Box<dyn Error>>;
+	/// Method to set the clipboard contents as a String
+	fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>>;
+	/// Method to get clipboard contents not necessarily string
+	fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn Error>>;
+	fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>>;
+	fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn Error>>;
 }

@@ -14,60 +14,56 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use std::error::Error;
-use std::time::Duration;
-use std::marker::PhantomData;
 use common::*;
+use std::error::Error;
+use std::marker::PhantomData;
+use std::time::Duration;
+use x11_clipboard_crate::xcb::xproto::Atom;
 use x11_clipboard_crate::Atoms;
 use x11_clipboard_crate::Clipboard as X11Clipboard;
-use x11_clipboard_crate::xcb::xproto::Atom;
 
 pub trait Selection {
-    fn atom(atoms: &Atoms) -> Atom;
+	fn atom(atoms: &Atoms) -> Atom;
 }
 
 pub struct Primary;
 
 impl Selection for Primary {
-    fn atom(atoms: &Atoms) -> Atom {
-        atoms.primary
-    }
+	fn atom(atoms: &Atoms) -> Atom {
+		atoms.primary
+	}
 }
 
 pub struct Clipboard;
 
 impl Selection for Clipboard {
-    fn atom(atoms: &Atoms) -> Atom {
-        atoms.clipboard
-    }
+	fn atom(atoms: &Atoms) -> Atom {
+		atoms.clipboard
+	}
 }
 
 pub struct X11ClipboardContext<S = Clipboard>(X11Clipboard, PhantomData<S>)
 where
-    S: Selection;
+	S: Selection;
 
 impl<S> ClipboardProvider for X11ClipboardContext<S>
 where
-    S: Selection,
+	S: Selection,
 {
-    fn new() -> Result<X11ClipboardContext<S>, Box<Error>> {
-        Ok(X11ClipboardContext(X11Clipboard::new()?, PhantomData))
-    }
+	fn new() -> Result<X11ClipboardContext<S>, Box<Error>> {
+		Ok(X11ClipboardContext(X11Clipboard::new()?, PhantomData))
+	}
 
-    fn get_text(&mut self) -> Result<String, Box<Error>> {
-        Ok(String::from_utf8(self.0.load(
-            S::atom(&self.0.getter.atoms),
-            self.0.getter.atoms.utf8_string,
-            self.0.getter.atoms.property,
-            Duration::from_secs(3),
-        )?)?)
-    }
+	fn get_text(&mut self) -> Result<String, Box<Error>> {
+		Ok(String::from_utf8(self.0.load(
+			S::atom(&self.0.getter.atoms),
+			self.0.getter.atoms.utf8_string,
+			self.0.getter.atoms.property,
+			Duration::from_secs(3),
+		)?)?)
+	}
 
-    fn set_text(&mut self, data: String) -> Result<(), Box<Error>> {
-        Ok(self.0.store(
-            S::atom(&self.0.setter.atoms),
-            self.0.setter.atoms.utf8_string,
-            data,
-        )?)
-    }
+	fn set_text(&mut self, data: String) -> Result<(), Box<Error>> {
+		Ok(self.0.store(S::atom(&self.0.setter.atoms), self.0.setter.atoms.utf8_string, data)?)
+	}
 }
