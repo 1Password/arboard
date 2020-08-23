@@ -17,8 +17,8 @@ limitations under the License.
 use std::error::Error;
 use std::borrow::Cow;
 
-pub fn err(s: &str) -> Box<Error> {
-    Box::<Error + Send + Sync>::from(s)
+pub fn err(s: &str) -> Box<dyn Error> {
+    Box::<dyn Error + Send + Sync>::from(s)
 }
 
 pub enum ClipboardContent {
@@ -37,7 +37,8 @@ pub enum ClipboardContent {
 /// a 3*3 image is going to be stored by 3*3*4 = 36 bytes of data.
 ///
 /// The pixels are stored in row-major order meaning that the second pixel
-/// in `bytes` corresponds to the pixel form the first row and second column.
+/// in `bytes` (starting at the fifth byte) corresponds to the pixel that's
+/// sitting to the right side of the top-left pixel (x=1, y=0)
 /// 
 /// Assigning a 2*1 image would for example look like this
 /// ```
