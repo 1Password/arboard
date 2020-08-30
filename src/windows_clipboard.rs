@@ -15,14 +15,16 @@ limitations under the License.
 */
 
 use byteorder::ByteOrder;
-use clipboard_win::{get_clipboard_string, set_clipboard_string, formats::CF_DIB, Clipboard as SystemClipboard};
+use clipboard_win::{
+    formats::CF_DIB, get_clipboard_string, set_clipboard_string, Clipboard as SystemClipboard,
+};
+use common::{ClipboardContent, ClipboardProvider, ImageData};
 use image::{
     bmp::{BMPEncoder, BmpDecoder},
     ColorType, ImageDecoder,
 };
-use common::{ClipboardProvider, ClipboardContent, ImageData};
-use std::error::Error;
 use std::borrow::Cow;
+use std::error::Error;
 use std::io::{self, Read, Seek};
 
 const BITMAP_FILE_HEADER_SIZE: usize = 14;
@@ -57,8 +59,10 @@ impl Read for FakeBitmapFile {
         let remaining = self.len() - self.curr_pos;
         let total_read_len = buf.len().min(remaining);
         let mut buf_pos = 0;
-        
-        if total_read_len == 0 { return Ok(0); }
+
+        if total_read_len == 0 {
+            return Ok(0);
+        }
 
         // Read from the header
         if self.curr_pos < self.file_header.len() {
@@ -70,13 +74,14 @@ impl Read for FakeBitmapFile {
         }
         // Read from the bitmap
         let remaining_read_len = total_read_len - buf_pos;
-        if remaining_read_len > 0  {
+        if remaining_read_len > 0 {
             let bitmap_start = self.curr_pos - self.file_header.len();
             if bitmap_start < self.bitmap.size() {
                 let copy_len = (self.bitmap.size() - bitmap_start).min(remaining_read_len);
                 let bitmap_end = bitmap_start + copy_len;
                 let buf_end = buf_pos + copy_len;
-                buf[buf_pos..buf_end].copy_from_slice(&self.bitmap.as_bytes()[bitmap_start..bitmap_end]);
+                buf[buf_pos..buf_end]
+                    .copy_from_slice(&self.bitmap.as_bytes()[bitmap_start..bitmap_end]);
                 self.curr_pos += copy_len;
             }
         }
@@ -122,15 +127,23 @@ impl ClipboardProvider for WindowsClipboardContext {
         let width = w as usize;
         let height = h as usize;
         let image = image::DynamicImage::from_decoder(bmp_decoder)?;
-        Ok(ImageData { width, height, bytes: Cow::from(image.into_rgba().into_raw()) })
+        Ok(ImageData {
+            width,
+            height,
+            bytes: Cow::from(image.into_rgba().into_raw()),
+        })
     }
     fn set_image(&mut self, image: ImageData) -> Result<(), Box<dyn Error>> {
         let clipboard = SystemClipboard::new()?;
         let mut bmp_data = Vec::with_capacity(image.bytes.len());
         let mut cursor = std::io::Cursor::new(&mut bmp_data);
         let mut encoder = BMPEncoder::new(&mut cursor);
-        encoder
-            .encode(&image.bytes, image.width as u32, image.height as u32, ColorType::Rgba8)?;
+        encoder.encode(
+            &image.bytes,
+            image.width as u32,
+            image.height as u32,
+            ColorType::Rgba8,
+        )?;
 
         let data_without_file_header = &bmp_data[BITMAP_FILE_HEADER_SIZE..];
         clipboard.set(CF_DIB, data_without_file_header)?;

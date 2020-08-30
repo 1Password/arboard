@@ -1,7 +1,6 @@
-
 extern crate clipboard;
 
-use clipboard::{ClipboardProvider, ClipboardContext};
+use clipboard::{ClipboardContext, ClipboardProvider};
 
 fn main() {
     let mut ctx = ClipboardContext::new().unwrap();

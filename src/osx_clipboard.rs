@@ -15,9 +15,9 @@ limitations under the License.
 */
 
 use common::*;
-use objc::runtime::{Object, Class};
-use objc_foundation::{INSArray, INSString, INSObject};
-use objc_foundation::{NSArray, NSDictionary, NSString, NSObject};
+use objc::runtime::{Class, Object};
+use objc_foundation::{INSArray, INSObject, INSString};
+use objc_foundation::{NSArray, NSDictionary, NSObject, NSString};
 use objc_id::{Id, Owned};
 use std::error::Error;
 use std::mem::transmute;
@@ -38,7 +38,9 @@ impl ClipboardProvider for OSXClipboardContext {
             return Err(err("NSPasteboard#generalPasteboard returned null"));
         }
         let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
-        Ok(OSXClipboardContext { pasteboard: pasteboard })
+        Ok(OSXClipboardContext {
+            pasteboard: pasteboard,
+        })
     }
     fn get_text(&mut self) -> Result<String, Box<Error>> {
         let string_class: Id<NSObject> = {
@@ -51,12 +53,16 @@ impl ClipboardProvider for OSXClipboardContext {
             let obj: *mut NSArray<NSString> =
                 msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
             if obj.is_null() {
-                return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
+                return Err(err(
+                    "pasteboard#readObjectsForClasses:options: returned null",
+                ));
             }
             Id::from_ptr(obj)
         };
         if string_array.count() == 0 {
-            Err(err("pasteboard#readObjectsForClasses:options: returned empty"))
+            Err(err(
+                "pasteboard#readObjectsForClasses:options: returned empty",
+            ))
         } else {
             Ok(string_array[0].as_str().to_owned())
         }
@@ -81,7 +87,9 @@ impl ClipboardProvider for OSXClipboardContext {
             let obj: *mut NSArray<NSObject> =
                 msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
             if obj.is_null() {
-                return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
+                return Err(err(
+                    "pasteboard#readObjectsForClasses:options: returned null",
+                ));
             }
             Id::from_ptr(obj)
         };
@@ -106,7 +114,9 @@ impl ClipboardProvider for OSXClipboardContext {
             } else {
                 // let cls: &Class = unsafe { msg_send![obj, class] };
                 // println!("{}", cls.name());
-                Err(err("pasteboard#readObjectsForClasses:options: returned unknown class"))
+                Err(err(
+                    "pasteboard#readObjectsForClasses:options: returned unknown class",
+                ))
             }
         }
     }
@@ -122,7 +132,9 @@ impl ClipboardProvider for OSXClipboardContext {
             let obj: *mut NSArray<NSObject> =
                 msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
             if obj.is_null() {
-                return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
+                return Err(err(
+                    "pasteboard#readObjectsForClasses:options: returned null",
+                ));
             }
             Id::from_ptr(obj)
         };
@@ -147,14 +159,16 @@ impl ClipboardProvider for OSXClipboardContext {
             } else {
                 // let cls: &Class = unsafe { msg_send![obj, class] };
                 // println!("{}", cls.name());
-                Err(err("pasteboard#readObjectsForClasses:options: returned unknown class"))
+                Err(err(
+                    "pasteboard#readObjectsForClasses:options: returned unknown class",
+                ))
             }
         }
     }
     fn set_text(&mut self, data: String) -> Result<(), Box<Error>> {
         let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
         let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
-        let success: bool = unsafe { msg_send![self.pasteboard, writeObjects:string_array] };
+        let success: bool = unsafe { msg_send![self.pasteboard, writeObjects: string_array] };
         return if success {
             Ok(())
         } else {

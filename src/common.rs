@@ -14,13 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use std::error::Error;
 use std::borrow::Cow;
+use std::error::Error;
 
 pub fn err(s: &str) -> Box<dyn Error> {
     Box::<dyn Error + Send + Sync>::from(s)
 }
-
 
 /// Stores pixel data of an image.
 ///
@@ -31,14 +30,14 @@ pub fn err(s: &str) -> Box<dyn Error> {
 /// The pixels are stored in row-major order meaning that the second pixel
 /// in `bytes` (starting at the fifth byte) corresponds to the pixel that's
 /// sitting to the right side of the top-left pixel (x=1, y=0)
-/// 
+///
 /// Assigning a 2*1 image would for example look like this
 /// ```
 /// use std::borrow::Cow;
 /// let bytes = [
 ///     // A red pixel
 ///     255, 0, 0, 255,
-/// 
+///
 ///     // A green pixel
 ///     0, 255, 0, 255,
 /// ];
