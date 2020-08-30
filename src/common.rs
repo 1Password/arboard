@@ -21,14 +21,6 @@ pub fn err(s: &str) -> Box<dyn Error> {
     Box::<dyn Error + Send + Sync>::from(s)
 }
 
-pub enum ClipboardContent {
-    Utf8(String),
-    Tiff(Vec<u8>),
-    // TODO: extend this enum by more types
-    // Url, RichText, ....
-    #[doc(hidden)]
-    __Nonexhaustive,
-}
 
 /// Stores pixel data of an image.
 ///
@@ -71,8 +63,6 @@ pub trait ClipboardProvider: Sized {
     fn get_text(&mut self) -> Result<String, Box<dyn Error>>;
     /// Method to set the clipboard contents as a String
     fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>>;
-    /// Method to get clipboard contents not necessarily string
-    fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn Error>>;
     fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>>;
     fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn Error>>;
 }

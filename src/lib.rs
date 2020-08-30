@@ -20,7 +20,12 @@ limitations under the License.
 #![crate_type = "rlib"]
 
 #[cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))]
-extern crate x11_clipboard as x11_clipboard_crate;
+extern crate xcb;
+#[cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))]
+extern crate libc;
+#[cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))]
+#[macro_use]
+extern crate lazy_static;
 
 #[cfg(windows)]
 extern crate clipboard_win;
@@ -39,7 +44,6 @@ extern crate objc_foundation;
 
 mod common;
 pub use common::ClipboardProvider;
-pub use common::ClipboardContent;
 pub use common::ImageData;
 
 #[cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))]
