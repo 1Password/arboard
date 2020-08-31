@@ -17,6 +17,7 @@
 //!
 //!
 
+use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
@@ -29,10 +30,14 @@ use std::time::Duration;
 
 use common::*;
 
+use image;
+
+use xcb::ffi::base::{XCB_CURRENT_TIME, xcb_request_check};
 use xcb::ffi::xproto::{
     xcb_atom_t, xcb_change_property, xcb_get_property, xcb_get_property_reply,
     xcb_get_property_reply_t, xcb_get_property_value, xcb_get_property_value_length,
     xcb_get_selection_owner_reply, xcb_property_notify_event_t, xcb_selection_clear_event_t,
+    xcb_set_selection_owner_checked,
     xcb_selection_notify_event_t, xcb_selection_request_event_t, xcb_send_event, XCB_ATOM_NONE,
     XCB_EVENT_MASK_NO_EVENT, XCB_PROPERTY_NEW_VALUE, XCB_PROP_MODE_REPLACE, XCB_SELECTION_NOTIFY,
 };
@@ -71,8 +76,13 @@ type NotifyCallback = Option<Arc<dyn (Fn() -> bool) + Send + Sync + 'static>>;
 
 lazy_static! {
     static ref MANAGER: Option<Mutex<Manager>> = {
-        let manager = Manager::new().ok();
-        manager.map(|m| Mutex::new(m))
+        match Manager::new() {
+            Ok(manager) => {
+                unsafe { libc::atexit(Manager::destruct); }
+                Some(Mutex::new(manager))
+            }
+            Err (_) => None
+        }
     };
 }
 lazy_static! {
@@ -127,12 +137,12 @@ impl SharedState {
         let mut results = vec![0; names.len()];
         let mut cookies = HashMap::with_capacity(names.len());
 
-        for (res, name) in results.iter_mut().zip(names.iter()) {
-            let found = self.atoms.iter().find(|pair| pair.0 == name);
-            if let Some(pair) = found {
-                *res = *pair.1;
+        for (res, name) in results.iter_mut().zip(names) {
+            //let found = self.atoms.iter().find(|pair| pair.0 == name);
+            if let Some(atom) = self.atoms.get(*name) {
+                *res = *atom;
             } else {
-                cookies.insert(name, xproto::intern_atom(&connection.conn, false, name));
+                cookies.insert(*name, xproto::intern_atom(&connection.conn, false, name));
             }
         }
 
@@ -309,7 +319,42 @@ impl Manager {
         })
     }
 
-    //fn get_atom_by_name(&self)
+    fn set_x11_selection_owner(&self) -> bool {
+        let mut shared = SHARED_STATE.lock().unwrap();
+        let clipboard_atom = shared.get_atom_by_id(CLIPBOARD);
+        let cookie = unsafe { 
+            xcb_set_selection_owner_checked(
+                shared.conn.get_raw_conn(),
+                self.window,
+                clipboard_atom,
+                XCB_CURRENT_TIME
+            )
+        };
+        let err = unsafe { xcb_request_check(shared.conn.get_raw_conn(), cookie) };
+        if err != std::ptr::null_mut() {
+            unsafe { libc::free(err as *mut _); }
+            return false;
+        }
+        true
+    }
+
+    fn set_image(&mut self, image: ImageData) -> Result<(), Box<dyn Error>> {
+        if !self.set_x11_selection_owner() {
+            return Err("Failed to set x11 selection owner.".into());
+        }
+
+        self.image.width = image.width;
+        self.image.height = image.height;
+        self.image.bytes = image.bytes.into_owned().into();
+
+        let mut shared = SHARED_STATE.lock().unwrap();
+
+        // Put a ~nullptr~ (None) in the m_data for image/png format and then we'll
+        // encode the png data when the image is requested in this format.
+        self.data.insert(shared.get_atom_by_id(MIME_IMAGE_PNG), None);
+
+        Ok(())
+    }
 
     fn clear_data(&mut self) {
         self.data.clear();
@@ -324,7 +369,43 @@ impl Manager {
         property: xproto::Atom,
         target: xproto::Atom,
     ) -> bool {
-        todo!()
+        let item = {
+            if let Some(item) = self.data.get_mut(&target) {
+                item
+            } else {
+                // Nothing to do (unsupported target)
+                return false;
+            }
+        };
+
+        // This can be null if the data was set from an image but we
+        // didn't encode the image yet (e.g. to image/png format).
+        if item.is_none() {
+            encode_data_on_demand(&mut self.image, target, item);
+
+            // Return nothing, the given "target" cannot be constructed
+            // (maybe by some encoding error).
+            if item.is_none() {
+                return false;
+            }
+        }
+
+        let item = item.as_ref().unwrap();
+        let shared = SHARED_STATE.lock().unwrap();
+        // Set the "property" of "requestor" with the
+        // clipboard content in the requested format ("target").
+        unsafe { xcb_change_property(
+            shared.conn.get_raw_conn(),
+            XCB_PROP_MODE_REPLACE as u8,
+            requestor,
+            property,
+            target,
+            8,
+            item.len() as u32,
+            item.as_ptr() as *const _
+        )};
+
+        true
     }
 
     fn copy_reply_data(&mut self, reply: *mut xcb_get_property_reply_t) {
@@ -360,29 +441,32 @@ impl Manager {
 
         self.reply_data = None;
     }
-}
 
-impl Drop for Manager {
-    fn drop(&mut self) {
-        // TODO this code should be in the drop function because layz_static objects
-        // don't get dropped when the program exits. It should instead be in some
-        // sort of at_exit function, maybe THE at_exit function which I can access through libc
+    /// Rust impl: This function was added instead of the destructor because the drop
+    /// does not get called on lazy static objects. This function is registered for `libc::atexit`
+    /// on a successful initialization
+    extern "C" fn destruct() {
+        let this_mutex;
+        if let Some(mm) = &*MANAGER {
+            this_mutex = mm;
+        } else {
+            return;
+        }
+        let mut this = this_mutex.lock().unwrap();
 
-        if self.data.is_empty() && self.window != 0 && self.window == get_x11_selection_owner() {
+        if this.data.is_empty() && this.window != 0 && this.window == get_x11_selection_owner() {
             //xcb::xproto::Window
             let mut x11_clipboard_manager = 0;
             {
                 let mut shared = SHARED_STATE.lock().unwrap();
                 let clipboard_manager_atom = shared.get_atom_by_id(CLIPBOARD_MANAGER);
                 let cookie = { get_selection_owner(&shared.conn, clipboard_manager_atom) };
-                let reply = {
-                    unsafe {
-                        xcb::ffi::xproto::xcb_get_selection_owner_reply(
-                            shared.conn.get_raw_conn(),
-                            cookie.cookie,
-                            std::ptr::null_mut(),
-                        )
-                    }
+                let reply = unsafe {
+                    xcb::ffi::xproto::xcb_get_selection_owner_reply(
+                        shared.conn.get_raw_conn(),
+                        cookie.cookie,
+                        std::ptr::null_mut(),
+                    )
                 };
                 if reply != std::ptr::null_mut() {
                     unsafe {
@@ -407,13 +491,14 @@ impl Drop for Manager {
             }
         }
 
-        if self.window != 0 {
+        if this.window != 0 {
             let con = SHARED_STATE.lock().unwrap();
-            unsafe { xcb::ffi::xproto::xcb_destroy_window(con.conn.get_raw_conn(), self.window) };
+            unsafe { xcb::ffi::xproto::xcb_destroy_window(con.conn.get_raw_conn(), this.window) };
             con.conn.flush();
+            this.window = 0;
         }
 
-        if let Some(handle) = self.thread_handle.take() {
+        if let Some(handle) = this.thread_handle.take() {
             handle.join().ok();
         }
 
@@ -862,6 +947,50 @@ fn get_x11_selection_owner() -> xcb::xproto::Window {
     result
 }
 
+fn encode_data_on_demand(image: &mut ImageData, atom: xproto::Atom, buffer: &mut Option<Vec<u8>>) {
+    /// This is a workaround for the PNGEncoder not having a `into_inner` like function
+    /// which would allow us to take back our Vec after the encoder finished encoding.
+    /// So instead we create this wrapper around an Rc Vec which implements `io::Write`
+    #[derive(Clone)]
+    struct RcBuffer {
+        inner: Rc<RefCell<Vec<u8>>>
+    }
+    impl std::io::Write for RcBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.inner.borrow_mut().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            // Noop
+            Ok(())
+        }
+    }
+
+    let mut shared = SHARED_STATE.lock().unwrap();
+    if atom == shared.get_atom_by_id(MIME_IMAGE_PNG) {
+        if image.bytes.is_empty() || image.width == 0 || image.height == 0 {
+            return;
+        }
+        
+        let output = RcBuffer { inner: Rc::new(RefCell::new(Vec::new())) };
+        let encoding_result;
+        {
+            let encoder = image::png::PNGEncoder::new(output.clone());
+            encoding_result = encoder.encode(
+                image.bytes.as_ref(),
+                image.width as u32,
+                image.height as u32,
+                image::ColorType::Rgba8
+            );
+        } 
+        // Rust impl: The encoder must be destroyed so that it lets go of its reference to the
+        // `output` before we `try_unwrap()`
+        if encoding_result.is_ok() {
+            *buffer = Some(Rc::try_unwrap(output.inner).unwrap().into_inner());
+        }
+    }
+}
+
 pub struct X11ClipboardContext {}
 
 impl ClipboardProvider for X11ClipboardContext {
@@ -870,18 +999,7 @@ impl ClipboardProvider for X11ClipboardContext {
     }
 
     fn get_text(&mut self) -> Result<String, Box<dyn Error>> {
-        //let manager = locking::lock_manager()?;
-        //manager.get_atom_by_id(CLIPBOARD);
         todo!()
-        // if let Some(manager) = &*MANAGER {
-        //     MANAGER_LOCK.with(|lock| {
-        //         let mut lock = lock.borrow_mut();
-        //         *lock = Some(manager.lock().unwrap());
-        //     });
-        //     todo!()
-        // } else {
-        //     Err("Could not create the clipboard".into())
-        // }
     }
 
     fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>> {
@@ -892,7 +1010,10 @@ impl ClipboardProvider for X11ClipboardContext {
         todo!()
     }
 
-    fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn Error>> {
-        todo!()
+    fn set_image(&mut self, image: ImageData) -> Result<(), Box<dyn Error>> {
+        match &*MANAGER {
+            Some(manager) => manager.lock().unwrap().set_image(image),
+            None => Err("Could not initialize the x11 clipboard handling facilities".into())
+        }
     }
 }

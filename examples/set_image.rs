@@ -1,6 +1,6 @@
-extern crate clipboard;
+extern crate arboard;
 
-use clipboard::{ClipboardContext, ClipboardProvider, ImageData};
+use arboard::{ClipboardContext, ClipboardProvider, ImageData};
 
 fn main() {
     let mut ctx = ClipboardContext::new().unwrap();

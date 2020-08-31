@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#![crate_name = "clipboard"]
+#![crate_name = "arboard"]
 #![crate_type = "lib"]
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
@@ -29,6 +29,11 @@ extern crate libc;
     not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
 ))]
 extern crate xcb;
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
+))]
+extern crate image;
 #[cfg(all(
     unix,
     not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))

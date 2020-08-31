@@ -1,9 +1,9 @@
 [package]
-name = "clipboard"
-version = "0.5.0"
-authors = ["Avi Weinstock <aweinstock314@gmail.com>"]
-description = "rust-clipboard is a cross-platform library for getting and setting the contents of the OS-level clipboard."
-repository = "https://github.com/aweinstock314/rust-clipboard"
+name = "arboard"
+version = "0.1.0"
+authors = ["Avi Weinstock <aweinstock314@gmail.com>", "Artur Kovacs <kovacs.artur.barnabas@gmail.com>"]
+description = "Getting and setting text and image for the OS-level clipboard."
+repository = "https://github.com/ArturKovacs/arboard"
 license = "MIT / Apache-2.0"
 keywords = ["clipboard"]
 
@@ -22,3 +22,4 @@ image = { version = "0.23", default-features = false, features = ["tiff"] }
 xcb = "0.9"
 lazy_static = "1.4.0"
 libc = "0.2"
+image = { version = "0.23", default-features = false, features = ["png"] }

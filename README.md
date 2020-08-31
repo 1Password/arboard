@@ -1,7 +1,6 @@
 # arboard
 
-This crate is a fork of rust-clipboard and a cross-platform library for getting and setting the contents of the OS-level clipboard.
-It adds wayland support 
+This crate is a fork of rust-clipboard and a cross-platform library for getting and setting the contents of the OS-level clipboard. Most notably this crate allows setting and getting image data to/from the clipboard.
 
 ## Prerequisites
 

@@ -53,6 +53,12 @@ pub struct ImageData<'a> {
     pub bytes: Cow<'a, [u8]>,
 }
 
+impl<'a> ImageData<'a> {
+    pub fn into_owned_bytes(self) -> std::borrow::Cow<'static, [u8]> {
+        self.bytes.into_owned().into()
+    }
+}
+
 /// Trait for clipboard access
 pub trait ClipboardProvider: Sized {
     /// Create a context with which to access the clipboard
