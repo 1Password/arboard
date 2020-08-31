@@ -75,43 +75,41 @@ type Atoms = Vec<xcb::xproto::Atom>;
 type NotifyCallback = Option<Arc<dyn (Fn() -> bool) + Send + Sync + 'static>>;
 
 lazy_static! {
-    static ref MANAGER: Option<Mutex<Manager>> = {
-        match Manager::new() {
+    static ref LOCKED_OBJECTS: Option<Mutex<LockedObjects>> = {
+        let connection = xcb::Connection::connect(None).unwrap().0;
+        match Manager::new(&connection) {
             Ok(manager) => {
                 unsafe { libc::atexit(Manager::destruct); }
-                Some(Mutex::new(manager))
+                Some(Mutex::new( LockedObjects {
+                    shared: SharedState {
+                        conn: Some(Arc::new(connection)),
+                        atoms: Default::default(),
+                        common_atoms: Default::default()
+                    },
+                    manager: manager
+                }))
             }
             Err (_) => None
         }
-    };
-}
-lazy_static! {
-    /// Connection to X11 server
-    /// This is an `Arc<Mutex<>>` because it's shared between the user's thread and
-    /// the x11 event processing thread.
-    static ref SHARED_STATE: Mutex<SharedState> = {
-        let connection = xcb::Connection::connect(None).unwrap().0;
-        Mutex::new(SharedState {
-            conn: connection,
-            atoms: Default::default(),
-            common_atoms: Default::default()
-        })
     };
 
     // Used to wait/notify the arrival of the SelectionNotify event when
     // we requested the clipboard content from other selection owner.
     static ref CONDVAR: Condvar = Condvar::new();
+}
 
-    //static ref ATOM_HANDLER: Mutex<AtomHandler> = Mutex::new(Default::default());
+struct LockedObjects {
+    shared: SharedState,
+    manager: Manager,
 }
 
 /// The name indicates that objects in this struct are shared between
 /// the event processing thread and the user tread. However it's important
 /// that the `Manager` itself is also shared. So the real reason for splitting these
-/// apart from the `Manager` is to conform to Rust's locking and aliasing rules but that is hard to
+/// apart from the `Manager` is to conform to Rust's aliasing rules but that is hard to
 /// convey in a short name.
 struct SharedState {
-    conn: xcb::Connection,
+    conn: Option<Arc<xcb::Connection>>,
 
     // Cache of known atoms
     atoms: BTreeMap<String, xcb::xproto::Atom>,
@@ -124,6 +122,14 @@ struct SharedState {
 unsafe impl Send for SharedState {}
 
 impl SharedState {
+    fn dummy() -> Self {
+        SharedState {
+            conn: None,
+            atoms: Default::default(),
+            common_atoms: Default::default(),
+        }
+    }
+
     fn get_atom_by_id(&mut self, id: usize) -> xproto::Atom {
         if self.common_atoms.is_empty() {
             self.common_atoms = self.get_atoms(&COMMON_ATOM_NAMES);
@@ -132,17 +138,14 @@ impl SharedState {
     }
 
     fn get_atoms(&mut self, names: &[&'static str]) -> Atoms {
-        let connection = SHARED_STATE.lock().unwrap();
-
         let mut results = vec![0; names.len()];
         let mut cookies = HashMap::with_capacity(names.len());
 
         for (res, name) in results.iter_mut().zip(names) {
-            //let found = self.atoms.iter().find(|pair| pair.0 == name);
             if let Some(atom) = self.atoms.get(*name) {
                 *res = *atom;
             } else {
-                cookies.insert(*name, xproto::intern_atom(&connection.conn, false, name));
+                cookies.insert(*name, xproto::intern_atom(self.conn.as_ref().unwrap(), false, name));
             }
         }
 
@@ -150,7 +153,7 @@ impl SharedState {
             if *res == 0 {
                 let reply = unsafe {
                     xcb::ffi::xproto::xcb_intern_atom_reply(
-                        connection.conn.get_raw_conn(),
+                        self.conn.as_ref().unwrap().get_raw_conn(),
                         cookies.get(name).unwrap().cookie,
                         std::ptr::null_mut(),
                     )
@@ -256,13 +259,12 @@ struct Manager {
 }
 
 impl Manager {
-    fn new() -> Result<Self, Box<dyn Error>> {
+    fn new(connection: &xcb::Connection) -> Result<Self, Box<dyn Error>> {
         use xcb::ffi::xproto::{
             XCB_CW_EVENT_MASK, XCB_EVENT_MASK_PROPERTY_CHANGE, XCB_EVENT_MASK_STRUCTURE_NOTIFY,
             XCB_WINDOW_CLASS_INPUT_OUTPUT,
         };
-        let connection = SHARED_STATE.lock().unwrap();
-        let setup = connection.conn.get_setup();
+        let setup = connection.get_setup();
         if std::ptr::null() == setup.ptr {
             return Err("Could not get setup for connection".into());
         }
@@ -276,10 +278,10 @@ impl Manager {
             XCB_EVENT_MASK_PROPERTY_CHANGE |
             // To receive DestroyNotify event and stop the message loop.
             XCB_EVENT_MASK_STRUCTURE_NOTIFY;
-        let window = connection.conn.generate_id();
+        let window = connection.generate_id();
         unsafe {
             xcb::ffi::xproto::xcb_create_window(
-                connection.conn.get_raw_conn(),
+                connection.get_raw_conn(),
                 0,
                 window,
                 (*screen).root,
@@ -299,7 +301,7 @@ impl Manager {
 
         Ok(Manager {
             //mutex: Mutex::new(()),
-            window: 0,
+            window: window,
             thread_handle: Some(thread_handle),
             callback: None,
             callback_result: false,
@@ -319,18 +321,17 @@ impl Manager {
         })
     }
 
-    fn set_x11_selection_owner(&self) -> bool {
-        let mut shared = SHARED_STATE.lock().unwrap();
+    fn set_x11_selection_owner(&self, shared: &mut SharedState) -> bool {
         let clipboard_atom = shared.get_atom_by_id(CLIPBOARD);
         let cookie = unsafe { 
             xcb_set_selection_owner_checked(
-                shared.conn.get_raw_conn(),
+                shared.conn.as_ref().unwrap().get_raw_conn(),
                 self.window,
                 clipboard_atom,
                 XCB_CURRENT_TIME
             )
         };
-        let err = unsafe { xcb_request_check(shared.conn.get_raw_conn(), cookie) };
+        let err = unsafe { xcb_request_check(shared.conn.as_ref().unwrap().get_raw_conn(), cookie) };
         if err != std::ptr::null_mut() {
             unsafe { libc::free(err as *mut _); }
             return false;
@@ -338,16 +339,14 @@ impl Manager {
         true
     }
 
-    fn set_image(&mut self, image: ImageData) -> Result<(), Box<dyn Error>> {
-        if !self.set_x11_selection_owner() {
+    fn set_image(&mut self, shared: &mut SharedState, image: ImageData) -> Result<(), Box<dyn Error>> {
+        if !self.set_x11_selection_owner(shared) {
             return Err("Failed to set x11 selection owner.".into());
         }
 
         self.image.width = image.width;
         self.image.height = image.height;
         self.image.bytes = image.bytes.into_owned().into();
-
-        let mut shared = SHARED_STATE.lock().unwrap();
 
         // Put a ~nullptr~ (None) in the m_data for image/png format and then we'll
         // encode the png data when the image is requested in this format.
@@ -365,6 +364,7 @@ impl Manager {
 
     fn set_requestor_property_with_clipboard_content(
         &mut self,
+        shared: &mut SharedState,
         requestor: xproto::Window,
         property: xproto::Atom,
         target: xproto::Atom,
@@ -381,7 +381,7 @@ impl Manager {
         // This can be null if the data was set from an image but we
         // didn't encode the image yet (e.g. to image/png format).
         if item.is_none() {
-            encode_data_on_demand(&mut self.image, target, item);
+            encode_data_on_demand(shared, &mut self.image, target, item);
 
             // Return nothing, the given "target" cannot be constructed
             // (maybe by some encoding error).
@@ -391,11 +391,10 @@ impl Manager {
         }
 
         let item = item.as_ref().unwrap();
-        let shared = SHARED_STATE.lock().unwrap();
         // Set the "property" of "requestor" with the
         // clipboard content in the requested format ("target").
         unsafe { xcb_change_property(
-            shared.conn.get_raw_conn(),
+            shared.conn.as_ref().unwrap().get_raw_conn(),
             XCB_PROP_MODE_REPLACE as u8,
             requestor,
             property,
@@ -446,24 +445,24 @@ impl Manager {
     /// does not get called on lazy static objects. This function is registered for `libc::atexit`
     /// on a successful initialization
     extern "C" fn destruct() {
+        //println!("Executing destruct");
         let this_mutex;
-        if let Some(mm) = &*MANAGER {
+        if let Some(mm) = &*LOCKED_OBJECTS {
             this_mutex = mm;
         } else {
             return;
         }
-        let mut this = this_mutex.lock().unwrap();
-
-        if this.data.is_empty() && this.window != 0 && this.window == get_x11_selection_owner() {
+        let mut locked = this_mutex.lock().unwrap();
+        
+        if locked.manager.data.is_empty() && locked.manager.window != 0 && locked.manager.window == get_x11_selection_owner(&mut locked.shared) {
             //xcb::xproto::Window
             let mut x11_clipboard_manager = 0;
             {
-                let mut shared = SHARED_STATE.lock().unwrap();
-                let clipboard_manager_atom = shared.get_atom_by_id(CLIPBOARD_MANAGER);
-                let cookie = { get_selection_owner(&shared.conn, clipboard_manager_atom) };
+                let clipboard_manager_atom = locked.shared.get_atom_by_id(CLIPBOARD_MANAGER);
+                let cookie = { get_selection_owner(locked.shared.conn.as_ref().unwrap(), clipboard_manager_atom) };
                 let reply = unsafe {
                     xcb::ffi::xproto::xcb_get_selection_owner_reply(
-                        shared.conn.get_raw_conn(),
+                        locked.shared.conn.as_ref().unwrap().get_raw_conn(),
                         cookie.cookie,
                         std::ptr::null_mut(),
                     )
@@ -479,27 +478,25 @@ impl Manager {
                 let atoms;
                 let selection;
                 {
-                    let mut shared = SHARED_STATE.lock().unwrap();
-                    atoms = vec![shared.get_atom_by_id(SAVE_TARGETS)];
-                    selection = shared.get_atom_by_id(CLIPBOARD_MANAGER);
+                    atoms = vec![locked.shared.get_atom_by_id(SAVE_TARGETS)];
+                    selection = locked.shared.get_atom_by_id(CLIPBOARD_MANAGER);
                 } // let go of the shared state lock before invoking `get_data_from_selection_owner`
 
                 // Start the SAVE_TARGETS mechanism so the X11
                 // CLIPBOARD_MANAGER will save our clipboard data
                 // from now on.
-                get_data_from_selection_owner(&atoms, Some(Arc::new(|| true)), selection);
+                locked = get_data_from_selection_owner(locked, &atoms, Some(Arc::new(|| true)), selection).1;
             }
         }
 
-        if this.window != 0 {
-            let con = SHARED_STATE.lock().unwrap();
-            unsafe { xcb::ffi::xproto::xcb_destroy_window(con.conn.get_raw_conn(), this.window) };
-            con.conn.flush();
-            this.window = 0;
+        if locked.manager.window != 0 {
+            unsafe { xcb::ffi::xproto::xcb_destroy_window(locked.shared.conn.as_ref().unwrap().get_raw_conn(), locked.manager.window) };
+            locked.shared.conn.as_ref().unwrap().flush();
+            locked.manager.window = 0;
         }
 
-        if let Some(handle) = this.thread_handle.take() {
-            handle.join().ok();
+        if let Some(handle) = locked.manager.thread_handle.take() {
+            //handle.join().ok();
         }
 
         // This is not needed because the connection is automatically disconnected when droped
@@ -513,15 +510,32 @@ fn process_x11_events() {
         XCB_DESTROY_NOTIFY, XCB_PROPERTY_NOTIFY, XCB_SELECTION_CLEAR, XCB_SELECTION_REQUEST,
     };
 
+    let locked_objects;
+    if let Some(lo) = &*LOCKED_OBJECTS {
+        locked_objects = lo;
+    } else {
+        return;
+    }
+
+    let connection = {
+        let lo = locked_objects.lock().unwrap();
+        lo.shared.conn.clone()
+    };
+
     let mut stop = false;
     let mut event;
     while !stop {
         event = {
-            let maybe_event = SHARED_STATE.lock().unwrap().conn.wait_for_event();
+            // If this doesn't work, wrap the connection into an Arc
+            std::thread::sleep(Duration::from_millis(5));
+            let maybe_event = connection.as_ref().unwrap().poll_for_event();
+            if connection.as_ref().unwrap().has_error().is_err() {
+                break;
+            }
             if let Some(e) = maybe_event {
                 e
             } else {
-                break;
+                continue;
             }
         };
         if event.ptr == std::ptr::null_mut() {
@@ -531,26 +545,29 @@ fn process_x11_events() {
         match resp_type {
             XCB_DESTROY_NOTIFY => {
                 stop = true;
+                //panic!("{}", line!());
+                //break;
             }
 
             // Someone else has new content in the clipboard, so is
             // notifying us that we should delete our data now.
             XCB_SELECTION_CLEAR => {
-                handle_selection_clear_event(event.ptr as *mut xcb_selection_clear_event_t);
+                handle_selection_clear_event(locked_objects, event.ptr as *mut xcb_selection_clear_event_t);
             }
 
             // Someone is requesting the clipboard content from us.
             XCB_SELECTION_REQUEST => {
-                handle_selection_request_event(event.ptr as *mut xcb_selection_request_event_t);
+                handle_selection_request_event(locked_objects, event.ptr as *mut xcb_selection_request_event_t);
             }
 
             // We've requested the clipboard content and this is the
             // answer.
             XCB_SELECTION_NOTIFY => {
-                handle_selection_notify_event(event.ptr as *mut xcb_selection_notify_event_t);
+                handle_selection_notify_event(locked_objects, event.ptr as *mut xcb_selection_notify_event_t);
             }
+
             XCB_PROPERTY_NOTIFY => {
-                handle_property_notify_event(event.ptr as *mut xcb_property_notify_event_t);
+                handle_property_notify_event(locked_objects, event.ptr as *mut xcb_property_notify_event_t);
             }
             _ => {}
         }
@@ -558,28 +575,22 @@ fn process_x11_events() {
             libc::free(event.ptr as *mut _);
         }
     }
+    //panic!("{}", line!());
+    assert_eq!(Arc::strong_count(&connection.unwrap()), 1);
 }
 
-fn handle_selection_clear_event(event: *mut xcb_selection_clear_event_t) {
+fn handle_selection_clear_event(lo: &Mutex<LockedObjects>, event: *mut xcb_selection_clear_event_t) {
     let selection = unsafe { (*event).selection };
+    let mut locked = lo.lock().unwrap();
     let clipboard_atom = {
-        let mut shared = SHARED_STATE.lock().unwrap();
-        shared.get_atom_by_id(CLIPBOARD)
+        locked.shared.get_atom_by_id(CLIPBOARD)
     };
     if selection == clipboard_atom {
-        if let Some(manager) = &*MANAGER {
-            manager.lock().unwrap().clear_data();
-        }
+        locked.manager.clear_data();
     }
 }
 
-fn handle_selection_request_event(event: *mut xcb_selection_request_event_t) {
-    let manager_mutex;
-    if let Some(m) = &*MANAGER {
-        manager_mutex = m;
-    } else {
-        return;
-    };
+fn handle_selection_request_event(lo: &Mutex<LockedObjects>, event: *mut xcb_selection_request_event_t) {
     let target;
     let requestor;
     let property;
@@ -597,7 +608,8 @@ fn handle_selection_request_event(event: *mut xcb_selection_request_event_t) {
     let multiple_atom;
     let atom_atom;
     {
-        let mut shared = SHARED_STATE.lock().unwrap();
+        let mut locked = lo.lock().unwrap();
+        let shared = &mut locked.shared;
         targets_atom = shared.get_atom_by_id(TARGETS);
         save_targets_atom = shared.get_atom_by_id(SAVE_TARGETS);
         multiple_atom = shared.get_atom_by_id(MULTIPLE);
@@ -608,17 +620,18 @@ fn handle_selection_request_event(event: *mut xcb_selection_request_event_t) {
         targets.push(targets_atom);
         targets.push(save_targets_atom);
         targets.push(multiple_atom);
-        let manager = manager_mutex.lock().unwrap();
+        let locked = lo.lock().unwrap();
+        let manager = &locked.manager;
         for atom in manager.data.keys() {
             targets.push(*atom);
         }
 
-        let shared = SHARED_STATE.lock().unwrap();
+        let shared = &locked.shared;
         // Set the "property" of "requestor" with the clipboard
         // formats ("targets", atoms) that we provide.
         unsafe {
             xcb_change_property(
-                shared.conn.get_raw_conn(),
+                shared.conn.as_ref().unwrap().get_raw_conn(),
                 XCB_PROP_MODE_REPLACE as u8,
                 requestor,
                 property,
@@ -631,11 +644,10 @@ fn handle_selection_request_event(event: *mut xcb_selection_request_event_t) {
     } else if target == save_targets_atom {
         // Do nothing
     } else if target == multiple_atom {
-        let mut manager = manager_mutex.lock().unwrap();
+        let mut locked = lo.lock().unwrap();
         let reply = {
-            let mut shared = SHARED_STATE.lock().unwrap();
-            let atom_pair_atom = shared.get_atom_by_id(ATOM_PAIR);
-            get_and_delete_property(&mut shared.conn, requestor, property, atom_pair_atom, false)
+            let atom_pair_atom = locked.shared.get_atom_by_id(ATOM_PAIR);
+            get_and_delete_property(locked.shared.conn.as_ref().unwrap(), requestor, property, atom_pair_atom, false)
         };
         if reply != std::ptr::null_mut() {
             let mut ptr: *mut xcb_atom_t =
@@ -655,13 +667,15 @@ fn handle_selection_request_event(event: *mut xcb_selection_request_event_t) {
                     property = *ptr;
                     ptr = ptr.offset(1);
                 }
-                if !manager
-                    .set_requestor_property_with_clipboard_content(requestor, property, target)
-                {
-                    let shared = SHARED_STATE.lock().unwrap();
+                let mut tmp_shared = SharedState::dummy();
+                std::mem::swap(&mut tmp_shared, &mut locked.shared);
+                let result = !locked.manager
+                    .set_requestor_property_with_clipboard_content(&mut tmp_shared, requestor, property, target);
+                std::mem::swap(&mut tmp_shared, &mut locked.shared);
+                if result {
                     unsafe {
                         xcb_change_property(
-                            shared.conn.get_raw_conn(),
+                            locked.shared.conn.as_ref().unwrap().get_raw_conn(),
                             XCB_PROP_MODE_REPLACE as u8,
                             requestor,
                             property,
@@ -678,11 +692,19 @@ fn handle_selection_request_event(event: *mut xcb_selection_request_event_t) {
             }
         }
     } else {
-        let mut manager = manager_mutex.lock().unwrap();
-        if !manager.set_requestor_property_with_clipboard_content(requestor, property, target) {
+        let mut locked = lo.lock().unwrap();
+        let mut tmp_shared = SharedState::dummy();
+        std::mem::swap(&mut tmp_shared, &mut locked.shared);
+        let result = !locked.manager
+            .set_requestor_property_with_clipboard_content(&mut tmp_shared, requestor, property, target);
+        std::mem::swap(&mut tmp_shared, &mut locked.shared);
+        if result {
             return;
         }
     }
+
+    let mut locked = lo.lock().unwrap();
+    let shared = &mut locked.shared;
 
     // Notify the "requestor" that we've already updated the property.
     let notify = xcb_selection_notify_event_t {
@@ -695,26 +717,19 @@ fn handle_selection_request_event(event: *mut xcb_selection_request_event_t) {
         target: target,
         property: property,
     };
-    let shared = SHARED_STATE.lock().unwrap();
     unsafe {
         xcb_send_event(
-            shared.conn.get_raw_conn(),
+            shared.conn.as_ref().unwrap().get_raw_conn(),
             0,
             requestor,
             XCB_EVENT_MASK_NO_EVENT,
             &notify as *const _ as *const _,
         )
     };
-    shared.conn.flush();
+    shared.conn.as_ref().unwrap().flush();
 }
 
-fn handle_selection_notify_event(event: *mut xcb_selection_notify_event_t) {
-    let manager_mutex;
-    if let Some(m) = &*MANAGER {
-        manager_mutex = m;
-    } else {
-        return;
-    };
+fn handle_selection_notify_event(lo: &Mutex<LockedObjects>, event: *mut xcb_selection_notify_event_t) {
     let target;
     let requestor;
     let property;
@@ -723,40 +738,40 @@ fn handle_selection_notify_event(event: *mut xcb_selection_notify_event_t) {
         requestor = (*event).requestor;
         property = (*event).property;
     }
-    let mut shared = SHARED_STATE.lock().unwrap();
-    let mut manager = manager_mutex.lock().unwrap();
-    assert_eq!(requestor, manager.window);
+    let mut locked = lo.lock().unwrap();
+    assert_eq!(requestor, locked.manager.window);
 
-    if target == shared.get_atom_by_id(TARGETS) {
-        manager.target_atom = shared.get_atom_by_id(ATOM);
+    if target == locked.shared.get_atom_by_id(TARGETS) {
+        locked.manager.target_atom = locked.shared.get_atom_by_id(ATOM);
     } else {
-        manager.target_atom = target;
+        locked.manager.target_atom = target;
     }
 
+    let target_atom = locked.manager.target_atom;
     let mut reply = get_and_delete_property(
-        &mut shared.conn,
+        locked.shared.conn.as_ref().unwrap(),
         requestor,
         property,
-        manager.target_atom,
+        target_atom,
         true,
     );
     if reply != std::ptr::null_mut() {
         let reply_type = unsafe { (*reply).type_ };
         // In this case, We're going to receive the clipboard content in
         // chunks of data with several PropertyNotify events.
-        let incr_atom = shared.get_atom_by_id(INCR);
+        let incr_atom = locked.shared.get_atom_by_id(INCR);
         if reply_type == incr_atom {
             unsafe {
                 libc::free(reply as *mut _);
             }
-            reply = get_and_delete_property(&mut shared.conn, requestor, property, incr_atom, true);
+            reply = get_and_delete_property(locked.shared.conn.as_ref().unwrap(), requestor, property, incr_atom, true);
             if reply != std::ptr::null_mut() {
                 if unsafe { xcb_get_property_value_length(reply) } == 4 {
                     let n = unsafe { *(xcb_get_property_value(reply) as *mut u32) };
-                    manager.reply_data = Some(vec![0u8; n as usize]);
-                    manager.reply_offset = 0;
-                    manager.incr_process = true;
-                    manager.incr_received = true;
+                    locked.manager.reply_data = Some(vec![0u8; n as usize]);
+                    locked.manager.reply_offset = 0;
+                    locked.manager.incr_process = true;
+                    locked.manager.incr_received = true;
                 }
                 unsafe {
                     libc::free(reply as *mut _);
@@ -765,10 +780,10 @@ fn handle_selection_notify_event(event: *mut xcb_selection_notify_event_t) {
         } else {
             // Simple case, the whole clipboard content in just one reply
             // (without the INCR method).
-            manager.reply_data = None;
-            manager.reply_offset = 0;
-            manager.copy_reply_data(reply);
-            manager.call_callback(reply);
+            locked.manager.reply_data = None;
+            locked.manager.reply_offset = 0;
+            locked.manager.copy_reply_data(reply);
+            locked.manager.call_callback(reply);
 
             unsafe {
                 libc::free(reply as *mut _);
@@ -777,13 +792,7 @@ fn handle_selection_notify_event(event: *mut xcb_selection_notify_event_t) {
     }
 }
 
-fn handle_property_notify_event(event: *mut xcb_property_notify_event_t) {
-    let manager_mutex;
-    if let Some(m) = &*MANAGER {
-        manager_mutex = m;
-    } else {
-        return;
-    };
+fn handle_property_notify_event(lo: &Mutex<LockedObjects>, event: *mut xcb_property_notify_event_t) {
     let state;
     let atom;
     let window;
@@ -792,26 +801,26 @@ fn handle_property_notify_event(event: *mut xcb_property_notify_event_t) {
         atom = (*event).atom;
         window = (*event).window;
     }
-    let mut manager = manager_mutex.lock().unwrap();
-    let mut shared = SHARED_STATE.lock().unwrap();
-    if manager.incr_process
+    let mut locked = lo.lock().unwrap();
+    if locked.manager.incr_process
         && state == XCB_PROPERTY_NEW_VALUE
-        && atom == shared.get_atom_by_id(CLIPBOARD)
+        && atom == locked.shared.get_atom_by_id(CLIPBOARD)
     {
+        let target_atom = locked.manager.target_atom;
         let reply =
-            get_and_delete_property(&mut shared.conn, window, atom, manager.target_atom, true);
+            get_and_delete_property(locked.shared.conn.as_ref().unwrap(), window, atom, target_atom, true);
         if reply != std::ptr::null_mut() {
-            manager.incr_received = true;
+            locked.manager.incr_received = true;
 
             // When the length is 0 it means that the content was
             // completely sent by the selection owner.
             if unsafe { xcb_get_property_value_length(reply) } > 0 {
-                manager.copy_reply_data(reply);
+                locked.manager.copy_reply_data(reply);
             } else {
                 // Now that m_reply_data has the complete clipboard content,
                 // we can call the m_callback.
-                manager.call_callback(reply);
-                manager.incr_process = false;
+                locked.manager.call_callback(reply);
+                locked.manager.incr_process = false;
             }
             unsafe {
                 libc::free(reply as *mut _);
@@ -821,7 +830,7 @@ fn handle_property_notify_event(event: *mut xcb_property_notify_event_t) {
 }
 
 fn get_and_delete_property(
-    conn: &mut xcb::base::Connection,
+    conn: &xcb::base::Connection,
     window: xproto::Window,
     property: xproto::Atom,
     atom: xproto::Atom,
@@ -849,64 +858,55 @@ fn get_and_delete_property(
     reply
 }
 
-fn get_data_from_selection_owner(
+fn get_data_from_selection_owner<'a>(
+    mut locked: MutexGuard<'a, LockedObjects>,
     atoms: &Atoms,
     callback: NotifyCallback,
     mut selection: xproto::Atom,
-) -> bool {
+) -> (bool, MutexGuard<'a, LockedObjects>) {
     // Wait a response for 100 milliseconds
     const CV_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
-
-    let manager_mutex;
-    if let Some(m) = &*MANAGER {
-        manager_mutex = m;
-    } else {
-        return false;
-    };
     if selection == 0 {
-        let mut shared = SHARED_STATE.lock().unwrap();
-        selection = shared.get_atom_by_id(CLIPBOARD);
+        selection = locked.shared.get_atom_by_id(CLIPBOARD);
     }
-    let mut manager = manager_mutex.lock().unwrap();
-    manager.callback = callback;
+    locked.manager.callback = callback;
 
     // Clear data if we are not the selection owner.
-    if manager.window != get_x11_selection_owner() {
-        manager.data.clear();
+    if locked.manager.window != get_x11_selection_owner(&mut locked.shared) {
+        locked.manager.data.clear();
     }
 
     // Ask to the selection owner for its content on each known
     // text format/atom.
     for atom in atoms.iter() {
         {
-            let mut shared = SHARED_STATE.lock().unwrap();
-            let clipboard_atom = shared.get_atom_by_id(CLIPBOARD);
+            let clipboard_atom = locked.shared.get_atom_by_id(CLIPBOARD);
             xproto::convert_selection(
-                &shared.conn,
-                manager.window,
+                locked.shared.conn.as_ref().unwrap(),
+                locked.manager.window,
                 selection,
                 *atom,
                 clipboard_atom,
                 xcb::base::CURRENT_TIME,
             );
-            shared.conn.flush();
+            locked.shared.conn.as_ref().unwrap().flush();
         }
 
         // We use the "m_incr_received" to wait several timeouts in case
         // that we've received the INCR SelectionNotify or
         // PropertyNotify events.
         'incr_loop: loop {
-            manager.incr_received = false;
-            match CONDVAR.wait_timeout(manager, CV_TIMEOUT) {
+            locked.manager.incr_received = false;
+            match CONDVAR.wait_timeout(locked, CV_TIMEOUT) {
                 Ok((guard, status)) => {
-                    manager = guard;
+                    locked = guard;
                     if !status.timed_out() {
                         // If the condition variable was notified, it means that the
                         // callback was called correctly.
-                        return manager.callback_result;
+                        return (locked.manager.callback_result, locked);
                     }
 
-                    if !manager.incr_received {
+                    if !locked.manager.incr_received {
                         break 'incr_loop;
                     }
                 }
@@ -920,19 +920,18 @@ fn get_data_from_selection_owner(
         }
     }
 
-    manager.callback = None;
-    false
+    locked.manager.callback = None;
+    (false, locked)
 }
 
-fn get_x11_selection_owner() -> xcb::xproto::Window {
+fn get_x11_selection_owner(shared: &mut SharedState) -> xcb::xproto::Window {
     let mut result = 0;
 
-    let mut shared = SHARED_STATE.lock().unwrap();
     let clipboard_atom = shared.get_atom_by_id(CLIPBOARD);
-    let cookie = xproto::get_selection_owner(&shared.conn, clipboard_atom);
+    let cookie = xproto::get_selection_owner(shared.conn.as_ref().unwrap(), clipboard_atom);
     let reply = unsafe {
         xcb_get_selection_owner_reply(
-            shared.conn.get_raw_conn(),
+            shared.conn.as_ref().unwrap().get_raw_conn(),
             cookie.cookie,
             std::ptr::null_mut(),
         )
@@ -947,7 +946,7 @@ fn get_x11_selection_owner() -> xcb::xproto::Window {
     result
 }
 
-fn encode_data_on_demand(image: &mut ImageData, atom: xproto::Atom, buffer: &mut Option<Vec<u8>>) {
+fn encode_data_on_demand(shared: &mut SharedState, image: &mut ImageData, atom: xproto::Atom, buffer: &mut Option<Vec<u8>>) {
     /// This is a workaround for the PNGEncoder not having a `into_inner` like function
     /// which would allow us to take back our Vec after the encoder finished encoding.
     /// So instead we create this wrapper around an Rc Vec which implements `io::Write`
@@ -966,7 +965,6 @@ fn encode_data_on_demand(image: &mut ImageData, atom: xproto::Atom, buffer: &mut
         }
     }
 
-    let mut shared = SHARED_STATE.lock().unwrap();
     if atom == shared.get_atom_by_id(MIME_IMAGE_PNG) {
         if image.bytes.is_empty() || image.width == 0 || image.height == 0 {
             return;
@@ -1011,8 +1009,22 @@ impl ClipboardProvider for X11ClipboardContext {
     }
 
     fn set_image(&mut self, image: ImageData) -> Result<(), Box<dyn Error>> {
-        match &*MANAGER {
-            Some(manager) => manager.lock().unwrap().set_image(image),
+        println!("Set image called");
+        match &*LOCKED_OBJECTS {
+            Some(lo) => {
+                let result;
+                {
+                    let mut locked = lo.lock().unwrap();
+                    let mut tmp_shared = SharedState::dummy();
+                    std::mem::swap(&mut tmp_shared, &mut locked.shared);
+                    result = locked.manager.set_image(&mut tmp_shared, image);
+                    std::mem::swap(&mut tmp_shared, &mut locked.shared);
+                }
+                println!("Image ready, do your thing!");
+                std::thread::sleep(Duration::from_secs(20));
+                println!("Time's up!");
+                result
+            }
             None => Err("Could not initialize the x11 clipboard handling facilities".into())
         }
     }
