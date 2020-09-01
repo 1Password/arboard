@@ -52,6 +52,8 @@ extern crate image;
 #[macro_use]
 extern crate objc;
 #[cfg(target_os = "macos")]
+extern crate core_graphics;
+#[cfg(target_os = "macos")]
 extern crate objc_foundation;
 #[cfg(target_os = "macos")]
 extern crate objc_id;
@@ -84,7 +86,7 @@ pub type ClipboardContext = osx_clipboard::OSXClipboardContext;
 
 #[test]
 fn test_text() {
-    let mut ctx = ClipboardContext::new().unwrap();
-    ctx.set_text("some string".to_owned()).unwrap();
-    assert!(ctx.get_text().unwrap() == "some string");
+	let mut ctx = ClipboardContext::new().unwrap();
+	ctx.set_text("some string".to_owned()).unwrap();
+	assert!(ctx.get_text().unwrap() == "some string");
 }
