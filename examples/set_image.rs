@@ -3,17 +3,17 @@ extern crate arboard;
 use arboard::{ClipboardContext, ClipboardProvider, ImageData};
 
 fn main() {
-    let mut ctx = ClipboardContext::new().unwrap();
+	let mut ctx = ClipboardContext::new().unwrap();
 
-    let img_data = ImageData {
-        width: 2,
-        height: 2,
-        bytes: [
-            255, 100, 100, 255, 100, 255, 100, 100, 100, 100, 255, 100, 0, 0, 0, 255,
-        ]
-        .as_ref()
-        .into(),
-    };
+	#[rustfmt::skip]
+    let bytes = [
+        255, 100, 100, 255,
+        100, 255, 100, 100,
+        100, 100, 255, 100,
+        0, 0, 0, 255,
+    ];
 
-    ctx.set_image(img_data).unwrap();
+	let img_data = ImageData { width: 2, height: 2, bytes: bytes.as_ref().into() };
+
+	ctx.set_image(img_data).unwrap();
 }

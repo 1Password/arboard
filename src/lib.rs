@@ -19,25 +19,13 @@ limitations under the License.
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
-))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 extern crate image;
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
-))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 extern crate libc;
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
-))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 extern crate xcb;
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
-))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 #[macro_use]
 extern crate lazy_static;
 
@@ -62,10 +50,7 @@ mod common;
 pub use common::ClipboardProvider;
 pub use common::ImageData;
 
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
-))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 pub mod x11_clipboard;
 
 #[cfg(windows)]
@@ -74,10 +59,7 @@ pub mod windows_clipboard;
 #[cfg(target_os = "macos")]
 pub mod osx_clipboard;
 
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
-))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 pub type ClipboardContext = x11_clipboard::X11ClipboardContext;
 #[cfg(windows)]
 pub type ClipboardContext = windows_clipboard::WindowsClipboardContext;
