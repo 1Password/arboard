@@ -13,13 +13,12 @@ sudo apt-get install xorg-dev
 ## Example
 
 ```rust
-extern crate clipboard;
+extern crate arboard;
 
-use clipboard::ClipboardProvider;
-use clipboard::ClipboardContext;
+use arboard::{ClipboardContext, ClipboardProvider};
 
 fn example() {
-    let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+    let mut ctx = ClipboardContext::new().unwrap();
     println!("{:?}", ctx.get_text());
     ctx.set_text("some string".to_owned()).unwrap();
 }
