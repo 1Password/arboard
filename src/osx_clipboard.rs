@@ -128,55 +128,55 @@ impl ClipboardProvider for OSXClipboardContext {
 			Err(err("NSPasteboard#writeObjects: returned false"))
 		};
 	}
-	fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn Error>> {
-		let string_class: Id<NSObject> = {
-			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
-			unsafe { transmute(cls) }
-		};
-		let image_class: Id<NSObject> = {
-			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
-			unsafe { transmute(cls) }
-		};
-		let url_class: Id<NSObject> = {
-			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSURL")) };
-			unsafe { transmute(cls) }
-		};
-		let classes = vec![url_class, image_class, string_class];
-		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
-		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
-		let contents: Id<NSArray<NSObject>> = unsafe {
-			let obj: *mut NSArray<NSObject> =
-				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
-			if obj.is_null() {
-				return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
-			}
-			Id::from_ptr(obj)
-		};
-		if contents.count() == 0 {
-			Ok(None)
-		} else {
-			let obj = &contents[0];
-			if obj.is_kind_of(Class::get("NSString").unwrap()) {
-				let s: &NSString = unsafe { transmute(obj) };
-				Ok(Some(ClipboardContent::Utf8(s.as_str().to_owned())))
-			} else if obj.is_kind_of(Class::get("NSImage").unwrap()) {
-				let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
-				let len: usize = unsafe { msg_send![tiff, length] };
-				let bytes: *const u8 = unsafe { msg_send![tiff, bytes] };
-				let vec = unsafe { std::slice::from_raw_parts(bytes, len) };
-				// Here we copy the entire &[u8] into a new owned `Vec`
-				// Is there another way that doesn't copy multiple megabytes?
-				Ok(Some(ClipboardContent::Tiff(vec.into())))
-			} else if obj.is_kind_of(Class::get("NSURL").unwrap()) {
-				let s: &NSString = unsafe { msg_send![obj, absoluteString] };
-				Ok(Some(ClipboardContent::Utf8(s.as_str().to_owned())))
-			} else {
-				// let cls: &Class = unsafe { msg_send![obj, class] };
-				// println!("{}", cls.name());
-				Err(err("pasteboard#readObjectsForClasses:options: returned unknown class"))
-			}
-		}
-	}
+	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn Error>> {
+	// 	let string_class: Id<NSObject> = {
+	// 		let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
+	// 		unsafe { transmute(cls) }
+	// 	};
+	// 	let image_class: Id<NSObject> = {
+	// 		let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
+	// 		unsafe { transmute(cls) }
+	// 	};
+	// 	let url_class: Id<NSObject> = {
+	// 		let cls: Id<Class> = unsafe { Id::from_ptr(class("NSURL")) };
+	// 		unsafe { transmute(cls) }
+	// 	};
+	// 	let classes = vec![url_class, image_class, string_class];
+	// 	let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
+	// 	let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
+	// 	let contents: Id<NSArray<NSObject>> = unsafe {
+	// 		let obj: *mut NSArray<NSObject> =
+	// 			msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
+	// 		if obj.is_null() {
+	// 			return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
+	// 		}
+	// 		Id::from_ptr(obj)
+	// 	};
+	// 	if contents.count() == 0 {
+	// 		Ok(None)
+	// 	} else {
+	// 		let obj = &contents[0];
+	// 		if obj.is_kind_of(Class::get("NSString").unwrap()) {
+	// 			let s: &NSString = unsafe { transmute(obj) };
+	// 			Ok(Some(ClipboardContent::Utf8(s.as_str().to_owned())))
+	// 		} else if obj.is_kind_of(Class::get("NSImage").unwrap()) {
+	// 			let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
+	// 			let len: usize = unsafe { msg_send![tiff, length] };
+	// 			let bytes: *const u8 = unsafe { msg_send![tiff, bytes] };
+	// 			let vec = unsafe { std::slice::from_raw_parts(bytes, len) };
+	// 			// Here we copy the entire &[u8] into a new owned `Vec`
+	// 			// Is there another way that doesn't copy multiple megabytes?
+	// 			Ok(Some(ClipboardContent::Tiff(vec.into())))
+	// 		} else if obj.is_kind_of(Class::get("NSURL").unwrap()) {
+	// 			let s: &NSString = unsafe { msg_send![obj, absoluteString] };
+	// 			Ok(Some(ClipboardContent::Utf8(s.as_str().to_owned())))
+	// 		} else {
+	// 			// let cls: &Class = unsafe { msg_send![obj, class] };
+	// 			// println!("{}", cls.name());
+	// 			Err(err("pasteboard#readObjectsForClasses:options: returned unknown class"))
+	// 		}
+	// 	}
+	// }
 	fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>> {
 		Err("Not implemented".into())
 		// let image_class: Id<NSObject> = {
