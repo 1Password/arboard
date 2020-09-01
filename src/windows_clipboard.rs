@@ -18,7 +18,7 @@ use byteorder::ByteOrder;
 use clipboard_win::{
 	formats::CF_DIB, get_clipboard_string, set_clipboard_string, Clipboard as SystemClipboard,
 };
-use common::{ClipboardContent, ClipboardProvider, ImageData};
+use common::{ClipboardProvider, ImageData};
 use image::{
 	bmp::{BMPEncoder, BmpDecoder},
 	ColorType, ImageDecoder,
@@ -100,9 +100,6 @@ impl ClipboardProvider for WindowsClipboardContext {
 	}
 	fn set_text(&mut self, data: String) -> Result<(), Box<dyn Error>> {
 		Ok(set_clipboard_string(&data)?)
-	}
-	fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn Error>> {
-		Err("get_binary_contents is not yet implemented for windows.".into())
 	}
 	fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>> {
 		let clipboard = SystemClipboard::new()?;
