@@ -23,17 +23,17 @@ limitations under the License.
     unix,
     not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
 ))]
+extern crate image;
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
+))]
 extern crate libc;
 #[cfg(all(
     unix,
     not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
 ))]
 extern crate xcb;
-#[cfg(all(
-    unix,
-    not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
-))]
-extern crate image;
 #[cfg(all(
     unix,
     not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
