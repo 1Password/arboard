@@ -57,6 +57,15 @@ impl<'a> ImageData<'a> {
 	pub fn into_owned_bytes(self) -> std::borrow::Cow<'static, [u8]> {
 		self.bytes.into_owned().into()
 	}
+
+	/// Returns a new image data that is guaranteed to own its bytes.
+	pub fn to_cloned(&self) -> ImageData<'static> {
+		ImageData {
+			width: self.width,
+			height: self.height,
+			bytes: self.bytes.clone().into_owned().into(),
+		}
+	}
 }
 
 /// Trait for clipboard access

@@ -4,11 +4,11 @@
 //!
 //! This implementation is a port of https://github.com/dacap/clip
 //! The structure of the original is more or less maintained.
-//! 
-//! Disclaimer: The original C++ code is well organized and feels clean but it relies on C++ 
+//!
+//! Disclaimer: The original C++ code is well organized and feels clean but it relies on C++
 //! allowing a liberal data sharing between threads and it is painfully obvious from certain parts
 //! of this port that this code was not designed for Rust. It should probably be reworked because
-//! the absolute plague that the Arc<Mutex<>> objects are in this code is horrible just to look at 
+//! the absolute plague that the Arc<Mutex<>> objects are in this code is horrible just to look at
 //! and will forever haunt me in my nightmares.
 //!
 //! Most changes are to conform with Rusts rules for example there are multiple overloads of
@@ -22,21 +22,19 @@
 //! namely that the mutex gets locked at the topmost level possible and then most functions don't
 //! need to attempt to lock, instead they just use the direct object references passed on as arguments.
 //!
-//! 
+//!
 //!
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::rc::Rc;
-use std::sync::{
-	Arc, Condvar, Mutex, MutexGuard
-};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use common::*;
 
-use image;
+use image::{self, ImageDecoder};
 
 use xcb::ffi::base::{xcb_request_check, XCB_CURRENT_TIME};
 use xcb::ffi::xproto::{
@@ -78,7 +76,7 @@ static COMMON_ATOM_NAMES: [&'static str; 9] = [
 
 type BufferPtr = Option<Arc<Mutex<Vec<u8>>>>;
 type Atoms = Vec<xcb::xproto::Atom>;
-type NotifyCallback = Option<Arc<dyn (Fn() -> bool) + Send + Sync + 'static>>;
+type NotifyCallback = Option<Arc<dyn (Fn(&BufferPtr) -> bool) + Send + Sync + 'static>>;
 
 lazy_static! {
 	static ref LOCKED_OBJECTS: Arc<Mutex<Option<LockedObjects>>> = Arc::new(Mutex::new(None));
@@ -103,9 +101,9 @@ impl LockedObjects {
 					shared: SharedState {
 						conn: Some(Arc::new(connection)),
 						atoms: Default::default(),
-                        common_atoms: Default::default(),
-                        text_atoms: Default::default(),
-                        image_atoms: Default::default()
+						common_atoms: Default::default(),
+						text_atoms: Default::default(),
+						image_atoms: Default::default(),
 					},
 					manager,
 				})
@@ -127,9 +125,9 @@ struct SharedState {
 	atoms: BTreeMap<String, xcb::xproto::Atom>,
 
 	// Cache of common used atoms by us
-    common_atoms: Atoms,
-    
-    // Cache of atoms related to text or image content
+	common_atoms: Atoms,
+
+	// Cache of atoms related to text or image content
 	text_atoms: Atoms,
 	image_atoms: Atoms,
 }
@@ -139,7 +137,13 @@ unsafe impl Send for SharedState {}
 
 impl SharedState {
 	fn dummy() -> Self {
-		SharedState { conn: None, atoms: Default::default(), common_atoms: Default::default(), text_atoms: Default::default(), image_atoms: Default::default() }
+		SharedState {
+			conn: None,
+			atoms: Default::default(),
+			common_atoms: Default::default(),
+			text_atoms: Default::default(),
+			image_atoms: Default::default(),
+		}
 	}
 
 	fn get_atom_by_id(&mut self, id: usize) -> xproto::Atom {
@@ -181,32 +185,32 @@ impl SharedState {
 			}
 		}
 		results
-    }
-    
-    fn get_text_format_atoms(&mut self) -> &Atoms {
-        if self.text_atoms.is_empty() {
-            const NAMES: [&'static str; 6] = [
-                // Prefer utf-8 formats first
-                "UTF8_STRING",
-                "text/plain;charset=utf-8",
-                "text/plain;charset=UTF-8",
-                // ANSI C strings?
-                "STRING",
-                "TEXT",
-                "text/plain",
-            ];
-            self.text_atoms = self.get_atoms(&NAMES);
-        }
-        &self.text_atoms
-    }
+	}
 
-    fn get_image_format_atoms(&mut self) -> &Atoms {
-        if self.image_atoms.is_empty() {
-            let atom = self.get_atom_by_id(MIME_IMAGE_PNG);
-            self.image_atoms.push(atom);
-        }
-        &self.image_atoms
-    }
+	fn get_text_format_atoms(&mut self) -> &Atoms {
+		if self.text_atoms.is_empty() {
+			const NAMES: [&'static str; 6] = [
+				// Prefer utf-8 formats first
+				"UTF8_STRING",
+				"text/plain;charset=utf-8",
+				"text/plain;charset=UTF-8",
+				// ANSI C strings?
+				"STRING",
+				"TEXT",
+				"text/plain",
+			];
+			self.text_atoms = self.get_atoms(&NAMES);
+		}
+		&self.text_atoms
+	}
+
+	fn get_image_format_atoms(&mut self) -> &Atoms {
+		if self.image_atoms.is_empty() {
+			let atom = self.get_atom_by_id(MIME_IMAGE_PNG);
+			self.image_atoms.push(atom);
+		}
+		&self.image_atoms
+	}
 }
 
 struct Manager {
@@ -392,27 +396,30 @@ impl Manager {
 		self.data.insert(shared.get_atom_by_id(MIME_IMAGE_PNG), None);
 
 		Ok(())
-    }
-    
-    /// Rust impl: instead of this function there's a more generic `set_data` which I believe can
-    /// also set user formats, but arboard doesn't support that for now.
-    fn set_text(&mut self, shared: &mut SharedState, bytes: Vec<u8>) -> Result<(), Box<dyn Error>> {
-        if !self.set_x11_selection_owner(shared) {
-            return Err("Could not take ownership of the x11 selection".into());
-        }
+	}
 
-        let atoms = shared.get_text_format_atoms();
-        if atoms.is_empty() {
-            return Err("Couldn't get the atoms that identify supported text formats for the x11 clipboard".into());
-        }
+	/// Rust impl: instead of this function there's a more generic `set_data` which I believe can
+	/// also set user formats, but arboard doesn't support that for now.
+	fn set_text(&mut self, shared: &mut SharedState, bytes: Vec<u8>) -> Result<(), Box<dyn Error>> {
+		if !self.set_x11_selection_owner(shared) {
+			return Err("Could not take ownership of the x11 selection".into());
+		}
 
-        let arc_data = Arc::new(Mutex::new(bytes));
-        for atom in atoms {
-            self.data.insert(*atom, Some(arc_data.clone()));
-        }
+		let atoms = shared.get_text_format_atoms();
+		if atoms.is_empty() {
+			return Err(
+				"Couldn't get the atoms that identify supported text formats for the x11 clipboard"
+					.into(),
+			);
+		}
 
-        Ok(())
-    }
+		let arc_data = Arc::new(Mutex::new(bytes));
+		for atom in atoms {
+			self.data.insert(*atom, Some(arc_data.clone()));
+		}
+
+		Ok(())
+	}
 
 	fn clear_data(&mut self) {
 		self.data.clear();
@@ -449,7 +456,7 @@ impl Manager {
 			}
 		}
 
-        let item = item.as_ref().unwrap().lock().unwrap();
+		let item = item.as_ref().unwrap().lock().unwrap();
 		// Set the "property" of "requestor" with the
 		// clipboard content in the requested format ("target").
 		unsafe {
@@ -481,14 +488,14 @@ impl Manager {
 			// The "m_reply_data" size can be smaller because the size
 			// specified in INCR property is just a lower bound.
 			Some(reply_data) => {
-                let mut reply_data = reply_data.lock().unwrap();
+				let mut reply_data = reply_data.lock().unwrap();
 				if req > reply_data.len() {
 					reply_data.resize(req, 0u8);
 				}
 			}
 		}
-        let src_slice = unsafe { std::slice::from_raw_parts(src, n) };
-        let mut reply_data_locked = self.reply_data.as_mut().unwrap().lock().unwrap();
+		let src_slice = unsafe { std::slice::from_raw_parts(src, n) };
+		let mut reply_data_locked = self.reply_data.as_mut().unwrap().lock().unwrap();
 		reply_data_locked[self.reply_offset..req].copy_from_slice(src_slice);
 		self.reply_offset += n;
 	}
@@ -497,7 +504,7 @@ impl Manager {
 	fn call_callback(&mut self, _reply: *mut xcb_get_property_reply_t) {
 		self.callback_result = false;
 		if let Some(callback) = &self.callback {
-			self.callback_result = callback();
+			self.callback_result = callback(&self.reply_data);
 		}
 		CONDVAR.notify_one();
 
@@ -563,7 +570,7 @@ impl Manager {
 					guard = get_data_from_selection_owner(
 						guard,
 						&atoms,
-						Some(Arc::new(|| true)),
+						Some(Arc::new(|_| true)),
 						selection,
 					)
 					.1;
@@ -1057,56 +1064,98 @@ fn get_x11_selection_owner(shared: &mut SharedState) -> xcb::xproto::Window {
 }
 
 fn get_text(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<String, Box<dyn Error>> {
-    // Rust impl: This function is probably the ugliest Rust code I've ever written
-    // Make no mistake, the original, C++ code was perfectly fine (which I didn't write)
-    let owner = get_x11_selection_owner(&mut guard.as_mut().unwrap().shared);
-    if owner == guard.as_mut().unwrap().manager.window {
-        let atoms = guard.as_mut().unwrap().shared.get_text_format_atoms().clone();
-        for atom in atoms.iter() {
-            let mut item = None;
-            if let Some(i) = guard.as_mut().unwrap().manager.data.get(atom) {
-                if let Some(i) = i {
-                    item = Some(i.clone());
-                }
-            }
-            if let Some(item) = item {
-                // Unwrapping the item because we always initialize text with `Some`
-                let locked = item.lock().unwrap();
-                let result = String::from_utf8(locked.clone());
-                return Ok(result?);
-            }
-        }
-    } else if owner != 0 {
-        let atoms = guard.as_mut().unwrap().shared.get_text_format_atoms().clone();
-        let reply_data;
-        if let Some(data) = guard.as_mut().unwrap().manager.reply_data.as_ref() {
-            reply_data = Some(data.clone());
-        } else {
-            reply_data = None;
-        }
-        if let Some(reply_data) = reply_data {
-            let result = Arc::new(Mutex::new(Ok(String::new())));
-            let callback = {
-                let result = result.clone();
-                Arc::new(move || {
-                    let locked_data = reply_data.lock().unwrap();
-                    let mut locked_result = result.lock().unwrap();
-                    *locked_result = String::from_utf8(locked_data.clone());
-                    true
-                })
-            };
-            let (success, _) = get_data_from_selection_owner(
-                guard, &atoms, Some(callback as _), 0
-            );
-            if success {
-                let mut taken = Ok(String::new());
-                let mut locked = result.lock().unwrap();
-                std::mem::swap(&mut taken, &mut locked);
-                return Ok(taken?);
-            }
-        }
-    }
-    Err("Could not get text from clipboard".into())
+	// Rust impl: This function is probably the ugliest Rust code I've ever written
+	// Make no mistake, the original, C++ code was perfectly fine (which I didn't write)
+	let owner = get_x11_selection_owner(&mut guard.as_mut().unwrap().shared);
+	if owner == guard.as_mut().unwrap().manager.window {
+		let atoms = guard.as_mut().unwrap().shared.get_text_format_atoms().clone();
+		for atom in atoms.iter() {
+			let mut item = None;
+			if let Some(i) = guard.as_mut().unwrap().manager.data.get(atom) {
+				if let Some(i) = i {
+					item = Some(i.clone());
+				}
+			}
+			if let Some(item) = item {
+				// Unwrapping the item because we always initialize text with `Some`
+				let locked = item.lock().unwrap();
+				let result = String::from_utf8(locked.clone());
+				return Ok(result?);
+			}
+		}
+	} else if owner != 0 {
+		let atoms = guard.as_mut().unwrap().shared.get_text_format_atoms().clone();
+		let result = Arc::new(Mutex::new(Ok(String::new())));
+		let callback = {
+			let result = result.clone();
+			Arc::new(move |data: &BufferPtr| {
+				if let Some(reply_data) = data {
+					let locked_data = reply_data.lock().unwrap();
+					let mut locked_result = result.lock().unwrap();
+					*locked_result = String::from_utf8(locked_data.clone());
+				}
+				true
+			})
+		};
+
+		let (success, _) = get_data_from_selection_owner(guard, &atoms, Some(callback as _), 0);
+		if success {
+			let mut taken = Ok(String::new());
+			let mut locked = result.lock().unwrap();
+			std::mem::swap(&mut taken, &mut locked);
+			return Ok(taken?);
+		}
+	}
+	Err("Could not get text from clipboard".into())
+}
+
+fn get_image(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<ImageData, Box<dyn Error>> {
+	let owner = get_x11_selection_owner(&mut guard.as_mut().unwrap().shared);
+	//let mut result_img;
+	if owner == guard.as_ref().unwrap().manager.window {
+		let image = &guard.as_ref().unwrap().manager.image;
+		if image.width > 0 && image.height > 0 && !image.bytes.is_empty() {
+			return Ok(image.to_cloned());
+		}
+	} else if owner != 0 {
+		let atoms = vec![guard.as_mut().unwrap().shared.get_atom_by_id(MIME_IMAGE_PNG)];
+		let result: Arc<Mutex<Result<ImageData, String>>> =
+			Arc::new(Mutex::new(Err("Could not get image from clipboard".into())));
+		let callback = {
+			let result = result.clone();
+			Arc::new(move |data: &BufferPtr| {
+				if let Some(reply_data) = data {
+					let locked_data = reply_data.lock().unwrap();
+					let cursor = std::io::Cursor::new(&*locked_data);
+					let mut reader = image::io::Reader::new(cursor);
+					reader.set_format(image::ImageFormat::Png);
+					let image;
+					match reader.decode() {
+						Ok(img) => image = img.into_rgba(),
+						Err(_e) => return false,
+					}
+					let (w, h) = image.dimensions();
+					let mut locked_result = result.lock().unwrap();
+					let result = ImageData {
+						width: w as usize,
+						height: h as usize,
+						bytes: image.into_raw().into(),
+					};
+					*locked_result = Ok(result);
+				}
+				true
+			})
+		};
+		let success = get_data_from_selection_owner(guard, &atoms, Some(callback as _), 0).0;
+		if success {
+			let mut taken = Err("Critical error in clipbard handling".into());
+			let mut locked = result.lock().unwrap();
+			std::mem::swap(&mut taken, &mut locked);
+			return Ok(taken?);
+		}
+	}
+
+	Err("Could not image from clipboard".into())
 }
 
 fn encode_data_on_demand(
@@ -1152,19 +1201,20 @@ fn encode_data_on_demand(
 		// Rust impl: The encoder must be destroyed so that it lets go of its reference to the
 		// `output` before we `try_unwrap()`
 		if encoding_result.is_ok() {
-			*buffer = Some(Arc::new(Mutex::new(Rc::try_unwrap(output.inner).unwrap().into_inner())));
+			*buffer =
+				Some(Arc::new(Mutex::new(Rc::try_unwrap(output.inner).unwrap().into_inner())));
 		}
 	}
 }
 
 fn ensure_lo_initialized() -> Result<MutexGuard<'static, Option<LockedObjects>>, Box<dyn Error>> {
-    let mut locked = LOCKED_OBJECTS.lock().unwrap();
-    if locked.is_none() {
-        *locked = Some(LockedObjects::new().map_err(|e| {
-            format!("Could not initialize the x11 clipboard handling facilities. Cause: {}", e)
-        })?);
-    }
-    Ok(locked)
+	let mut locked = LOCKED_OBJECTS.lock().unwrap();
+	if locked.is_none() {
+		*locked = Some(LockedObjects::new().map_err(|e| {
+			format!("Could not initialize the x11 clipboard handling facilities. Cause: {}", e)
+		})?);
+	}
+	Ok(locked)
 }
 
 fn with_locked_objects<F, T>(action: F) -> Result<T, Box<dyn Error>>
@@ -1174,12 +1224,11 @@ where
 	// The gobal may not have been initialized yet or may have been destroyed previously.
 	//
 	// Note: the global objects gets destroyed (replaced with None) when the last
-    // clipboard context is dropped (goes out of scope).
-    let mut locked = ensure_lo_initialized()?;
-    let lo = locked.as_mut().unwrap();
-    action(lo)
+	// clipboard context is dropped (goes out of scope).
+	let mut locked = ensure_lo_initialized()?;
+	let lo = locked.as_mut().unwrap();
+	action(lo)
 }
-
 
 pub struct X11ClipboardContext {
 	_owned: Arc<Mutex<Option<LockedObjects>>>,
@@ -1203,26 +1252,27 @@ impl ClipboardProvider for X11ClipboardContext {
 	}
 
 	fn get_text(&mut self) -> Result<String, Box<dyn Error>> {
-        let locked = ensure_lo_initialized()?;
-        get_text(locked)
+		let locked = ensure_lo_initialized()?;
+		get_text(locked)
 	}
 
 	fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>> {
 		with_locked_objects(|locked| {
 			let manager = &mut locked.manager;
-            let shared = &mut locked.shared;
+			let shared = &mut locked.shared;
 			manager.set_text(shared, text.into_bytes())
 		})
 	}
 
 	fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>> {
-		todo!()
+		let locked = ensure_lo_initialized()?;
+		get_image(locked)
 	}
 
 	fn set_image(&mut self, image: ImageData) -> Result<(), Box<dyn Error>> {
 		with_locked_objects(|locked| {
 			let manager = &mut locked.manager;
-            let shared = &mut locked.shared;
+			let shared = &mut locked.shared;
 			manager.set_image(shared, image)
 		})
 	}
