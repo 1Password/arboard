@@ -2,7 +2,7 @@
 name = "arboard"
 version = "0.1.0"
 authors = ["Avi Weinstock <aweinstock314@gmail.com>", "Artur Kovacs <kovacs.artur.barnabas@gmail.com>"]
-description = "Getting and setting text and image for the OS-level clipboard."
+description = "Image and text handling for the OS clipboard."
 repository = "https://github.com/ArturKovacs/arboard"
 license = "MIT / Apache-2.0"
 keywords = ["clipboard"]

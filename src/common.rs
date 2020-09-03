@@ -15,11 +15,6 @@ limitations under the License.
 */
 
 use std::borrow::Cow;
-use std::error::Error;
-
-pub fn err(s: &str) -> Box<dyn Error> {
-	Box::<dyn Error + Send + Sync>::from(s)
-}
 
 /// Stores pixel data of an image.
 ///
@@ -33,6 +28,7 @@ pub fn err(s: &str) -> Box<dyn Error> {
 ///
 /// Assigning a 2*1 image would for example look like this
 /// ```
+/// use arboard::ImageData;
 /// use std::borrow::Cow;
 /// let bytes = [
 ///     // A red pixel
@@ -66,17 +62,4 @@ impl<'a> ImageData<'a> {
 			bytes: self.bytes.clone().into_owned().into(),
 		}
 	}
-}
-
-/// Trait for clipboard access
-pub trait ClipboardProvider: Sized {
-	/// Create a context with which to access the clipboard
-	// TODO: consider replacing Box<Error> with an associated type?
-	fn new() -> Result<Self, Box<dyn Error>>;
-	/// Method to get the clipboard contents as a String
-	fn get_text(&mut self) -> Result<String, Box<dyn Error>>;
-	/// Method to set the clipboard contents as a String
-	fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>>;
-	fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>>;
-	fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn Error>>;
 }

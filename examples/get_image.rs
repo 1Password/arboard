@@ -1,9 +1,9 @@
 extern crate arboard;
 
-use arboard::{ClipboardContext, ClipboardProvider};
+use arboard::Clipboard;
 
 fn main() {
-	let mut ctx = ClipboardContext::new().unwrap();
+	let mut ctx = Clipboard::new().unwrap();
 
 	let img = ctx.get_image().unwrap();
 

@@ -1,10 +1,9 @@
 extern crate arboard;
 
-use arboard::ClipboardContext;
-use arboard::ClipboardProvider;
+use arboard::Clipboard;
 
 fn main() {
-	let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+	let mut ctx = Clipboard::new().unwrap();
 
 	let the_string = "Hello, world!";
 

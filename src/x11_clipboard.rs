@@ -2,7 +2,7 @@
 //!
 //!
 //!
-//! This implementation is a port of https://github.com/dacap/clip
+//! This implementation is a port of https://github.com/dacap/clip to Rust
 //! The structure of the original is more or less maintained.
 //!
 //! Disclaimer: The original C++ code is well organized and feels clean but it relies on C++
@@ -13,7 +13,7 @@
 //!
 //! Most changes are to conform with Rusts rules for example there are multiple overloads of
 //! the `get_atom` functtion in the original but there's no function overloading in Rust so
-//! those a split apart into functions with different names. (`get_atom_by_id` and the other one
+//! those are split apart into functions with different names. (`get_atom_by_id` and the other one
 //! at the time of writing I haven't needed to use)
 //!
 //! More noteably the `Manager` class had to be split into mutliple `structs` and some member
@@ -34,7 +34,7 @@ use std::time::Duration;
 
 use common::*;
 
-use image::{self, ImageDecoder};
+use image;
 
 use xcb::ffi::base::{xcb_request_check, XCB_CURRENT_TIME};
 use xcb::ffi::xproto::{
@@ -103,7 +103,6 @@ impl LockedObjects {
 						atoms: Default::default(),
 						common_atoms: Default::default(),
 						text_atoms: Default::default(),
-						image_atoms: Default::default(),
 					},
 					manager,
 				})
@@ -129,22 +128,13 @@ struct SharedState {
 
 	// Cache of atoms related to text or image content
 	text_atoms: Atoms,
-	image_atoms: Atoms,
+	//image_atoms: Atoms,
 }
 /// Need to manually `impl Send` because the connection contains pointers,
 /// and no pointer is `Send` by default.
 unsafe impl Send for SharedState {}
 
 impl SharedState {
-	fn dummy() -> Self {
-		SharedState {
-			conn: None,
-			atoms: Default::default(),
-			common_atoms: Default::default(),
-			text_atoms: Default::default(),
-			image_atoms: Default::default(),
-		}
-	}
 
 	fn get_atom_by_id(&mut self, id: usize) -> xproto::Atom {
 		if self.common_atoms.is_empty() {
@@ -204,31 +194,16 @@ impl SharedState {
 		&self.text_atoms
 	}
 
-	fn get_image_format_atoms(&mut self) -> &Atoms {
-		if self.image_atoms.is_empty() {
-			let atom = self.get_atom_by_id(MIME_IMAGE_PNG);
-			self.image_atoms.push(atom);
-		}
-		&self.image_atoms
-	}
+	// fn get_image_format_atoms(&mut self) -> &Atoms {
+	// 	if self.image_atoms.is_empty() {
+	// 		let atom = self.get_atom_by_id(MIME_IMAGE_PNG);
+	// 		self.image_atoms.push(atom);
+	// 	}
+	// 	&self.image_atoms
+	// }
 }
 
 struct Manager {
-	/// Original comment: "Access to the whole Manager"
-	///
-	/// Rust Implementation note:
-	/// This mutex ensures that certain members of this struct are not accessed
-	/// at the same time from both the event processing thread and the user's thread.    
-	///
-	/// Using a Mutex like this is not idiomatic Rust. The reason for
-	/// this is to match the original implementation.
-	///
-	/// I'm sure that a more idiomatic solution is possible but in the interest of time,
-	/// I'll stick to the structure of the original code.
-	///
-	/// Original is form a cpp library called `clip`. https://github.com/dacap/clip
-	//mutex: Mutex<()>,
-
 	// Temporal background window used to own the clipboard and process
 	// all events related about the clipboard in a background thread
 	window: xcb::xproto::Window,
@@ -1246,17 +1221,17 @@ impl Drop for X11ClipboardContext {
 	}
 }
 
-impl ClipboardProvider for X11ClipboardContext {
-	fn new() -> Result<Self, Box<dyn Error>> {
+impl X11ClipboardContext {
+	pub(crate) fn new() -> Result<Self, Box<dyn Error>> {
 		Ok(X11ClipboardContext { _owned: LOCKED_OBJECTS.clone() })
 	}
 
-	fn get_text(&mut self) -> Result<String, Box<dyn Error>> {
+	pub(crate) fn get_text(&mut self) -> Result<String, Box<dyn Error>> {
 		let locked = ensure_lo_initialized()?;
 		get_text(locked)
 	}
 
-	fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>> {
 		with_locked_objects(|locked| {
 			let manager = &mut locked.manager;
 			let shared = &mut locked.shared;
@@ -1264,12 +1239,12 @@ impl ClipboardProvider for X11ClipboardContext {
 		})
 	}
 
-	fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>> {
+	pub(crate) fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>> {
 		let locked = ensure_lo_initialized()?;
 		get_image(locked)
 	}
 
-	fn set_image(&mut self, image: ImageData) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Box<dyn Error>> {
 		with_locked_objects(|locked| {
 			let manager = &mut locked.manager;
 			let shared = &mut locked.shared;

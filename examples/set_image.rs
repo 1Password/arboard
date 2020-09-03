@@ -1,9 +1,9 @@
 extern crate arboard;
 
-use arboard::{ClipboardContext, ClipboardProvider, ImageData};
+use arboard::{Clipboard, ImageData};
 
 fn main() {
-	let mut ctx = ClipboardContext::new().unwrap();
+	let mut ctx = Clipboard::new().unwrap();
 
 	#[rustfmt::skip]
     let bytes = [

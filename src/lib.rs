@@ -47,8 +47,9 @@ extern crate objc_foundation;
 extern crate objc_id;
 
 mod common;
-pub use common::ClipboardProvider;
 pub use common::ImageData;
+
+use std::error::Error;
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 pub mod x11_clipboard;
@@ -60,15 +61,43 @@ pub mod windows_clipboard;
 pub mod osx_clipboard;
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
-pub type ClipboardContext = x11_clipboard::X11ClipboardContext;
+type PlatformClipboard = x11_clipboard::X11ClipboardContext;
 #[cfg(windows)]
-pub type ClipboardContext = windows_clipboard::WindowsClipboardContext;
+type PlatformClipboard = windows_clipboard::WindowsClipboardContext;
 #[cfg(target_os = "macos")]
-pub type ClipboardContext = osx_clipboard::OSXClipboardContext;
+type PlatformClipboard = osx_clipboard::OSXClipboardContext;
+
+pub struct Clipboard {
+	platform: PlatformClipboard
+}
+
+impl Clipboard {
+	pub fn new() -> Result<Self, Box<dyn Error>> {
+		Ok(Clipboard {
+			platform: PlatformClipboard::new()?
+		})
+	}
+
+	pub fn get_text(&mut self) -> Result<String, Box<dyn Error>> {
+		self.platform.get_text()
+	}
+
+	pub fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>> {
+		self.platform.set_text(text)
+	}
+
+	pub fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>> {
+		self.platform.get_image()
+	}
+
+	pub fn set_image(&mut self, image: ImageData) -> Result<(), Box<dyn Error>> {
+		self.platform.set_image(image)
+	}
+}
 
 #[test]
 fn test_text() {
-	let mut ctx = ClipboardContext::new().unwrap();
+	let mut ctx = Clipboard::new().unwrap();
 	ctx.set_text("some string".to_owned()).unwrap();
 	assert!(ctx.get_text().unwrap() == "some string");
 }
