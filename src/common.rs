@@ -16,6 +16,16 @@ limitations under the License.
 
 use std::borrow::Cow;
 
+pub enum ErrorKind {
+	/// The clipboard contents were not available in the requested format
+	FormatMismatch,
+
+	/// The clipboard is not accessible due to being held by an other party.
+	/// This "other party" could be a different process or it could be within
+	/// the same program.
+	ClipboardOccupied
+}
+
 /// Stores pixel data of an image.
 ///
 /// Each element in `bytes` stores the value of a channel of a single pixel.
@@ -43,6 +53,7 @@ use std::borrow::Cow;
 ///     bytes: Cow::from(bytes.as_ref())
 /// };
 /// ```
+#[derive(Debug, Clone)]
 pub struct ImageData<'a> {
 	pub width: usize,
 	pub height: usize,
@@ -55,6 +66,8 @@ impl<'a> ImageData<'a> {
 	}
 
 	/// Returns a new image data that is guaranteed to own its bytes.
+	/// In contrast the `clone()` function will yield borrowed bytes if the
+	/// original was borrowed too.
 	pub fn to_cloned(&self) -> ImageData<'static> {
 		ImageData {
 			width: self.width,

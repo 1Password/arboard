@@ -95,9 +95,36 @@ impl Clipboard {
 	}
 }
 
+/// All tests grouped in one because the windows clipboard cannot be open on
+/// multiple threads at once.
+/// TODO this could be resolved by using a global mutex similar to the one the
+/// Linux implementation uses.
 #[test]
-fn test_text() {
-	let mut ctx = Clipboard::new().unwrap();
-	ctx.set_text("some string".to_owned()).unwrap();
-	assert!(ctx.get_text().unwrap() == "some string");
+fn all_tests() {
+	{
+		let mut ctx = Clipboard::new().unwrap();
+		let text = "some string";
+		ctx.set_text(text.to_owned()).unwrap();
+		assert_eq!(ctx.get_text().unwrap(), text);
+	}
+	{
+		let mut ctx = Clipboard::new().unwrap();
+		let text = "Some utf8: 🤓 ∑φ(n)<ε 🐔";
+		ctx.set_text(text.to_owned()).unwrap();
+		assert_eq!(ctx.get_text().unwrap(), text);
+	}
+	{
+		let mut ctx = Clipboard::new().unwrap();
+		#[rustfmt::skip]
+		let bytes = [
+			255, 100, 100, 255,
+			100, 255, 100, 100,
+			100, 100, 255, 100,
+			0, 0, 0, 255,
+		];
+		let img_data = ImageData { width: 2, height: 2, bytes: bytes.as_ref().into() };
+		ctx.set_image(img_data.clone()).unwrap();
+		let got = ctx.get_image().unwrap();
+		assert_eq!(img_data.bytes, got.bytes);
+	}
 }
