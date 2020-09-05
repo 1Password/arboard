@@ -112,7 +112,7 @@ fn all_tests() {
 		let text = "Some utf8: 🤓 ∑φ(n)<ε 🐔";
 		ctx.set_text(text.to_owned()).unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
-	}
+    }
 	{
 		let mut ctx = Clipboard::new().unwrap();
 		#[rustfmt::skip]

@@ -28,10 +28,6 @@ use objc_id::{Id, Owned};
 use std::error::Error;
 use std::mem::transmute;
 
-pub struct OSXClipboardContext {
-	pasteboard: Id<Object>,
-}
-
 // required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
 extern "C" {}
@@ -81,23 +77,27 @@ fn image_from_pixels(
 		rendering_intent,
 	);
 	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
-	let nsimage_class = Class::get("NSImage").ok_or(err("Class::get(\"NSImage\")"))?;
+	let nsimage_class = Class::get("NSImage").ok_or("Class::get(\"NSImage\")")?;
 	let image: Id<NSObject> = unsafe { Id::from_ptr(msg_send![nsimage_class, alloc]) };
 	let () = unsafe { msg_send![image, initWithCGImage:cg_image size:size] };
 	Ok(image)
 }
 
-impl ClipboardProvider for OSXClipboardContext {
-	fn new() -> Result<OSXClipboardContext, Box<dyn Error>> {
-		let cls = Class::get("NSPasteboard").ok_or(err("Class::get(\"NSPasteboard\")"))?;
+pub struct OSXClipboardContext {
+	pasteboard: Id<Object>,
+}
+
+impl OSXClipboardContext {
+	pub(crate) fn new() -> Result<OSXClipboardContext, Box<dyn Error>> {
+		let cls = Class::get("NSPasteboard").ok_or("Class::get(\"NSPasteboard\")")?;
 		let pasteboard: *mut Object = unsafe { msg_send![cls, generalPasteboard] };
 		if pasteboard.is_null() {
-			return Err(err("NSPasteboard#generalPasteboard returned null"));
+			return Err("NSPasteboard#generalPasteboard returned null".into());
 		}
 		let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
 		Ok(OSXClipboardContext { pasteboard })
 	}
-	fn get_text(&mut self) -> Result<String, Box<dyn Error>> {
+	pub(crate) fn get_text(&mut self) -> Result<String, Box<dyn Error>> {
 		let string_class: Id<NSObject> = {
 			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
 			unsafe { transmute(cls) }
@@ -108,24 +108,24 @@ impl ClipboardProvider for OSXClipboardContext {
 			let obj: *mut NSArray<NSString> =
 				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
 			if obj.is_null() {
-				return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
+				return Err("pasteboard#readObjectsForClasses:options: returned null".into());
 			}
 			Id::from_ptr(obj)
 		};
 		if string_array.count() == 0 {
-			Err(err("pasteboard#readObjectsForClasses:options: returned empty"))
+			Err("pasteboard#readObjectsForClasses:options: returned empty".into())
 		} else {
 			Ok(string_array[0].as_str().to_owned())
 		}
 	}
-	fn set_text(&mut self, data: String) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Box<dyn Error>> {
 		let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
 		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
 		let success: bool = unsafe { msg_send![self.pasteboard, writeObjects: string_array] };
 		return if success {
 			Ok(())
 		} else {
-			Err(err("NSPasteboard#writeObjects: returned false"))
+			Err("NSPasteboard#writeObjects: returned false".into())
 		};
 	}
 	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn Error>> {
@@ -177,7 +177,7 @@ impl ClipboardProvider for OSXClipboardContext {
 	// 		}
 	// 	}
 	// }
-	fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>> {
+	pub(crate) fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>> {
 		Err("Not implemented".into())
 		// let image_class: Id<NSObject> = {
 		//     let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
@@ -223,7 +223,7 @@ impl ClipboardProvider for OSXClipboardContext {
 		//     }
 		//}
 	}
-	fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn Error>> {
 		let pixels = data.bytes.into();
 		let image = image_from_pixels(pixels, data.width, data.height)?;
 		let objects: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![image]);
