@@ -1,5 +1,13 @@
-//!
-//!
+/*
+SPDX-License-Identifier: Apache-2.0 OR MIT
+
+Copyright 2020 The arboard contributors
+
+The project to which this file belongs is licensed under either of
+the Apache 2.0 or the MIT license at the licensee's choice. The terms
+and conditions of the chosen license apply to this file.
+*/
+
 //!
 //!
 //! This implementation is a port of https://github.com/dacap/clip to Rust
@@ -21,7 +29,6 @@
 //! Furthermore the signature of many functions was changed to follow a simple locking philosophy;
 //! namely that the mutex gets locked at the topmost level possible and then most functions don't
 //! need to attempt to lock, instead they just use the direct object references passed on as arguments.
-//!
 //!
 //!
 

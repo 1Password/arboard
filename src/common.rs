@@ -1,29 +1,26 @@
 /*
+SPDX-License-Identifier: Apache-2.0 OR MIT
+
 Copyright 2020 The arboard contributors
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-   http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+The project to which this file belongs is licensed under either of
+the Apache 2.0 or the MIT license at the licensee's choice. The terms
+and conditions of the chosen license apply to this file.
 */
 
 use std::borrow::Cow;
+use thiserror::Error;
 
-
+#[derive(Error, Debug)]
 pub enum Error {
 	/// The clipboard contents were not available in the requested format.
 	/// This could either be due to the clipboard being empty or the clipboard contents having
 	/// an incompatible format to the requested one (eg when calling `get_image` on text)
+	#[error("The clipboard contents were not available in the requested format or the clipboard is empty.")]
 	ContentNotAvailable,
 
 	/// The native clipboard is not accessible due to being held by an other party.
+	///
 	/// This "other party" could be a different process or it could be within
 	/// the same program. So for example you may get this error when trying
 	/// to interact with the clipboard from multiple threads at once.
@@ -31,14 +28,17 @@ pub enum Error {
 	/// Note that it's OK to have multiple `Clipboard` instances. The underlying
 	/// implementation will make sure that the native clipboard is only 
 	/// opened for transferring data and then closed as soon as possible.
+	#[error("The native clipboard is not accessible due to being held by an other party.")]
 	ClipboardOccupied,
 
 	/// This can happen in either of the following cases.
 	/// 1, When returned from `set_image`: the image going to the clipboard cannot be converted to the appropriate format.
 	/// 2, When returned from `get_image`: the image coming from the clipboard could not be converted into the `ImageData` struct.
 	/// 3, When returned from `get_text`: the text coming from the clipboard is not valid utf-8 or cannot be converted to utf-8.
+	#[error("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format.")]
 	ConversionFailure,
 
+	#[error("Unknown error while interacting with the clipboard: {description}")]
 	Unknown {
 		description: String
 	}

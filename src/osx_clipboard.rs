@@ -1,17 +1,11 @@
 /*
+SPDX-License-Identifier: Apache-2.0 OR MIT
+
 Copyright 2020 The arboard contributors
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-   http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+The project to which this file belongs is licensed under either of
+the Apache 2.0 or the MIT license at the licensee's choice. The terms
+and conditions of the chosen license apply to this file.
 */
 
 use super::common::{ImageData, Error};
@@ -88,16 +82,16 @@ pub struct OSXClipboardContext {
 }
 
 impl OSXClipboardContext {
-	pub(crate) fn new() -> Result<OSXClipboardContext, Box<dyn std::error::Error>> {
-		let cls = Class::get("NSPasteboard").ok_or("Class::get(\"NSPasteboard\")")?;
+	pub(crate) fn new() -> Result<OSXClipboardContext, Error> {
+		let cls = Class::get("NSPasteboard").ok_or(Error::Unknown {description: "Class::get(\"NSPasteboard\")".into() })?;
 		let pasteboard: *mut Object = unsafe { msg_send![cls, generalPasteboard] };
 		if pasteboard.is_null() {
-			return Err("NSPasteboard#generalPasteboard returned null".into());
+			return Err(Error::Unknown {description: "NSPasteboard#generalPasteboard returned null".into() });
 		}
 		let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
 		Ok(OSXClipboardContext { pasteboard })
 	}
-	pub(crate) fn get_text(&mut self) -> Result<String, Box<dyn std::error::Error>> {
+	pub(crate) fn get_text(&mut self) -> Result<String, Error> {
 		let string_class: Id<NSObject> = {
 			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
 			unsafe { transmute(cls) }
@@ -109,25 +103,26 @@ impl OSXClipboardContext {
 				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
 			if obj.is_null() {
 				//TODO return NotAvailable here
-				return Err("pasteboard#readObjectsForClasses:options: returned null".into());
+				//return Err("pasteboard#readObjectsForClasses:options: returned null".into());
+				return Err(Error::ContentNotAvailable);
 			}
 			Id::from_ptr(obj)
 		};
 		if string_array.count() == 0 {
-			//TODO return NotAvailable here.
-			Err("pasteboard#readObjectsForClasses:options: returned empty".into())
+			//Err("pasteboard#readObjectsForClasses:options: returned empty".into())
+			Err(Error::ContentNotAvailable)
 		} else {
 			Ok(string_array[0].as_str().to_owned())
 		}
 	}
-	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Box<dyn std::error::Error>> {
+	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Error> {
 		let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
 		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
 		let success: bool = unsafe { msg_send![self.pasteboard, writeObjects: string_array] };
 		if success {
 			Ok(())
 		} else {
-			Err("NSPasteboard#writeObjects: returned false".into())
+			Err( Error::Unknown { description: "NSPasteboard#writeObjects: returned false".into() })
 		}
 	}
 	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn std::error::Error>> {
@@ -179,8 +174,8 @@ impl OSXClipboardContext {
 	// 		}
 	// 	}
 	// }
-	pub(crate) fn get_image(&mut self) -> Result<ImageData, Box<dyn std::error::Error>> {
-		Err("Not implemented".into())
+	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
+		Err(Error::Unknown{ description: "Not implemented".into() })
 		// let image_class: Id<NSObject> = {
 		//     let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
 		//     unsafe { transmute(cls) }
@@ -225,17 +220,15 @@ impl OSXClipboardContext {
 		//     }
 		//}
 	}
-	pub(crate) fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn std::error::Error>> {
+	pub(crate) fn set_image(&mut self, data: ImageData) -> Result<(), Error> {
 		let pixels = data.bytes.into();
 		// TODO use image conversion failure here.
-		let image = image_from_pixels(pixels, data.width, data.height)?;
+		let image = image_from_pixels(pixels, data.width, data.height).map_err(|_| Error::ConversionFailure)?;
 		let objects: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![image]);
 		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
 		let success: BOOL = unsafe { msg_send![self.pasteboard, writeObjects: objects] };
 		if success == NO {
-			return Err(
-				"Failed to write the image to the pasteboard (`writeObjects` returned NO).".into(),
-			);
+			return Err(Error::Unknown{description: "Failed to write the image to the pasteboard (`writeObjects` returned NO).".into()});
 		}
 		Ok(())
 	}
