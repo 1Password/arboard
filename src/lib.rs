@@ -41,7 +41,7 @@ extern crate image;
 // extern crate objc_id;
 
 mod common;
-pub use common::{ImageData, Error};
+pub use common::{Error, ImageData};
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 pub mod x11_clipboard;
@@ -60,14 +60,12 @@ type PlatformClipboard = windows_clipboard::WindowsClipboardContext;
 type PlatformClipboard = osx_clipboard::OSXClipboardContext;
 
 pub struct Clipboard {
-	platform: PlatformClipboard
+	platform: PlatformClipboard,
 }
 
 impl Clipboard {
 	pub fn new() -> Result<Self, Error> {
-		Ok(Clipboard {
-			platform: PlatformClipboard::new()?
-		})
+		Ok(Clipboard { platform: PlatformClipboard::new()? })
 	}
 
 	pub fn get_text(&mut self) -> Result<String, Error> {
@@ -104,7 +102,7 @@ fn all_tests() {
 		let text = "Some utf8: 🤓 ∑φ(n)<ε 🐔";
 		ctx.set_text(text.to_owned()).unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
-    }
+	}
 	{
 		let mut ctx = Clipboard::new().unwrap();
 		#[rustfmt::skip]

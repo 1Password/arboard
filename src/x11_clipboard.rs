@@ -142,7 +142,6 @@ struct SharedState {
 unsafe impl Send for SharedState {}
 
 impl SharedState {
-
 	fn get_atom_by_id(&mut self, id: usize) -> xproto::Atom {
 		if self.common_atoms.is_empty() {
 			self.common_atoms = self.get_atoms(&COMMON_ATOM_NAMES);

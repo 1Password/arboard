@@ -8,7 +8,7 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use super::common::{ImageData, Error};
+use super::common::{Error, ImageData};
 use core_graphics::color_space::CGColorSpace;
 use core_graphics::image::CGImage;
 use core_graphics::{
@@ -83,10 +83,13 @@ pub struct OSXClipboardContext {
 
 impl OSXClipboardContext {
 	pub(crate) fn new() -> Result<OSXClipboardContext, Error> {
-		let cls = Class::get("NSPasteboard").ok_or(Error::Unknown {description: "Class::get(\"NSPasteboard\")".into() })?;
+		let cls = Class::get("NSPasteboard")
+			.ok_or(Error::Unknown { description: "Class::get(\"NSPasteboard\")".into() })?;
 		let pasteboard: *mut Object = unsafe { msg_send![cls, generalPasteboard] };
 		if pasteboard.is_null() {
-			return Err(Error::Unknown {description: "NSPasteboard#generalPasteboard returned null".into() });
+			return Err(Error::Unknown {
+				description: "NSPasteboard#generalPasteboard returned null".into(),
+			});
 		}
 		let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
 		Ok(OSXClipboardContext { pasteboard })
@@ -122,7 +125,7 @@ impl OSXClipboardContext {
 		if success {
 			Ok(())
 		} else {
-			Err( Error::Unknown { description: "NSPasteboard#writeObjects: returned false".into() })
+			Err(Error::Unknown { description: "NSPasteboard#writeObjects: returned false".into() })
 		}
 	}
 	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn std::error::Error>> {
@@ -175,7 +178,7 @@ impl OSXClipboardContext {
 	// 	}
 	// }
 	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
-		Err(Error::Unknown{ description: "Not implemented".into() })
+		Err(Error::Unknown { description: "Not implemented".into() })
 		// let image_class: Id<NSObject> = {
 		//     let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
 		//     unsafe { transmute(cls) }
@@ -223,12 +226,17 @@ impl OSXClipboardContext {
 	pub(crate) fn set_image(&mut self, data: ImageData) -> Result<(), Error> {
 		let pixels = data.bytes.into();
 		// TODO use image conversion failure here.
-		let image = image_from_pixels(pixels, data.width, data.height).map_err(|_| Error::ConversionFailure)?;
+		let image = image_from_pixels(pixels, data.width, data.height)
+			.map_err(|_| Error::ConversionFailure)?;
 		let objects: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![image]);
 		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
 		let success: BOOL = unsafe { msg_send![self.pasteboard, writeObjects: objects] };
 		if success == NO {
-			return Err(Error::Unknown{description: "Failed to write the image to the pasteboard (`writeObjects` returned NO).".into()});
+			return Err(Error::Unknown {
+				description:
+					"Failed to write the image to the pasteboard (`writeObjects` returned NO)."
+						.into(),
+			});
 		}
 		Ok(())
 	}

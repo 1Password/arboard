@@ -26,7 +26,7 @@ pub enum Error {
 	/// to interact with the clipboard from multiple threads at once.
 	///
 	/// Note that it's OK to have multiple `Clipboard` instances. The underlying
-	/// implementation will make sure that the native clipboard is only 
+	/// implementation will make sure that the native clipboard is only
 	/// opened for transferring data and then closed as soon as possible.
 	#[error("The native clipboard is not accessible due to being held by an other party.")]
 	ClipboardOccupied,
@@ -39,9 +39,7 @@ pub enum Error {
 	ConversionFailure,
 
 	#[error("Unknown error while interacting with the clipboard: {description}")]
-	Unknown {
-		description: String
-	}
+	Unknown { description: String },
 }
 
 /// Stores pixel data of an image.
