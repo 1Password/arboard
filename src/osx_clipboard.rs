@@ -1,5 +1,5 @@
 /*
-Copyright 2016 Avraham Weinstock
+Copyright 2020 The arboard contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-use common::*;
+use super::common::{ImageData, Error};
 use core_graphics::color_space::CGColorSpace;
 use core_graphics::image::CGImage;
 use core_graphics::{
@@ -22,10 +22,10 @@ use core_graphics::{
 	data_provider::{CGDataProvider, CustomData},
 };
 use objc::runtime::{Class, Object, BOOL, NO};
+use objc::{msg_send, sel, sel_impl};
 use objc_foundation::{INSArray, INSObject, INSString};
 use objc_foundation::{NSArray, NSDictionary, NSObject, NSString};
 use objc_id::{Id, Owned};
-use std::error::Error;
 use std::mem::transmute;
 
 // required to bring NSPasteboard into the path of the class-resolver
@@ -58,7 +58,7 @@ fn image_from_pixels(
 	pixels: Vec<u8>,
 	width: usize,
 	height: usize,
-) -> Result<Id<NSObject>, Box<dyn Error>> {
+) -> Result<Id<NSObject>, Box<dyn std::error::Error>> {
 	let colorspace = CGColorSpace::create_device_rgb();
 	let bitmap_info: u32 = kCGBitmapByteOrderDefault | kCGImageAlphaLast;
 	let pixel_data: Box<Box<dyn CustomData>> = Box::new(Box::new(PixelArray { data: pixels }));
@@ -88,7 +88,7 @@ pub struct OSXClipboardContext {
 }
 
 impl OSXClipboardContext {
-	pub(crate) fn new() -> Result<OSXClipboardContext, Box<dyn Error>> {
+	pub(crate) fn new() -> Result<OSXClipboardContext, Box<dyn std::error::Error>> {
 		let cls = Class::get("NSPasteboard").ok_or("Class::get(\"NSPasteboard\")")?;
 		let pasteboard: *mut Object = unsafe { msg_send![cls, generalPasteboard] };
 		if pasteboard.is_null() {
@@ -97,7 +97,7 @@ impl OSXClipboardContext {
 		let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
 		Ok(OSXClipboardContext { pasteboard })
 	}
-	pub(crate) fn get_text(&mut self) -> Result<String, Box<dyn Error>> {
+	pub(crate) fn get_text(&mut self) -> Result<String, Box<dyn std::error::Error>> {
 		let string_class: Id<NSObject> = {
 			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
 			unsafe { transmute(cls) }
@@ -108,27 +108,29 @@ impl OSXClipboardContext {
 			let obj: *mut NSArray<NSString> =
 				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
 			if obj.is_null() {
+				//TODO return NotAvailable here
 				return Err("pasteboard#readObjectsForClasses:options: returned null".into());
 			}
 			Id::from_ptr(obj)
 		};
 		if string_array.count() == 0 {
+			//TODO return NotAvailable here.
 			Err("pasteboard#readObjectsForClasses:options: returned empty".into())
 		} else {
 			Ok(string_array[0].as_str().to_owned())
 		}
 	}
-	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Box<dyn std::error::Error>> {
 		let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
 		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
 		let success: bool = unsafe { msg_send![self.pasteboard, writeObjects: string_array] };
-		return if success {
+		if success {
 			Ok(())
 		} else {
 			Err("NSPasteboard#writeObjects: returned false".into())
-		};
+		}
 	}
-	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn Error>> {
+	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn std::error::Error>> {
 	// 	let string_class: Id<NSObject> = {
 	// 		let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
 	// 		unsafe { transmute(cls) }
@@ -177,7 +179,7 @@ impl OSXClipboardContext {
 	// 		}
 	// 	}
 	// }
-	pub(crate) fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>> {
+	pub(crate) fn get_image(&mut self) -> Result<ImageData, Box<dyn std::error::Error>> {
 		Err("Not implemented".into())
 		// let image_class: Id<NSObject> = {
 		//     let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
@@ -223,8 +225,9 @@ impl OSXClipboardContext {
 		//     }
 		//}
 	}
-	pub(crate) fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn set_image(&mut self, data: ImageData) -> Result<(), Box<dyn std::error::Error>> {
 		let pixels = data.bytes.into();
+		// TODO use image conversion failure here.
 		let image = image_from_pixels(pixels, data.width, data.height)?;
 		let objects: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![image]);
 		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };

@@ -1,5 +1,5 @@
 /*
-Copyright 2016 Avraham Weinstock
+Copyright 2020 The arboard contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,9 +16,12 @@ limitations under the License.
 
 use std::borrow::Cow;
 
-pub enum ErrorKind {
-	/// The clipboard contents were not available in the requested format
-	FormatMismatch,
+
+pub enum Error {
+	/// The clipboard contents were not available in the requested format.
+	/// This could either be due to the clipboard being empty or the clipboard contents having
+	/// an incompatible format to the requested one (eg when calling `get_image` on text)
+	ContentNotAvailable,
 
 	/// The native clipboard is not accessible due to being held by an other party.
 	/// This "other party" could be a different process or it could be within
@@ -30,6 +33,12 @@ pub enum ErrorKind {
 	/// opened for transferring data and then closed as soon as possible.
 	ClipboardOccupied,
 
+	/// This can happen in either of the following cases.
+	/// 1, When returned from `set_image`: the image going to the clipboard cannot be converted to the appropriate format.
+	/// 2, When returned from `get_image`: the image coming from the clipboard could not be converted into the `ImageData` struct.
+	/// 3, When returned from `get_text`: the text coming from the clipboard is not valid utf-8 or cannot be converted to utf-8.
+	ConversionFailure,
+
 	Unknown {
 		description: String
 	}
@@ -39,9 +48,9 @@ pub enum ErrorKind {
 ///
 /// Each element in `bytes` stores the value of a channel of a single pixel.
 /// This struct stores four channels (red, green, blue, alpha) so
-/// a 3*3 image is going to be stored by 3*3*4 = 36 bytes of data.
+/// a 3*3 image is going to be stored on 3*3*4 = 36 bytes of data.
 ///
-/// The pixels are stored in row-major order meaning that the second pixel
+/// The pixels are in row-major order meaning that the second pixel
 /// in `bytes` (starting at the fifth byte) corresponds to the pixel that's
 /// sitting to the right side of the top-left pixel (x=1, y=0)
 ///

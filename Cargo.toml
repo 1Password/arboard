@@ -5,7 +5,11 @@ authors = ["Avi Weinstock <aweinstock314@gmail.com>", "Artur Kovacs <kovacs.artu
 description = "Image and text handling for the OS clipboard."
 repository = "https://github.com/ArturKovacs/arboard"
 license = "MIT / Apache-2.0"
-keywords = ["clipboard"]
+keywords = ["clipboard", "image"]
+edition = "2018"
+
+[dependencies]
+thiserror = "1.0"
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "4.0"

@@ -1,5 +1,5 @@
 /*
-Copyright 2016 Avraham Weinstock
+Copyright 2020 The arboard contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -36,15 +36,15 @@ extern crate clipboard_win;
 #[cfg(windows)]
 extern crate image;
 
-#[cfg(target_os = "macos")]
-#[macro_use]
-extern crate objc;
-#[cfg(target_os = "macos")]
-extern crate core_graphics;
-#[cfg(target_os = "macos")]
-extern crate objc_foundation;
-#[cfg(target_os = "macos")]
-extern crate objc_id;
+// #[cfg(target_os = "macos")]
+// #[macro_use]
+// extern crate objc;
+// #[cfg(target_os = "macos")]
+// extern crate core_graphics;
+// #[cfg(target_os = "macos")]
+// extern crate objc_foundation;
+// #[cfg(target_os = "macos")]
+// extern crate objc_id;
 
 mod common;
 pub use common::ImageData;
