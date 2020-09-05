@@ -20,10 +20,19 @@ pub enum ErrorKind {
 	/// The clipboard contents were not available in the requested format
 	FormatMismatch,
 
-	/// The clipboard is not accessible due to being held by an other party.
+	/// The native clipboard is not accessible due to being held by an other party.
 	/// This "other party" could be a different process or it could be within
-	/// the same program.
-	ClipboardOccupied
+	/// the same program. So for example you may get this error when trying
+	/// to interact with the clipboard from multiple threads at once.
+	///
+	/// Note that it's OK to have multiple `Clipboard` instances. The underlying
+	/// implementation will make sure that the native clipboard is only 
+	/// opened for transferring data and then closed as soon as possible.
+	ClipboardOccupied,
+
+	Unknown {
+		description: String
+	}
 }
 
 /// Stores pixel data of an image.
