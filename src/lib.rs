@@ -13,32 +13,12 @@ and conditions of the chosen license apply to this file.
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
-extern crate image;
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
-extern crate libc;
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
-extern crate xcb;
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
-#[macro_use]
-extern crate lazy_static;
-
 #[cfg(windows)]
 extern crate byteorder;
 #[cfg(windows)]
 extern crate clipboard_win;
 #[cfg(windows)]
 extern crate image;
-
-// #[cfg(target_os = "macos")]
-// #[macro_use]
-// extern crate objc;
-// #[cfg(target_os = "macos")]
-// extern crate core_graphics;
-// #[cfg(target_os = "macos")]
-// extern crate objc_foundation;
-// #[cfg(target_os = "macos")]
-// extern crate objc_id;
 
 mod common;
 pub use common::{Error, ImageData};

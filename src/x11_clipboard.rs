@@ -34,15 +34,13 @@ and conditions of the chosen license apply to this file.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
-use std::error::Error;
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
-use common::*;
-
 use image;
-
+use lazy_static::lazy_static;
+use libc;
 use xcb::ffi::base::{xcb_request_check, XCB_CURRENT_TIME};
 use xcb::ffi::xproto::{
 	xcb_atom_t, xcb_change_property, xcb_get_property, xcb_get_property_reply,
@@ -57,7 +55,7 @@ use xcb::{
 	xproto::{self, get_selection_owner},
 };
 
-use libc;
+use super::common::{Error, ImageData};
 
 const ATOM: usize = 0;
 const INCR: usize = 1;
@@ -99,7 +97,7 @@ struct LockedObjects {
 }
 
 impl LockedObjects {
-	fn new() -> Result<LockedObjects, Box<dyn Error>> {
+	fn new() -> Result<LockedObjects, Error> {
 		let connection = xcb::Connection::connect(None).unwrap().0;
 		match Manager::new(&connection) {
 			Ok(manager) => {
@@ -278,18 +276,20 @@ struct Manager {
 }
 
 impl Manager {
-	fn new(connection: &xcb::Connection) -> Result<Self, Box<dyn Error>> {
+	fn new(connection: &xcb::Connection) -> Result<Self, Error> {
 		use xcb::ffi::xproto::{
 			XCB_CW_EVENT_MASK, XCB_EVENT_MASK_PROPERTY_CHANGE, XCB_EVENT_MASK_STRUCTURE_NOTIFY,
 			XCB_WINDOW_CLASS_INPUT_OUTPUT,
 		};
 		let setup = connection.get_setup();
 		if std::ptr::null() == setup.ptr {
-			return Err("Could not get setup for connection".into());
+			return Err(Error::Unknown {
+				description: "Could not get setup for connection".into(),
+			});
 		}
 		let screen = setup.roots().data;
 		if std::ptr::null() == screen {
-			return Err("Could not get screen from setup".into());
+			return Err(Error::Unknown { description: "Could not get screen from setup".into() });
 		}
 		let event_mask =
             // Just in case that some program reports SelectionNotify events
@@ -359,13 +359,11 @@ impl Manager {
 		true
 	}
 
-	fn set_image(
-		&mut self,
-		shared: &mut SharedState,
-		image: ImageData,
-	) -> Result<(), Box<dyn Error>> {
+	fn set_image(&mut self, shared: &mut SharedState, image: ImageData) -> Result<(), Error> {
 		if !self.set_x11_selection_owner(shared) {
-			return Err("Failed to set x11 selection owner.".into());
+			return Err(Error::Unknown {
+				description: "Failed to set x11 selection owner.".into(),
+			});
 		}
 
 		self.image.width = image.width;
@@ -381,17 +379,19 @@ impl Manager {
 
 	/// Rust impl: instead of this function there's a more generic `set_data` which I believe can
 	/// also set user formats, but arboard doesn't support that for now.
-	fn set_text(&mut self, shared: &mut SharedState, bytes: Vec<u8>) -> Result<(), Box<dyn Error>> {
+	fn set_text(&mut self, shared: &mut SharedState, bytes: Vec<u8>) -> Result<(), Error> {
 		if !self.set_x11_selection_owner(shared) {
-			return Err("Could not take ownership of the x11 selection".into());
+			return Err(Error::Unknown {
+				description: "Could not take ownership of the x11 selection".into(),
+			});
 		}
 
 		let atoms = shared.get_text_format_atoms();
 		if atoms.is_empty() {
-			return Err(
+			return Err(Error::Unknown { description:
 				"Couldn't get the atoms that identify supported text formats for the x11 clipboard"
 					.into(),
-			);
+			});
 		}
 
 		let arc_data = Arc::new(Mutex::new(bytes));
@@ -1044,7 +1044,7 @@ fn get_x11_selection_owner(shared: &mut SharedState) -> xcb::xproto::Window {
 	result
 }
 
-fn get_text(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<String, Box<dyn Error>> {
+fn get_text(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<String, Error> {
 	// Rust impl: This function is probably the ugliest Rust code I've ever written
 	// Make no mistake, the original, C++ code was perfectly fine (which I didn't write)
 	let owner = get_x11_selection_owner(&mut guard.as_mut().unwrap().shared);
@@ -1061,7 +1061,7 @@ fn get_text(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<String, Box<
 				// Unwrapping the item because we always initialize text with `Some`
 				let locked = item.lock().unwrap();
 				let result = String::from_utf8(locked.clone());
-				return Ok(result?);
+				return Ok(result.map_err(|_| Error::ConversionFailure)?);
 			}
 		}
 	} else if owner != 0 {
@@ -1084,13 +1084,13 @@ fn get_text(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<String, Box<
 			let mut taken = Ok(String::new());
 			let mut locked = result.lock().unwrap();
 			std::mem::swap(&mut taken, &mut locked);
-			return Ok(taken?);
+			return Ok(taken.map_err(|_| Error::ConversionFailure)?);
 		}
 	}
-	Err("Could not get text from clipboard".into())
+	Err(Error::ContentNotAvailable)
 }
 
-fn get_image(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<ImageData, Box<dyn Error>> {
+fn get_image(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<ImageData, Error> {
 	let owner = get_x11_selection_owner(&mut guard.as_mut().unwrap().shared);
 	//let mut result_img;
 	if owner == guard.as_ref().unwrap().manager.window {
@@ -1100,8 +1100,8 @@ fn get_image(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<ImageData, 
 		}
 	} else if owner != 0 {
 		let atoms = vec![guard.as_mut().unwrap().shared.get_atom_by_id(MIME_IMAGE_PNG)];
-		let result: Arc<Mutex<Result<ImageData, String>>> =
-			Arc::new(Mutex::new(Err("Could not get image from clipboard".into())));
+		let result: Arc<Mutex<Result<ImageData, Error>>> =
+			Arc::new(Mutex::new(Err(Error::ContentNotAvailable)));
 		let callback = {
 			let result = result.clone();
 			Arc::new(move |data: &BufferPtr| {
@@ -1113,30 +1113,35 @@ fn get_image(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<ImageData, 
 					let image;
 					match reader.decode() {
 						Ok(img) => image = img.into_rgba(),
-						Err(_e) => return false,
+						Err(_e) => {
+							let mut locked_result = result.lock().unwrap();
+							*locked_result = Err(Error::ConversionFailure);
+							return false;
+						}
 					}
 					let (w, h) = image.dimensions();
 					let mut locked_result = result.lock().unwrap();
-					let result = ImageData {
+					let image_data = ImageData {
 						width: w as usize,
 						height: h as usize,
 						bytes: image.into_raw().into(),
 					};
-					*locked_result = Ok(result);
+					*locked_result = Ok(image_data);
 				}
 				true
 			})
 		};
-		let success = get_data_from_selection_owner(guard, &atoms, Some(callback as _), 0).0;
-		if success {
-			let mut taken = Err("Critical error in clipbard handling".into());
-			let mut locked = result.lock().unwrap();
-			std::mem::swap(&mut taken, &mut locked);
-			return Ok(taken?);
-		}
+		let _success = get_data_from_selection_owner(guard, &atoms, Some(callback as _), 0).0;
+		// Rust impl: We return the result here no matter if it succeeded, because the result will
+		// tell us if it hasn't
+		let mut taken = Err(Error::Unknown {
+			description: format!("Implementation error at {}:{}", file!(), line!()),
+		});
+		let mut locked = result.lock().unwrap();
+		std::mem::swap(&mut taken, &mut locked);
+		return Ok(taken?);
 	}
-
-	Err("Could not image from clipboard".into())
+	Err(Error::ContentNotAvailable)
 }
 
 fn encode_data_on_demand(
@@ -1171,7 +1176,7 @@ fn encode_data_on_demand(
 		let output = RcBuffer { inner: Rc::new(RefCell::new(Vec::new())) };
 		let encoding_result;
 		{
-			let encoder = image::png::PNGEncoder::new(output.clone());
+			let encoder = image::png::PngEncoder::new(output.clone());
 			encoding_result = encoder.encode(
 				image.bytes.as_ref(),
 				image.width as u32,
@@ -1188,19 +1193,22 @@ fn encode_data_on_demand(
 	}
 }
 
-fn ensure_lo_initialized() -> Result<MutexGuard<'static, Option<LockedObjects>>, Box<dyn Error>> {
+fn ensure_lo_initialized() -> Result<MutexGuard<'static, Option<LockedObjects>>, Error> {
 	let mut locked = LOCKED_OBJECTS.lock().unwrap();
 	if locked.is_none() {
-		*locked = Some(LockedObjects::new().map_err(|e| {
-			format!("Could not initialize the x11 clipboard handling facilities. Cause: {}", e)
+		*locked = Some(LockedObjects::new().map_err(|e| Error::Unknown {
+			description: format!(
+				"Could not initialize the x11 clipboard handling facilities. Cause: {}",
+				e
+			),
 		})?);
 	}
 	Ok(locked)
 }
 
-fn with_locked_objects<F, T>(action: F) -> Result<T, Box<dyn Error>>
+fn with_locked_objects<F, T>(action: F) -> Result<T, Error>
 where
-	F: FnOnce(&mut LockedObjects) -> Result<T, Box<dyn Error>>,
+	F: FnOnce(&mut LockedObjects) -> Result<T, Error>,
 {
 	// The gobal may not have been initialized yet or may have been destroyed previously.
 	//
@@ -1228,16 +1236,16 @@ impl Drop for X11ClipboardContext {
 }
 
 impl X11ClipboardContext {
-	pub(crate) fn new() -> Result<Self, Box<dyn Error>> {
+	pub(crate) fn new() -> Result<Self, Error> {
 		Ok(X11ClipboardContext { _owned: LOCKED_OBJECTS.clone() })
 	}
 
-	pub(crate) fn get_text(&mut self) -> Result<String, Box<dyn Error>> {
+	pub(crate) fn get_text(&mut self) -> Result<String, Error> {
 		let locked = ensure_lo_initialized()?;
 		get_text(locked)
 	}
 
-	pub(crate) fn set_text(&mut self, text: String) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn set_text(&mut self, text: String) -> Result<(), Error> {
 		with_locked_objects(|locked| {
 			let manager = &mut locked.manager;
 			let shared = &mut locked.shared;
@@ -1245,12 +1253,12 @@ impl X11ClipboardContext {
 		})
 	}
 
-	pub(crate) fn get_image(&mut self) -> Result<ImageData, Box<dyn Error>> {
+	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
 		let locked = ensure_lo_initialized()?;
 		get_image(locked)
 	}
 
-	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Box<dyn Error>> {
+	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		with_locked_objects(|locked| {
 			let manager = &mut locked.manager;
 			let shared = &mut locked.shared;

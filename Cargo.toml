@@ -34,4 +34,4 @@ image = { version = "0.23", default-features = false, features = ["tiff"] }
 xcb = "0.9"
 lazy_static = "1.4.0"
 libc = "0.2"
-image = { version = "0.23", default-features = false, features = ["png"] }
+image = { version = "0.23.9", default-features = false, features = ["png"] }

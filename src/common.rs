@@ -57,11 +57,11 @@ impl std::fmt::Debug for Error {
 		let name = kind_to_str!(
 			ContentNotAvailable,
 			ClipboardOccupied,
-			ConversionFailure, 
+			ConversionFailure,
 			Unknown { .. }
 		);
 		f.write_fmt(format_args!("{} - \"{}\"", name, self))
-    }
+	}
 }
 
 /// Stores pixel data of an image.
