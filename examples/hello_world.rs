@@ -1,4 +1,3 @@
-extern crate arboard;
 
 use arboard::Clipboard;
 
