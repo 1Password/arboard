@@ -1,10 +1,11 @@
 [package]
 name = "arboard"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Artur Kovacs <kovacs.artur.barnabas@gmail.com>", "Avi Weinstock <aweinstock314@gmail.com>"]
 description = "Image and text handling for the OS clipboard."
 repository = "https://github.com/ArturKovacs/arboard"
 license = "MIT OR Apache-2.0"
+readme = "README.md"
 keywords = ["clipboard", "image"]
 edition = "2018"
 
