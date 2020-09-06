@@ -7,5 +7,5 @@ fn main() {
 
 	let the_string = "Hello, world!";
 
-	ctx.set_text(the_string.to_owned()).unwrap();
+	println!("Text was: {}", ctx.get_text().unwrap());
 }

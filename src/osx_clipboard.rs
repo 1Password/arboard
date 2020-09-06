@@ -105,7 +105,6 @@ impl OSXClipboardContext {
 			let obj: *mut NSArray<NSString> =
 				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
 			if obj.is_null() {
-				//TODO return NotAvailable here
 				//return Err("pasteboard#readObjectsForClasses:options: returned null".into());
 				return Err(Error::ContentNotAvailable);
 			}
@@ -225,7 +224,6 @@ impl OSXClipboardContext {
 	}
 	pub(crate) fn set_image(&mut self, data: ImageData) -> Result<(), Error> {
 		let pixels = data.bytes.into();
-		// TODO use image conversion failure here.
 		let image = image_from_pixels(pixels, data.width, data.height)
 			.map_err(|_| Error::ConversionFailure)?;
 		let objects: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![image]);

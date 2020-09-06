@@ -87,8 +87,6 @@ impl Clipboard {
 
 /// All tests grouped in one because the windows clipboard cannot be open on
 /// multiple threads at once.
-/// TODO this could be resolved by using a global mutex similar to the one the
-/// Linux implementation uses.
 #[test]
 fn all_tests() {
 	{

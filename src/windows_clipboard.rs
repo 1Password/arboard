@@ -98,27 +98,24 @@ pub fn get_string(out: &mut Vec<u8>) -> Result<(), Error> {
 	// This pointer must not be free'd.
 	let ptr = unsafe { GetClipboardData(CF_UNICODETEXT) };
 	if ptr.is_null() {
-		// TODO test this!
 		return Err(Error::ContentNotAvailable);
 	}
 
 	unsafe {
 		let data_ptr = GlobalLock(ptr);
 		if data_ptr.is_null() {
-			// TODO this might be a ContentNotAvailable. TEST THIS
 			return Err(Error::Unknown {
 				description: "GlobalLock on clipboard data returned null.".into(),
 			});
 		}
 		defer!( GlobalUnlock(data_ptr); );
 
-		// TODO rename to char_count
-		let data_size = GlobalSize(ptr) as usize / mem::size_of::<u16>();
+		let char_count = GlobalSize(ptr) as usize / mem::size_of::<u16>();
 		let storage_req_size = WideCharToMultiByte(
 			CP_UTF8,
 			0,
 			data_ptr as _,
-			data_size as _,
+			char_count as _,
 			ptr::null_mut(),
 			0,
 			ptr::null(),
@@ -135,7 +132,7 @@ pub fn get_string(out: &mut Vec<u8>) -> Result<(), Error> {
 			CP_UTF8,
 			0,
 			data_ptr as _,
-			data_size as _,
+			char_count as _,
 			storage_ptr,
 			storage_req_size,
 			ptr::null(),
