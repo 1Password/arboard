@@ -68,13 +68,13 @@ impl std::fmt::Debug for Error {
 ///
 /// Each element in `bytes` stores the value of a channel of a single pixel.
 /// This struct stores four channels (red, green, blue, alpha) so
-/// a 3*3 image is going to be stored on 3*3*4 = 36 bytes of data.
+/// a `3*3` image is going to be stored on `3*3*4 = 36` bytes of data.
 ///
 /// The pixels are in row-major order meaning that the second pixel
 /// in `bytes` (starting at the fifth byte) corresponds to the pixel that's
 /// sitting to the right side of the top-left pixel (x=1, y=0)
 ///
-/// Assigning a 2*1 image would for example look like this
+/// Assigning a `2*1` image would for example look like this
 /// ```
 /// use arboard::ImageData;
 /// use std::borrow::Cow;
