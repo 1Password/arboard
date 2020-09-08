@@ -17,7 +17,6 @@ use image::{
 	bmp::{BmpDecoder, BmpEncoder},
 	ColorType, ImageDecoder,
 };
-use scopeguard::defer;
 use winapi::um::{
 	stringapiset::WideCharToMultiByte,
 	winbase::{GlobalLock, GlobalSize, GlobalUnlock},
@@ -91,69 +90,6 @@ impl Read for FakeBitmapFile {
 	}
 }
 
-pub fn get_string(out: &mut Vec<u8>) -> Result<(), Error> {
-	use std::mem;
-	use std::ptr;
-
-	// This pointer must not be free'd.
-	let ptr = unsafe { GetClipboardData(CF_UNICODETEXT) };
-	if ptr.is_null() {
-		return Err(Error::ContentNotAvailable);
-	}
-
-	unsafe {
-		let data_ptr = GlobalLock(ptr);
-		if data_ptr.is_null() {
-			return Err(Error::Unknown {
-				description: "GlobalLock on clipboard data returned null.".into(),
-			});
-		}
-		defer!( GlobalUnlock(data_ptr); );
-
-		let char_count = GlobalSize(ptr) as usize / mem::size_of::<u16>();
-		let storage_req_size = WideCharToMultiByte(
-			CP_UTF8,
-			0,
-			data_ptr as _,
-			char_count as _,
-			ptr::null_mut(),
-			0,
-			ptr::null(),
-			ptr::null_mut(),
-		);
-		if storage_req_size == 0 {
-			return Err(Error::ConversionFailure);
-		}
-
-		let storage_cursor = out.len();
-		out.reserve(storage_req_size as usize);
-		let storage_ptr = out.as_mut_ptr().add(storage_cursor) as *mut _;
-		let output_size = WideCharToMultiByte(
-			CP_UTF8,
-			0,
-			data_ptr as _,
-			char_count as _,
-			storage_ptr,
-			storage_req_size,
-			ptr::null(),
-			ptr::null_mut(),
-		);
-		if output_size == 0 {
-			return Err(Error::ConversionFailure);
-		}
-		out.set_len(storage_cursor + storage_req_size as usize);
-
-		//It seems WinAPI always supposed to have at the end null char.
-		//But just to be safe let's check for it and only then remove.
-		if let Some(last_byte) = out.last() {
-			if *last_byte == 0 {
-				out.set_len(out.len() - 1);
-			}
-		}
-	}
-	Ok(())
-}
-
 pub struct WindowsClipboardContext;
 
 impl WindowsClipboardContext {
@@ -164,9 +100,13 @@ impl WindowsClipboardContext {
 		// Using this nifty RAII object to open and close the clipboard.
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
 			.map_err(|_| Error::ClipboardOccupied)?;
-		let mut result = String::new();
-		get_string(unsafe { result.as_mut_vec() })?;
-		Ok(result)
+		clipboard_win::get(clipboard_win::Unicode).map_err(|err| match err.raw_code() as u32 {
+			0 => Error::ContentNotAvailable,
+			winapi::shared::winerror::ERROR_INVALID_FLAGS
+			| winapi::shared::winerror::ERROR_INVALID_PARAMETER
+			| winapi::shared::winerror::ERROR_NO_UNICODE_TRANSLATION => Error::ConversionFailure,
+			_ => Error::Unknown { description: err.message().as_str().to_owned() },
+		})
 	}
 	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Error> {
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)

@@ -19,7 +19,6 @@ winapi = { version = "0.3.9", features = [
     "stringapiset",
     "basetsd",
 ]}
-scopeguard = "1.1.0"
 clipboard-win = "4.0"
 image = { version = "0.23.9", default-features = false, features = ["bmp"] }
 byteorder = "1.3"
