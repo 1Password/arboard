@@ -17,12 +17,6 @@ use image::{
 	bmp::{BmpDecoder, BmpEncoder},
 	ColorType, ImageDecoder,
 };
-use winapi::um::{
-	stringapiset::WideCharToMultiByte,
-	winbase::{GlobalLock, GlobalSize, GlobalUnlock},
-	winnls::CP_UTF8,
-	winuser::{GetClipboardData, CF_UNICODETEXT},
-};
 
 use super::common::{Error, ImageData};
 

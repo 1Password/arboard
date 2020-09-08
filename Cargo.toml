@@ -13,12 +13,7 @@ edition = "2018"
 thiserror = "1.0"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3.9", features = [
-    "winuser",
-    "winbase",
-    "stringapiset",
-    "basetsd",
-]}
+winapi = "0.3.9"
 clipboard-win = "4.0"
 image = { version = "0.23.9", default-features = false, features = ["bmp"] }
 byteorder = "1.3"
