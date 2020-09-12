@@ -117,11 +117,11 @@ impl<'a> ImageData<'a> {
 
 	/// Returns an image data that is guaranteed to own its bytes.
 	/// It moves the bytes if they are already owned and clones them if they are borrowed.
-	pub fn into_owned_img(self) -> ImageData<'static> {
+	pub fn to_owned_img(&self) -> ImageData<'static> {
 		ImageData {
 			width: self.width,
 			height: self.height,
-			bytes: self.bytes.into_owned().into(),
+			bytes: self.bytes.clone().into_owned().into(),
 		}
 	}
 }
