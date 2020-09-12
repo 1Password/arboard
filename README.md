@@ -1,5 +1,5 @@
 
-[![Latest version](https://img.shields.io/crates/v/arboard?color=magenta)](https://crates.io/crates/arboard)
+[![Latest version](https://img.shields.io/crates/v/arboard?color=mediumvioletred)](https://crates.io/crates/arboard)
 [![Documentation](https://docs.rs/arboard/badge.svg)](https://docs.rs/arboard)
 
 ## General
