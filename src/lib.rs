@@ -65,7 +65,7 @@ impl Clipboard {
 		self.platform.get_text()
 	}
 
-	/// Places `text` onto the clipboard. Any valid utf-8 string is accepted.
+	/// Places the text onto the clipboard. Any valid utf-8 string is accepted.
 	pub fn set_text(&mut self, text: String) -> Result<(), Error> {
 		self.platform.set_text(text)
 	}
@@ -85,7 +85,7 @@ impl Clipboard {
 	///
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
-	/// - On Windows: BMP, or more specifically, CF_DIB
+	/// - On Windows: BMP, or more specifically, `CF_DIB`
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		self.platform.set_image(image)
 	}

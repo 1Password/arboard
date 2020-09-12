@@ -44,7 +44,7 @@ pub enum Error {
 	#[error("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format.")]
 	ConversionFailure,
 
-	/// Any error that doesn't fit the other other error types.
+	/// Any error that doesn't fit the other error types.
 	/// 
 	/// The `description` field is only meant to help the developer and should not be relied on as a
 	/// means to identify an error case during runtime.
