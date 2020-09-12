@@ -81,7 +81,7 @@ impl Clipboard {
 
 	/// Places an image to the clipboard.
 	///
-	/// The chosen output format depending on the platform is the following:
+	/// The chosen output format, depending on the platform is the following:
 	///
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
