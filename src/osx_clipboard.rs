@@ -21,6 +21,7 @@ use objc_foundation::{INSArray, INSObject, INSString};
 use objc_foundation::{NSArray, NSDictionary, NSObject, NSString};
 use objc_id::{Id, Owned};
 use std::mem::transmute;
+use std::io::Cursor;
 
 // required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
@@ -177,50 +178,59 @@ impl OSXClipboardContext {
 	// 	}
 	// }
 	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
-		Err(Error::Unknown { description: "Not implemented".into() })
-		// let image_class: Id<NSObject> = {
-		//     let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
-		//     unsafe { transmute(cls) }
-		// };
-		// let classes = vec![image_class];
-		// let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
-		// let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
-		// let contents: Id<NSArray<NSObject>> = unsafe {
-		//     let obj: *mut NSArray<NSObject> =
-		//         msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
-		//     if obj.is_null() {
-		//         return Err(err(
-		//             "pasteboard#readObjectsForClasses:options: returned null",
-		//         ));
-		//     }
-		//     Id::from_ptr(obj)
-		// };
-		// if contents.count() == 0 {
-		//     Err("No content on the clipboard".into())
-		// } else {
-		//     let obj = &contents[0];
-		//     if obj.is_kind_of(Class::get("NSString").unwrap()) {
-		//         let s: &NSString = unsafe { transmute(obj) };
-		//         Ok(Some(ClipboardContent::Utf8(s.as_str().to_owned())))
-		//     } else if obj.is_kind_of(Class::get("NSImage").unwrap()) {
-		//         let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
-		//         let len: usize = unsafe { msg_send![tiff, length] };
-		//         let bytes: *const u8 = unsafe { msg_send![tiff, bytes] };
-		//         let vec = unsafe { std::slice::from_raw_parts(bytes, len) };
-		//         // Here we copy the entire &[u8] into a new owned `Vec`
-		//         // Is there another way that doesn't copy multiple megabytes?
-		//         Ok(Some(ClipboardContent::Tiff(vec.into())))
-		//     } else if obj.is_kind_of(Class::get("NSURL").unwrap()) {
-		//         let s: &NSString = unsafe { msg_send![obj, absoluteString] };
-		//         Ok(Some(ClipboardContent::Utf8(s.as_str().to_owned())))
-		//     } else {
-		//         // let cls: &Class = unsafe { msg_send![obj, class] };
-		//         // println!("{}", cls.name());
-		//         Err(err(
-		//             "pasteboard#readObjectsForClasses:options: returned unknown class",
-		//         ))
-		//     }
-		//}
+		let image_class: Id<NSObject> = {
+		    let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
+		    unsafe { transmute(cls) }
+		};
+		let classes = vec![image_class];
+		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
+		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
+		let contents: Id<NSArray<NSObject>> = unsafe {
+		    let obj: *mut NSArray<NSObject> =
+		        msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
+		    if obj.is_null() {
+				return Err( Error::ContentNotAvailable );
+		    }
+		    Id::from_ptr(obj)
+		};
+		let result;
+		if contents.count() == 0 {
+			result = Err( Error::ContentNotAvailable );
+		} else {
+		    let obj = &contents[0];
+		    if obj.is_kind_of(Class::get("NSImage").unwrap()) {
+		        let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
+		        let len: usize = unsafe { msg_send![tiff, length] };
+		        let bytes: *const u8 = unsafe { msg_send![tiff, bytes] };
+				let slice = unsafe { std::slice::from_raw_parts(bytes, len) };
+				let data_cursor = Cursor::new(slice);
+				let reader = image::io::Reader::with_format(data_cursor, image::ImageFormat::Tiff);
+				let width;
+				let height;
+				let pixels;
+				match reader.decode() {
+					Ok(img) => {
+						let rgba = img.into_rgba();
+						let (w, h) = rgba.dimensions();
+						width = w;
+						height = h;
+						pixels = rgba.into_raw();
+					},
+					Err(_) => return Err(Error::ConversionFailure)
+				};
+				let data = ImageData {
+					width: width as usize,
+					height: height as usize,
+					bytes: pixels.into()
+				};
+		        result = Ok(data);
+		    } else {
+		        // let cls: &Class = unsafe { msg_send![obj, class] };
+		        // println!("{}", cls.name());
+		        result = Err( Error::ContentNotAvailable );
+		    }
+		}
+		result
 	}
 	pub(crate) fn set_image(&mut self, data: ImageData) -> Result<(), Error> {
 		let pixels = data.bytes.into();
