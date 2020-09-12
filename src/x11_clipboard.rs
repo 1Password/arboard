@@ -1096,7 +1096,7 @@ fn get_image(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<ImageData, 
 	if owner == guard.as_ref().unwrap().manager.window {
 		let image = &guard.as_ref().unwrap().manager.image;
 		if image.width > 0 && image.height > 0 && !image.bytes.is_empty() {
-			return Ok(image.into_owned_img());
+			return Ok(image.to_owned_img());
 		}
 	} else if owner != 0 {
 		let atoms = vec![guard.as_mut().unwrap().shared.get_atom_by_id(MIME_IMAGE_PNG)];
