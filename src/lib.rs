@@ -39,27 +39,53 @@ type PlatformClipboard = windows_clipboard::WindowsClipboardContext;
 #[cfg(target_os = "macos")]
 type PlatformClipboard = osx_clipboard::OSXClipboardContext;
 
+/// The OS independent struct for accessing the clipboard.
+/// 
+/// Any number of `Clipboard` instances are allowed to exist at a single point in time. Note however
+/// that all `Clipboard`s must be 'dropped' before the program exits. In most scenarios this happens
+/// automatically but there are frameworks (for example `winit`) that take over the execution
+/// and where the objects don't get dropped when the application exits. In these cases you have to 
+/// make sure the object is dropped by taking ownership of it in a confined scope when detecting
+/// that your application is about to quit.
+/// 
+/// It is also valid to have multiple `Clipboards` on separate threads at once but note that
+/// executing multiple clipboard operations in paralell might fail with a `ClipboardOccupied` error.
 pub struct Clipboard {
 	platform: PlatformClipboard,
 }
 
 impl Clipboard {
+	/// Creates an instance of the clipboard
 	pub fn new() -> Result<Self, Error> {
 		Ok(Clipboard { platform: PlatformClipboard::new()? })
 	}
 
+	/// Fetches utf-8 text from the clipboard and returns it.
 	pub fn get_text(&mut self) -> Result<String, Error> {
 		self.platform.get_text()
 	}
 
+	/// Places `text` onto the clipboard. Any valid utf-8 string is accepted.
 	pub fn set_text(&mut self, text: String) -> Result<(), Error> {
 		self.platform.set_text(text)
 	}
 
+	/// Fetches image data from the clipboard, and returns the decoded pixels.
+	/// 
+	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
+	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
+	/// other application will be of a supported format. This function looks for 
 	pub fn get_image(&mut self) -> Result<ImageData, Error> {
 		self.platform.get_image()
 	}
 
+	/// Places an image to the clipboard.
+	///
+	/// The chosen output format depending on the platform is the following:
+	///
+	/// - On macOS: `NSImage` object
+	/// - On Linux: PNG, under the atom `image/png`
+	/// - On Windows: BMP, or more specifically, CF_DIB
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		self.platform.set_image(image)
 	}

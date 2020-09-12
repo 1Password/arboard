@@ -32,9 +32,10 @@ pub enum Error {
 	ClipboardOccupied,
 
 	/// This can happen in either of the following cases.
-	/// 1, When returned from `set_image`: the image going to the clipboard cannot be converted to the appropriate format.
-	/// 2, When returned from `get_image`: the image coming from the clipboard could not be converted into the `ImageData` struct.
-	/// 3, When returned from `get_text`: the text coming from the clipboard is not valid utf-8 or cannot be converted to utf-8.
+	/// 
+	/// 1. When returned from `set_image`: the image going to the clipboard cannot be converted to the appropriate format.
+	/// 2. When returned from `get_image`: the image coming from the clipboard could not be converted into the `ImageData` struct.
+	/// 3. When returned from `get_text`: the text coming from the clipboard is not valid utf-8 or cannot be converted to utf-8.
 	#[error("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format.")]
 	ConversionFailure,
 
@@ -99,18 +100,19 @@ pub struct ImageData<'a> {
 }
 
 impl<'a> ImageData<'a> {
+	/// Returns a the bytes field in a way that it's guaranteed to be owned.
+	/// It moves the bytes if they are already owned and clones them if they are borrowed.
 	pub fn into_owned_bytes(self) -> std::borrow::Cow<'static, [u8]> {
 		self.bytes.into_owned().into()
 	}
 
-	/// Returns a new image data that is guaranteed to own its bytes.
-	/// In contrast the `clone()` function will yield borrowed bytes if the
-	/// original was borrowed too.
-	pub fn to_cloned(&self) -> ImageData<'static> {
+	/// Returns an image data that is guaranteed to own its bytes.
+	/// It moves the bytes if they are already owned and clones them if they are borrowed.
+	pub fn into_owned_img(self) -> ImageData<'static> {
 		ImageData {
 			width: self.width,
 			height: self.height,
-			bytes: self.bytes.clone().into_owned().into(),
+			bytes: self.bytes.into_owned().into(),
 		}
 	}
 }
