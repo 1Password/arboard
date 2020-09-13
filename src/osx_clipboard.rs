@@ -20,8 +20,8 @@ use objc::{msg_send, sel, sel_impl};
 use objc_foundation::{INSArray, INSObject, INSString};
 use objc_foundation::{NSArray, NSDictionary, NSObject, NSString};
 use objc_id::{Id, Owned};
-use std::mem::transmute;
 use std::io::Cursor;
+use std::mem::transmute;
 
 // required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
@@ -179,29 +179,29 @@ impl OSXClipboardContext {
 	// }
 	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
 		let image_class: Id<NSObject> = {
-		    let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
-		    unsafe { transmute(cls) }
+			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
+			unsafe { transmute(cls) }
 		};
 		let classes = vec![image_class];
 		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
 		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
 		let contents: Id<NSArray<NSObject>> = unsafe {
-		    let obj: *mut NSArray<NSObject> =
-		        msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
-		    if obj.is_null() {
-				return Err( Error::ContentNotAvailable );
-		    }
-		    Id::from_ptr(obj)
+			let obj: *mut NSArray<NSObject> =
+				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
+			if obj.is_null() {
+				return Err(Error::ContentNotAvailable);
+			}
+			Id::from_ptr(obj)
 		};
 		let result;
 		if contents.count() == 0 {
-			result = Err( Error::ContentNotAvailable );
+			result = Err(Error::ContentNotAvailable);
 		} else {
-		    let obj = &contents[0];
-		    if obj.is_kind_of(Class::get("NSImage").unwrap()) {
-		        let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
-		        let len: usize = unsafe { msg_send![tiff, length] };
-		        let bytes: *const u8 = unsafe { msg_send![tiff, bytes] };
+			let obj = &contents[0];
+			if obj.is_kind_of(Class::get("NSImage").unwrap()) {
+				let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
+				let len: usize = unsafe { msg_send![tiff, length] };
+				let bytes: *const u8 = unsafe { msg_send![tiff, bytes] };
 				let slice = unsafe { std::slice::from_raw_parts(bytes, len) };
 				let data_cursor = Cursor::new(slice);
 				let reader = image::io::Reader::with_format(data_cursor, image::ImageFormat::Tiff);
@@ -215,20 +215,20 @@ impl OSXClipboardContext {
 						width = w;
 						height = h;
 						pixels = rgba.into_raw();
-					},
-					Err(_) => return Err(Error::ConversionFailure)
+					}
+					Err(_) => return Err(Error::ConversionFailure),
 				};
 				let data = ImageData {
 					width: width as usize,
 					height: height as usize,
-					bytes: pixels.into()
+					bytes: pixels.into(),
 				};
-		        result = Ok(data);
-		    } else {
-		        // let cls: &Class = unsafe { msg_send![obj, class] };
-		        // println!("{}", cls.name());
-		        result = Err( Error::ContentNotAvailable );
-		    }
+				result = Ok(data);
+			} else {
+				// let cls: &Class = unsafe { msg_send![obj, class] };
+				// println!("{}", cls.name());
+				result = Err(Error::ContentNotAvailable);
+			}
 		}
 		result
 	}

@@ -40,14 +40,14 @@ type PlatformClipboard = windows_clipboard::WindowsClipboardContext;
 type PlatformClipboard = osx_clipboard::OSXClipboardContext;
 
 /// The OS independent struct for accessing the clipboard.
-/// 
+///
 /// Any number of `Clipboard` instances are allowed to exist at a single point in time. Note however
 /// that all `Clipboard`s must be 'dropped' before the program exits. In most scenarios this happens
 /// automatically but there are frameworks (for example `winit`) that take over the execution
-/// and where the objects don't get dropped when the application exits. In these cases you have to 
+/// and where the objects don't get dropped when the application exits. In these cases you have to
 /// make sure the object is dropped by taking ownership of it in a confined scope when detecting
 /// that your application is about to quit.
-/// 
+///
 /// It is also valid to have multiple `Clipboards` on separate threads at once but note that
 /// executing multiple clipboard operations in paralell might fail with a `ClipboardOccupied` error.
 pub struct Clipboard {
@@ -71,10 +71,10 @@ impl Clipboard {
 	}
 
 	/// Fetches image data from the clipboard, and returns the decoded pixels.
-	/// 
+	///
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
 	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
-	/// other application will be of a supported format. This function looks for 
+	/// other application will be of a supported format. This function looks for
 	pub fn get_image(&mut self) -> Result<ImageData, Error> {
 		self.platform.get_image()
 	}

@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use thiserror::Error;
 
 /// An error that might happen during a clipboard operation.
-/// 
+///
 /// Note that both the `Display` and the `Debug` trait is implemented for this type in such a way
 /// that they give a short human-readable description of the error; however the documentation
 /// gives a more detailed explanation for each error kind.
@@ -37,7 +37,7 @@ pub enum Error {
 	ClipboardOccupied,
 
 	/// This can happen in either of the following cases.
-	/// 
+	///
 	/// - When returned from `set_image`: the image going to the clipboard cannot be converted to the appropriate format.
 	/// - When returned from `get_image`: the image coming from the clipboard could not be converted into the `ImageData` struct.
 	/// - When returned from `get_text`: the text coming from the clipboard is not valid utf-8 or cannot be converted to utf-8.
@@ -45,7 +45,7 @@ pub enum Error {
 	ConversionFailure,
 
 	/// Any error that doesn't fit the other error types.
-	/// 
+	///
 	/// The `description` field is only meant to help the developer and should not be relied on as a
 	/// means to identify an error case during runtime.
 	#[error("Unknown error while interacting with the clipboard: {description}")]
