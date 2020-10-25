@@ -93,12 +93,21 @@ impl Clipboard {
 
 /// All tests grouped in one because the windows clipboard cannot be open on
 /// multiple threads at once.
+#[cfg(test)]
 #[test]
 fn all_tests() {
 	{
 		let mut ctx = Clipboard::new().unwrap();
 		let text = "some string";
 		ctx.set_text(text.to_owned()).unwrap();
+		assert_eq!(ctx.get_text().unwrap(), text);
+
+		drop(ctx);
+
+		use std::time::Duration;
+		std::thread::sleep(Duration::from_millis(10));
+
+		let mut ctx = Clipboard::new().unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
 	}
 	{
