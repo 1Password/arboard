@@ -43,7 +43,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-20.04, macos-latest, windows-latest]
+        # No Linux test for now as it just fails due to not having a desktop environment.
+        os: [macos-latest, windows-latest]
     steps:
       - uses: actions-rs/toolchain@v1
         with:
