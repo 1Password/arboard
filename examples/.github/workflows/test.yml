@@ -1,0 +1,58 @@
+name: Test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  rustfmt:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: rustfmt
+      - uses: actions/checkout@v2
+      - name: Check formating
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+  clippy:
+    needs: rustfmt
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: clippy
+      - uses: actions/checkout@v2
+      - name: Run `cargo clippy`
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --verbose
+
+  test:
+    needs: clippy
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-20.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+
