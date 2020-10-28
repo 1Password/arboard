@@ -50,10 +50,7 @@ use xcb::ffi::xproto::{
 	xcb_set_selection_owner_checked, XCB_ATOM_NONE, XCB_EVENT_MASK_NO_EVENT,
 	XCB_PROPERTY_NEW_VALUE, XCB_PROP_MODE_REPLACE, XCB_SELECTION_NOTIFY,
 };
-use xcb::{
-	self,
-	xproto::{self, get_selection_owner},
-};
+use xcb::xproto;
 
 use super::common::{Error, ImageData};
 
@@ -520,42 +517,19 @@ impl Manager {
 				&& manager!().window != 0
 				&& manager!().window == get_x11_selection_owner(&mut shared!())
 			{
-				//xcb::xproto::Window
-				let mut x11_clipboard_manager = 0;
-				{
-					let clipboard_manager_atom = shared!().get_atom_by_id(CLIPBOARD_MANAGER);
-					let conn: &xcb::Connection = shared!().conn.as_ref().unwrap();
-					let cookie = { get_selection_owner(conn, clipboard_manager_atom) };
-					let reply = unsafe {
-						xcb::ffi::xproto::xcb_get_selection_owner_reply(
-							conn.get_raw_conn(),
-							cookie.cookie,
-							std::ptr::null_mut(),
-						)
-					};
+				let atoms = vec![shared!().get_atom_by_id(SAVE_TARGETS)];
+				let selection = shared!().get_atom_by_id(CLIPBOARD_MANAGER);
 
-					if reply != std::ptr::null_mut() {
-						unsafe {
-							x11_clipboard_manager = (*reply).owner;
-							libc::free(reply as *mut _);
-						}
-					}
-				}
-				if x11_clipboard_manager != 0 {
-					let atoms = vec![shared!().get_atom_by_id(SAVE_TARGETS)];
-					let selection = shared!().get_atom_by_id(CLIPBOARD_MANAGER);
-
-					// Start the SAVE_TARGETS mechanism so the X11
-					// CLIPBOARD_MANAGER will save our clipboard data
-					// from now on.
-					guard = get_data_from_selection_owner(
-						guard,
-						&atoms,
-						Some(Arc::new(|_| true)),
-						selection,
-					)
-					.1;
-				}
+				// Start the SAVE_TARGETS mechanism so the X11
+				// CLIPBOARD_MANAGER will save our clipboard data
+				// from now on.
+				guard = get_data_from_selection_owner(
+					guard,
+					&atoms,
+					Some(Arc::new(|_| true)),
+					selection,
+				)
+				.1;
 			}
 
 			if manager!().window != 0 {

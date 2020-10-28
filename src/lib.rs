@@ -93,12 +93,26 @@ impl Clipboard {
 
 /// All tests grouped in one because the windows clipboard cannot be open on
 /// multiple threads at once.
+#[cfg(test)]
 #[test]
 fn all_tests() {
 	{
 		let mut ctx = Clipboard::new().unwrap();
 		let text = "some string";
 		ctx.set_text(text.to_owned()).unwrap();
+		assert_eq!(ctx.get_text().unwrap(), text);
+
+		// We also need to check that the content persists after the drop; this is
+		// especially important on X11
+		drop(ctx);
+
+		// Give any external mechanism a generous amount of time to take over
+		// responsibility for the clipboard, in case that happens asynchronously
+		// (it appears that this is the case on X11 plus Mutter 3.34+, see #4)
+		use std::time::Duration;
+		std::thread::sleep(Duration::from_millis(50));
+
+		let mut ctx = Clipboard::new().unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
 	}
 	{
