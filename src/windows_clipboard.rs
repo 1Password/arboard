@@ -9,20 +9,26 @@ and conditions of the chosen license apply to this file.
 */
 
 use std::borrow::Cow;
+use std::convert::TryInto;
 use std::io::{self, Read, Seek};
 
-use byteorder::ByteOrder;
-use clipboard_win::Clipboard as SystemClipboard;
+use clipboard_win::{Clipboard as SystemClipboard, Setter};
 use image::{
 	bmp::{BmpDecoder, BmpEncoder},
 	ColorType, ImageDecoder,
 };
 use scopeguard::defer;
+use winapi::shared::minwindef::DWORD;
 use winapi::um::{
 	stringapiset::WideCharToMultiByte,
-	winbase::{GlobalLock, GlobalSize, GlobalUnlock},
+	winbase::{GlobalAlloc, GlobalFree, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE},
+	wingdi::{
+		CreateDIBitmap, DeleteObject, BITMAPV4HEADER, BI_BITFIELDS, CBM_INIT, CIEXYZTRIPLE,
+		DIB_RGB_COLORS,
+	},
 	winnls::CP_UTF8,
-	winuser::{GetClipboardData, CF_UNICODETEXT},
+	winnt::LONG,
+	winuser::{GetClipboardData, GetDC, SetClipboardData, CF_BITMAP, CF_UNICODETEXT},
 };
 
 use super::common::{Error, ImageData};
@@ -91,6 +97,87 @@ impl Read for FakeBitmapFile {
 	}
 }
 
+/// Sets raw clipboard data without clearing the clipboard
+fn add_raw(data: &[u8], format: u32) -> Result<(), Error> {
+	let size = data.len();
+	if size == 0 {
+		return Err(Error::Unknown {
+			description: String::from("`data` must contain valid data but it was empty"),
+		});
+	}
+
+	let data_handle = unsafe { GlobalAlloc(GMEM_MOVEABLE, size) };
+	if data_handle.is_null() {
+		return Err(Error::Unknown {
+			description: String::from("Could not allocate global memory"),
+		});
+	}
+	unsafe {
+		let ptr = GlobalLock(data_handle);
+		if ptr.is_null() {
+			return Err(Error::Unknown {
+				description: String::from("Could not lock the global memory"),
+			});
+		}
+		defer!( GlobalUnlock(data_handle); );
+		std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as _, size);
+	}
+
+	if unsafe { SetClipboardData(format, data_handle).is_null() } {
+		// Failed to set the data. We still have owenvership over the `data_handle`
+		unsafe {
+			GlobalFree(data_handle);
+		}
+		return Err(Error::Unknown {
+			description: String::from("Call to `SetClipboardData` returned NULL"),
+		});
+	}
+
+	Ok(())
+}
+
+unsafe fn add_cf_bitmap(image: &ImageData) -> Result<(), Error> {
+	let header = BITMAPV4HEADER {
+		bV4Size: std::mem::size_of::<BITMAPV4HEADER>() as _,
+		bV4Width: image.width as LONG,
+		bV4Height: -(image.height as LONG),
+		bV4Planes: 1,
+		bV4BitCount: 32,
+		bV4V4Compression: BI_BITFIELDS,
+		bV4SizeImage: (4 * image.width * image.height) as DWORD,
+		bV4XPelsPerMeter: 3000,
+		bV4YPelsPerMeter: 3000,
+		bV4ClrUsed: 0,
+		bV4ClrImportant: 3,
+		bV4RedMask: 0xff0000,
+		bV4GreenMask: 0x00ff00,
+		bV4BlueMask: 0x0000ff,
+		bV4AlphaMask: 0x000000,
+		bV4CSType: 0,
+		bV4Endpoints: std::mem::MaybeUninit::<CIEXYZTRIPLE>::zeroed().assume_init(),
+		bV4GammaRed: 0,
+		bV4GammaGreen: 0,
+		bV4GammaBlue: 0,
+	};
+
+	let hdc = GetDC(std::ptr::null_mut());
+	let hbitmap = CreateDIBitmap(
+		hdc,
+		&header as *const BITMAPV4HEADER as *const _,
+		CBM_INIT,
+		image.bytes.as_ptr() as *const _,
+		&header as *const BITMAPV4HEADER as *const _,
+		DIB_RGB_COLORS,
+	);
+	if SetClipboardData(CF_BITMAP, hbitmap as _).is_null() {
+		DeleteObject(hbitmap as _);
+		return Err(Error::Unknown {
+			description: String::from("Call to `SetClipboardData` returned NULL"),
+		});
+	}
+	Ok(())
+}
+
 pub fn get_string(out: &mut Vec<u8>) -> Result<(), Error> {
 	use std::mem;
 	use std::ptr;
@@ -108,7 +195,7 @@ pub fn get_string(out: &mut Vec<u8>) -> Result<(), Error> {
 				description: "GlobalLock on clipboard data returned null.".into(),
 			});
 		}
-		defer!( GlobalUnlock(data_ptr); );
+		defer!( GlobalUnlock(ptr); );
 
 		let char_count = GlobalSize(ptr) as usize / mem::size_of::<u16>();
 		let storage_req_size = WideCharToMultiByte(
@@ -188,19 +275,18 @@ impl WindowsClipboardContext {
 		clipboard_win::raw::get(format, &mut data).map_err(|_| Error::Unknown {
 			description: "failed to get image data from the clipboard".into(),
 		})?;
-		let info_header_size = byteorder::LittleEndian::read_u32(&data);
+		let info_header_size = u32::from_le_bytes(data[..4].try_into().unwrap());
 		let mut fake_bitmap_file =
 			FakeBitmapFile { bitmap: data, file_header: [0; BITMAP_FILE_HEADER_SIZE], curr_pos: 0 };
 		fake_bitmap_file.file_header[0] = b'B';
 		fake_bitmap_file.file_header[1] = b'M';
-		byteorder::LittleEndian::write_u32(
-			&mut fake_bitmap_file.file_header[2..6],
-			(fake_bitmap_file.bitmap.len() + BITMAP_FILE_HEADER_SIZE) as u32,
-		);
-		byteorder::LittleEndian::write_u32(
-			&mut fake_bitmap_file.file_header[10..14],
-			info_header_size + BITMAP_FILE_HEADER_SIZE as u32,
-		);
+
+		let file_size =
+			u32::to_le_bytes((fake_bitmap_file.bitmap.len() + BITMAP_FILE_HEADER_SIZE) as u32);
+		fake_bitmap_file.file_header[2..6].copy_from_slice(&file_size);
+
+		let data_offset = u32::to_le_bytes(info_header_size + BITMAP_FILE_HEADER_SIZE as u32);
+		fake_bitmap_file.file_header[10..14].copy_from_slice(&data_offset);
 
 		let bmp_decoder = BmpDecoder::new(fake_bitmap_file).unwrap();
 		let (w, h) = bmp_decoder.dimensions();
@@ -219,24 +305,25 @@ impl WindowsClipboardContext {
 			.encode(&image.bytes, image.width as u32, image.height as u32, ColorType::Rgba8)
 			.map_err(|_| Error::ConversionFailure)?;
 		let data_without_file_header = &bmp_data[BITMAP_FILE_HEADER_SIZE..];
-
-		let header_size = byteorder::LittleEndian::read_u32(data_without_file_header);
+		let header_size = u32::from_le_bytes(data_without_file_header[..4].try_into().unwrap());
 		let format = if header_size > BITMAP_V4_INFO_HEADER_SIZE {
 			clipboard_win::formats::CF_DIBV5
 		} else {
 			clipboard_win::formats::CF_DIB
 		};
-
-		let mut success = false;
+		let mut result: Result<(), Error> = Ok(());
+		//let mut success = false;
 		clipboard_win::with_clipboard(|| {
-			success = clipboard_win::raw::set(format, data_without_file_header).is_ok();
+			let success = clipboard_win::raw::set(format, data_without_file_header).is_ok();
+			let bitmap_result = unsafe { add_cf_bitmap(&image) };
+			if bitmap_result.is_err() && !success {
+				result = Err(Error::Unknown {
+					description: "Could not set the image for the clipboard in neither of `CF_DIB` and `CG_BITMAP` formats.".into(),
+				});
+			}
 		})
 		.map_err(|_| Error::ClipboardOccupied)?;
-		if !success {
-			return Err(Error::Unknown {
-				description: "Could not set image for the clipboard.".into(),
-			});
-		}
-		Ok(())
+
+		result
 	}
 }

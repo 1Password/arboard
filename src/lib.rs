@@ -14,8 +14,6 @@ and conditions of the chosen license apply to this file.
 #![crate_type = "rlib"]
 
 #[cfg(windows)]
-extern crate byteorder;
-#[cfg(windows)]
 extern crate clipboard_win;
 #[cfg(windows)]
 extern crate image;
@@ -74,7 +72,7 @@ impl Clipboard {
 	///
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
 	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
-	/// other application will be of a supported format. This function looks for
+	/// other application will be of a supported format.
 	pub fn get_image(&mut self) -> Result<ImageData, Error> {
 		self.platform.get_image()
 	}
@@ -85,7 +83,7 @@ impl Clipboard {
 	///
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
-	/// - On Windows: BMP, or more specifically, `CF_DIB`
+	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		self.platform.set_image(image)
 	}
