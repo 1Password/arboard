@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use std::convert::TryInto;
 use std::io::{self, Read, Seek};
 
-use clipboard_win::{Clipboard as SystemClipboard, Setter};
+use clipboard_win::Clipboard as SystemClipboard;
 use image::{
 	bmp::{BmpDecoder, BmpEncoder},
 	ColorType, ImageDecoder,
@@ -21,7 +21,7 @@ use scopeguard::defer;
 use winapi::shared::minwindef::DWORD;
 use winapi::um::{
 	stringapiset::WideCharToMultiByte,
-	winbase::{GlobalAlloc, GlobalFree, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE},
+	winbase::{GlobalLock, GlobalSize, GlobalUnlock},
 	wingdi::{
 		CreateDIBitmap, DeleteObject, BITMAPV4HEADER, BI_BITFIELDS, CBM_INIT, CIEXYZTRIPLE,
 		DIB_RGB_COLORS,
@@ -95,45 +95,6 @@ impl Read for FakeBitmapFile {
 		}
 		Ok(total_read_len)
 	}
-}
-
-/// Sets raw clipboard data without clearing the clipboard
-fn add_raw(data: &[u8], format: u32) -> Result<(), Error> {
-	let size = data.len();
-	if size == 0 {
-		return Err(Error::Unknown {
-			description: String::from("`data` must contain valid data but it was empty"),
-		});
-	}
-
-	let data_handle = unsafe { GlobalAlloc(GMEM_MOVEABLE, size) };
-	if data_handle.is_null() {
-		return Err(Error::Unknown {
-			description: String::from("Could not allocate global memory"),
-		});
-	}
-	unsafe {
-		let ptr = GlobalLock(data_handle);
-		if ptr.is_null() {
-			return Err(Error::Unknown {
-				description: String::from("Could not lock the global memory"),
-			});
-		}
-		defer!( GlobalUnlock(data_handle); );
-		std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as _, size);
-	}
-
-	if unsafe { SetClipboardData(format, data_handle).is_null() } {
-		// Failed to set the data. We still have owenvership over the `data_handle`
-		unsafe {
-			GlobalFree(data_handle);
-		}
-		return Err(Error::Unknown {
-			description: String::from("Call to `SetClipboardData` returned NULL"),
-		});
-	}
-
-	Ok(())
 }
 
 unsafe fn add_cf_bitmap(image: &ImageData) -> Result<(), Error> {
@@ -294,7 +255,7 @@ impl WindowsClipboardContext {
 		let height = h as usize;
 		let image =
 			image::DynamicImage::from_decoder(bmp_decoder).map_err(|_| Error::ConversionFailure)?;
-		Ok(ImageData { width, height, bytes: Cow::from(image.into_rgba().into_raw()) })
+		Ok(ImageData { width, height, bytes: Cow::from(image.into_rgba8().into_raw()) })
 	}
 	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		//let clipboard = SystemClipboard::new()?;
