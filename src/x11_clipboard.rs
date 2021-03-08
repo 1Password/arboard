@@ -50,8 +50,8 @@ use x11rb::{
 		},
 		Event,
 	},
+	rust_connection::RustConnection,
 	wrapper::ConnectionExt as _,
-	xcb_ffi::XCBConnection,
 };
 
 use super::common::{Error, ImageData};
@@ -101,7 +101,7 @@ struct LockedObjects {
 
 impl LockedObjects {
 	fn new() -> Result<LockedObjects, Error> {
-		let (connection, screen) = XCBConnection::connect(None).unwrap();
+		let (connection, screen) = RustConnection::connect(None).unwrap();
 		match Manager::new(&connection, screen) {
 			Ok(manager) => {
 				//unsafe { libc::atexit(Manager::destruct); }
@@ -125,7 +125,7 @@ impl LockedObjects {
 /// apart from the `Manager` is to conform to Rust's aliasing rules but that is hard to
 /// convey in a short name.
 struct SharedState {
-	conn: Option<Arc<XCBConnection>>,
+	conn: Option<Arc<RustConnection>>,
 
 	// Cache of common used atoms by us
 	common_atoms: Option<CommonAtoms>,
@@ -227,7 +227,7 @@ struct Manager {
 }
 
 impl Manager {
-	fn new(connection: &XCBConnection, screen: usize) -> Result<Self, Error> {
+	fn new(connection: &RustConnection, screen: usize) -> Result<Self, Error> {
 		let setup = connection.setup();
 		let screen = setup.roots.get(screen).ok_or(Error::Unknown {
 			description: String::from("Could not get screen from setup"),
@@ -749,7 +749,7 @@ fn handle_property_notify_event(event: PropertyNotifyEvent) {
 }
 
 fn get_and_delete_property(
-	conn: &XCBConnection,
+	conn: &RustConnection,
 	window: Window,
 	property: Atom,
 	atom: Atom,

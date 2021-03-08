@@ -34,6 +34,6 @@ core-graphics = "0.21"
 image = { version = "0.23", default-features = false, features = ["tiff"] }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
-x11rb = { version = "0.8", features = ["allow-unsafe-code"] }
+x11rb = "0.8"
 lazy_static = "1.4.0"
 image = { version = "0.23.9", default-features = false, features = ["png"] }
