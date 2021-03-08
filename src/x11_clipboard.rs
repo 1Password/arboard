@@ -33,7 +33,7 @@ and conditions of the chosen license apply to this file.
 //!
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
@@ -56,27 +56,31 @@ use x11rb::{
 
 use super::common::{Error, ImageData};
 
-const ATOM: usize = 0;
-const INCR: usize = 1;
-const TARGETS: usize = 2;
-const CLIPBOARD: usize = 3;
-const MIME_IMAGE_PNG: usize = 4;
-const ATOM_PAIR: usize = 5;
-const SAVE_TARGETS: usize = 6;
-const MULTIPLE: usize = 7;
-const CLIPBOARD_MANAGER: usize = 8;
+x11rb::atom_manager! {
+	pub CommonAtoms: CommonAtomCookies {
+		ATOM,
+		INCR,
+		TARGETS,
+		CLIPBOARD,
+		MIME_IMAGE_PNG: b"image/png",
+		ATOM_PAIR,
+		SAVE_TARGETS,
+		MULTIPLE,
+		CLIPBOARD_MANAGER,
+	}
+}
 
-static COMMON_ATOM_NAMES: [&str; 9] = [
-	"ATOM",
-	"INCR",
-	"TARGETS",
-	"CLIPBOARD",
-	"image/png",
-	"ATOM_PAIR",
-	"SAVE_TARGETS",
-	"MULTIPLE",
-	"CLIPBOARD_MANAGER",
-];
+x11rb::atom_manager! {
+	pub TextAtoms: TextAtomCookies {
+		UTF8_STRING,
+		TEXT_PLAN_1: b"text/plain;charset=utf-8",
+		TEXT_PLAN_2: b"text/plain;charset=UTF-8",
+		// ANSI C strings?
+		STRING,
+		TEXT,
+		TEXT_PLAN_0: b"text/plain",
+	}
+}
 
 type BufferPtr = Option<Arc<Mutex<Vec<u8>>>>;
 type Atoms = Vec<Atom>;
@@ -104,7 +108,6 @@ impl LockedObjects {
 				Ok(LockedObjects {
 					shared: SharedState {
 						conn: Some(Arc::new(connection)),
-						atoms: Default::default(),
 						common_atoms: Default::default(),
 						text_atoms: Default::default(),
 					},
@@ -124,84 +127,35 @@ impl LockedObjects {
 struct SharedState {
 	conn: Option<Arc<XCBConnection>>,
 
-	// Cache of known atoms
-	atoms: BTreeMap<String, Atom>,
-
 	// Cache of common used atoms by us
-	common_atoms: Atoms,
+	common_atoms: Option<CommonAtoms>,
 
 	// Cache of atoms related to text or image content
-	text_atoms: Atoms,
+	text_atoms: Option<TextAtoms>,
 	//image_atoms: Atoms,
 }
-/// Need to manually `impl Send` because the connection contains pointers,
-/// and no pointer is `Send` by default.
-unsafe impl Send for SharedState {}
 
 impl SharedState {
-	fn get_atom_by_id(&mut self, id: usize) -> Atom {
-		if self.common_atoms.is_empty() {
-			self.common_atoms = self.get_atoms(&COMMON_ATOM_NAMES);
-		}
-		self.common_atoms[id]
+	fn common_atoms(&mut self) -> CommonAtoms {
+		self.common_atoms.unwrap_or_else(|| {
+			CommonAtoms::new(self.conn.as_ref().unwrap().as_ref()).unwrap().reply().unwrap()
+		})
 	}
 
-	fn get_atoms(&mut self, names: &[&'static str]) -> Atoms {
-		let mut results = vec![0; names.len()];
-		let mut replies = HashMap::with_capacity(names.len());
+	fn text_atoms(&mut self) -> Atoms {
+		let atoms = self.text_atoms.unwrap_or_else(|| {
+			TextAtoms::new(self.conn.as_ref().unwrap().as_ref()).unwrap().reply().unwrap()
+		});
 
-		for (res, name) in results.iter_mut().zip(names) {
-			if let Some(atom) = self.atoms.get(*name) {
-				*res = *atom;
-			} else {
-				replies.insert(
-					*name,
-					self.conn
-						.as_ref()
-						.unwrap()
-						.intern_atom(false, name.as_bytes())
-						.ok()
-						.and_then(|cookie| cookie.reply().ok()),
-				);
-			}
-		}
-
-		for (res, name) in results.iter_mut().zip(names.iter()) {
-			if *res == 0 {
-				let reply = replies.get(name).unwrap();
-				if let Some(reply) = reply {
-					*res = reply.atom;
-					self.atoms.insert((*name).to_owned(), reply.atom);
-				}
-			}
-		}
-		results
+		vec![
+			atoms.UTF8_STRING,
+			atoms.TEXT_PLAN_1,
+			atoms.TEXT_PLAN_2,
+			atoms.STRING,
+			atoms.TEXT,
+			atoms.TEXT_PLAN_0,
+		]
 	}
-
-	fn get_text_format_atoms(&mut self) -> &Atoms {
-		if self.text_atoms.is_empty() {
-			const NAMES: [&str; 6] = [
-				// Prefer utf-8 formats first
-				"UTF8_STRING",
-				"text/plain;charset=utf-8",
-				"text/plain;charset=UTF-8",
-				// ANSI C strings?
-				"STRING",
-				"TEXT",
-				"text/plain",
-			];
-			self.text_atoms = self.get_atoms(&NAMES);
-		}
-		&self.text_atoms
-	}
-
-	// fn get_image_format_atoms(&mut self) -> &Atoms {
-	// 	if self.image_atoms.is_empty() {
-	// 		let atom = self.get_atom_by_id(MIME_IMAGE_PNG);
-	// 		self.image_atoms.push(atom);
-	// 	}
-	// 	&self.image_atoms
-	// }
 }
 
 struct Manager {
@@ -324,7 +278,7 @@ impl Manager {
 	}
 
 	fn set_x11_selection_owner(&self, shared: &mut SharedState) -> bool {
-		let clipboard_atom = shared.get_atom_by_id(CLIPBOARD);
+		let clipboard_atom = shared.common_atoms().CLIPBOARD;
 		let cookie = shared.conn.as_ref().unwrap().set_selection_owner(
 			self.window,
 			clipboard_atom,
@@ -347,7 +301,7 @@ impl Manager {
 
 		// Put a ~nullptr~ (None) in the m_data for image/png format and then we'll
 		// encode the png data when the image is requested in this format.
-		self.data.insert(shared.get_atom_by_id(MIME_IMAGE_PNG), None);
+		self.data.insert(shared.common_atoms().MIME_IMAGE_PNG, None);
 
 		Ok(())
 	}
@@ -361,7 +315,7 @@ impl Manager {
 			});
 		}
 
-		let atoms = shared.get_text_format_atoms();
+		let atoms = shared.text_atoms();
 		if atoms.is_empty() {
 			return Err(Error::Unknown { description:
 				"Couldn't get the atoms that identify supported text formats for the x11 clipboard"
@@ -371,7 +325,7 @@ impl Manager {
 
 		let arc_data = Arc::new(Mutex::new(bytes));
 		for atom in atoms {
-			self.data.insert(*atom, Some(arc_data.clone()));
+			self.data.insert(atom, Some(arc_data.clone()));
 		}
 
 		Ok(())
@@ -490,8 +444,8 @@ impl Manager {
 				&& manager!().window != 0
 				&& manager!().window == get_x11_selection_owner(&mut shared!())
 			{
-				let atoms = vec![shared!().get_atom_by_id(SAVE_TARGETS)];
-				let selection = shared!().get_atom_by_id(CLIPBOARD_MANAGER);
+				let atoms = vec![shared!().common_atoms().SAVE_TARGETS];
+				let selection = shared!().common_atoms().CLIPBOARD_MANAGER;
 
 				// Start the SAVE_TARGETS mechanism so the X11
 				// CLIPBOARD_MANAGER will save our clipboard data
@@ -586,7 +540,7 @@ fn handle_selection_clear_event(event: SelectionClearEvent) {
 	let selection = event.selection;
 	let mut guard = LOCKED_OBJECTS.lock().unwrap();
 	let locked = guard.as_mut().unwrap();
-	let clipboard_atom = { locked.shared.get_atom_by_id(CLIPBOARD) };
+	let clipboard_atom = { locked.shared.common_atoms().CLIPBOARD };
 	if selection == clipboard_atom {
 		locked.manager.clear_data();
 	}
@@ -606,10 +560,10 @@ fn handle_selection_request_event(event: SelectionRequestEvent) {
 		let mut guard = LOCKED_OBJECTS.lock().unwrap();
 		let locked = guard.as_mut().unwrap();
 		let shared = &mut locked.shared;
-		targets_atom = shared.get_atom_by_id(TARGETS);
-		save_targets_atom = shared.get_atom_by_id(SAVE_TARGETS);
-		multiple_atom = shared.get_atom_by_id(MULTIPLE);
-		atom_atom = shared.get_atom_by_id(ATOM);
+		targets_atom = shared.common_atoms().TARGETS;
+		save_targets_atom = shared.common_atoms().SAVE_TARGETS;
+		multiple_atom = shared.common_atoms().MULTIPLE;
+		atom_atom = shared.common_atoms().ATOM;
 	}
 	if target == targets_atom {
 		let mut targets = Atoms::with_capacity(4);
@@ -639,7 +593,7 @@ fn handle_selection_request_event(event: SelectionRequestEvent) {
 		let mut guard = LOCKED_OBJECTS.lock().unwrap();
 		let locked = guard.as_mut().unwrap();
 		let reply = {
-			let atom_pair_atom = locked.shared.get_atom_by_id(ATOM_PAIR);
+			let atom_pair_atom = locked.shared.common_atoms().ATOM_PAIR;
 			get_and_delete_property(
 				locked.shared.conn.as_ref().unwrap(),
 				requestor,
@@ -712,8 +666,8 @@ fn handle_selection_notify_event(event: SelectionNotifyEvent) {
 	let mut locked = guard.as_mut().unwrap();
 	assert_eq!(requestor, locked.manager.window);
 
-	if target == locked.shared.get_atom_by_id(TARGETS) {
-		locked.manager.target_atom = locked.shared.get_atom_by_id(ATOM);
+	if target == locked.shared.common_atoms().TARGETS {
+		locked.manager.target_atom = locked.shared.common_atoms().ATOM;
 	} else {
 		locked.manager.target_atom = target;
 	}
@@ -730,7 +684,7 @@ fn handle_selection_notify_event(event: SelectionNotifyEvent) {
 		let reply_type = reply.type_;
 		// In this case, We're going to receive the clipboard content in
 		// chunks of data with several PropertyNotify events.
-		let incr_atom = locked.shared.get_atom_by_id(INCR);
+		let incr_atom = locked.shared.common_atoms().INCR;
 		if reply_type == incr_atom {
 			let reply = get_and_delete_property(
 				locked.shared.conn.as_ref().unwrap(),
@@ -767,7 +721,7 @@ fn handle_property_notify_event(event: PropertyNotifyEvent) {
 	let mut locked = guard.as_mut().unwrap();
 	if locked.manager.incr_process
 		&& state == Property::NEW_VALUE
-		&& atom == locked.shared.get_atom_by_id(CLIPBOARD)
+		&& atom == locked.shared.common_atoms().CLIPBOARD
 	{
 		let target_atom = locked.manager.target_atom;
 		let reply = get_and_delete_property(
@@ -824,7 +778,7 @@ fn get_data_from_selection_owner<'a>(
 	{
 		let locked = guard.as_mut().unwrap();
 		if selection == 0 {
-			selection = locked.shared.get_atom_by_id(CLIPBOARD);
+			selection = locked.shared.common_atoms().CLIPBOARD;
 		}
 		locked.manager.callback = callback;
 
@@ -839,7 +793,7 @@ fn get_data_from_selection_owner<'a>(
 	for atom in atoms.iter() {
 		{
 			let locked = guard.as_mut().unwrap();
-			let clipboard_atom = locked.shared.get_atom_by_id(CLIPBOARD);
+			let clipboard_atom = locked.shared.common_atoms().CLIPBOARD;
 			locked.shared.conn.as_ref().unwrap().convert_selection(
 				locked.manager.window,
 				selection,
@@ -885,7 +839,7 @@ fn get_data_from_selection_owner<'a>(
 fn get_x11_selection_owner(shared: &mut SharedState) -> Window {
 	let mut result = 0;
 
-	let clipboard_atom = shared.get_atom_by_id(CLIPBOARD);
+	let clipboard_atom = shared.common_atoms().CLIPBOARD;
 	let cookie = shared.conn.as_ref().unwrap().get_selection_owner(clipboard_atom);
 	let reply = cookie.ok().and_then(|cookie| cookie.reply().ok());
 	if let Some(reply) = reply {
@@ -900,7 +854,7 @@ fn get_text(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<String, Erro
 	// Make no mistake, the original, C++ code was perfectly fine (which I didn't write)
 	let owner = get_x11_selection_owner(&mut guard.as_mut().unwrap().shared);
 	if owner == guard.as_mut().unwrap().manager.window {
-		let atoms = guard.as_mut().unwrap().shared.get_text_format_atoms().clone();
+		let atoms = guard.as_mut().unwrap().shared.text_atoms();
 		for atom in atoms.iter() {
 			let mut item = None;
 			if let Some(Some(i)) = guard.as_mut().unwrap().manager.data.get(atom) {
@@ -914,7 +868,7 @@ fn get_text(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<String, Erro
 			}
 		}
 	} else if owner != 0 {
-		let atoms = guard.as_mut().unwrap().shared.get_text_format_atoms().clone();
+		let atoms = guard.as_mut().unwrap().shared.text_atoms();
 		let result = Arc::new(Mutex::new(Ok(String::new())));
 		let callback = {
 			let result = result.clone();
@@ -948,7 +902,7 @@ fn get_image(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<ImageData, 
 			return Ok(image.to_owned_img());
 		}
 	} else if owner != 0 {
-		let atoms = vec![guard.as_mut().unwrap().shared.get_atom_by_id(MIME_IMAGE_PNG)];
+		let atoms = vec![guard.as_mut().unwrap().shared.common_atoms().MIME_IMAGE_PNG];
 		let result: Arc<Mutex<Result<ImageData, Error>>> =
 			Arc::new(Mutex::new(Err(Error::ContentNotAvailable)));
 		let callback = {
@@ -1017,7 +971,7 @@ fn encode_data_on_demand(
 		}
 	}
 
-	if atom == shared.get_atom_by_id(MIME_IMAGE_PNG) {
+	if atom == shared.common_atoms().MIME_IMAGE_PNG {
 		if image.bytes.is_empty() || image.width == 0 || image.height == 0 {
 			return;
 		}
