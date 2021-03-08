@@ -73,12 +73,12 @@ x11rb::atom_manager! {
 x11rb::atom_manager! {
 	pub TextAtoms: TextAtomCookies {
 		UTF8_STRING,
-		TEXT_PLAN_1: b"text/plain;charset=utf-8",
-		TEXT_PLAN_2: b"text/plain;charset=UTF-8",
+		TEXT_PLAIN_1: b"text/plain;charset=utf-8",
+		TEXT_PLAIN_2: b"text/plain;charset=UTF-8",
 		// ANSI C strings?
 		STRING,
 		TEXT,
-		TEXT_PLAN_0: b"text/plain",
+		TEXT_PLAIN_0: b"text/plain",
 	}
 }
 
@@ -149,11 +149,11 @@ impl SharedState {
 
 		vec![
 			atoms.UTF8_STRING,
-			atoms.TEXT_PLAN_1,
-			atoms.TEXT_PLAN_2,
+			atoms.TEXT_PLAIN_1,
+			atoms.TEXT_PLAIN_2,
 			atoms.STRING,
 			atoms.TEXT,
-			atoms.TEXT_PLAN_0,
+			atoms.TEXT_PLAIN_0,
 		]
 	}
 }
