@@ -238,22 +238,24 @@ impl Manager {
             EventMask::PROPERTY_CHANGE |
             // To receive DestroyNotify event and stop the message loop.
             EventMask::STRUCTURE_NOTIFY;
-		let window = connection.generate_id().map_err(|_| Error::Unknown {
-			description: String::from("Could not generate ID from connection"),
-		})?;
-		connection.create_window(
-			x11rb::COPY_DEPTH_FROM_PARENT,
-			window,
-			screen.root,
-			0,
-			0,
-			1,
-			1,
-			0,
-			WindowClass::INPUT_OUTPUT,
-			screen.root_visual,
-			&CreateWindowAux::new().event_mask(event_mask),
-		);
+		let window = connection
+			.generate_id()
+			.map_err(|e| Error::Unknown { description: format!("{}", e) })?;
+		connection
+			.create_window(
+				0,
+				window,
+				screen.root,
+				0,
+				0,
+				1,
+				1,
+				0,
+				WindowClass::INPUT_OUTPUT,
+				screen.root_visual,
+				&CreateWindowAux::new().event_mask(event_mask),
+			)
+			.map_err(|e| Error::Unknown { description: format!("{}", e) })?;
 
 		let thread_handle = std::thread::spawn(process_x11_events);
 
@@ -369,13 +371,15 @@ impl Manager {
 		let item = item.as_ref().unwrap().lock().unwrap();
 		// Set the "property" of "requestor" with the
 		// clipboard content in the requested format ("target").
-		shared.conn.as_ref().unwrap().change_property8(
+		if let Err(e) = shared.conn.as_ref().unwrap().change_property8(
 			PropMode::REPLACE,
 			requestor,
 			property,
 			target,
 			item.as_slice(),
-		);
+		) {
+			log::error!("{}", e)
+		}
 
 		true
 	}
@@ -461,8 +465,8 @@ impl Manager {
 
 			if manager!().window != 0 {
 				let window = manager!().window;
-				shared!().conn.as_ref().unwrap().destroy_window(window);
-				shared!().conn.as_ref().unwrap().flush();
+				let _ = shared!().conn.as_ref().unwrap().destroy_window(window);
+				let _ = shared!().conn.as_ref().unwrap().flush();
 				manager!().window = 0;
 			}
 			join_handle = manager!().thread_handle.take();
@@ -578,13 +582,15 @@ fn handle_selection_request_event(event: SelectionRequestEvent) {
 		let shared = &locked.shared;
 		// Set the "property" of "requestor" with the clipboard
 		// formats ("targets", atoms) that we provide.
-		shared.conn.as_ref().unwrap().change_property32(
+		if let Err(e) = shared.conn.as_ref().unwrap().change_property32(
 			PropMode::REPLACE,
 			requestor,
 			property,
 			atom_atom,
 			targets.as_slice(),
-		);
+		) {
+			log::error!("{}", e);
+		};
 	} else if target == save_targets_atom {
 		// Do nothing
 	} else if target == multiple_atom {
@@ -612,7 +618,7 @@ fn handle_selection_request_event(event: SelectionRequestEvent) {
 					target,
 				);
 				if !property_set {
-					locked.shared.conn.as_ref().unwrap().change_property(
+					if let Err(e) = locked.shared.conn.as_ref().unwrap().change_property(
 						PropMode::REPLACE,
 						requestor,
 						property,
@@ -620,7 +626,9 @@ fn handle_selection_request_event(event: SelectionRequestEvent) {
 						0,
 						0,
 						&[],
-					);
+					) {
+						log::error!("{}", e)
+					}
 				}
 			}
 		}
@@ -652,8 +660,14 @@ fn handle_selection_request_event(event: SelectionRequestEvent) {
 		target,
 		property,
 	};
-	shared.conn.as_ref().unwrap().send_event(false, requestor, EventMask::NO_EVENT, notify);
-	shared.conn.as_ref().unwrap().flush();
+	if let Err(e) =
+		shared.conn.as_ref().unwrap().send_event(false, requestor, EventMask::NO_EVENT, notify)
+	{
+		log::error!("{}", e)
+	}
+	if let Err(e) = shared.conn.as_ref().unwrap().flush() {
+		log::error!("{}", e)
+	}
 }
 
 fn handle_selection_notify_event(event: SelectionNotifyEvent) {
@@ -792,14 +806,18 @@ fn get_data_from_selection_owner<'a>(
 		{
 			let locked = guard.as_mut().unwrap();
 			let clipboard_atom = locked.shared.common_atoms().CLIPBOARD;
-			locked.shared.conn.as_ref().unwrap().convert_selection(
+			if let Err(e) = locked.shared.conn.as_ref().unwrap().convert_selection(
 				locked.manager.window,
 				selection,
 				*atom,
 				clipboard_atom,
 				Time::CURRENT_TIME,
-			);
-			locked.shared.conn.as_ref().unwrap().flush();
+			) {
+				log::error!("{}", e)
+			}
+			if let Err(e) = locked.shared.conn.as_ref().unwrap().flush() {
+				log::error!("{}", e)
+			}
 		}
 
 		// We use the "m_incr_received" to wait several timeouts in case
