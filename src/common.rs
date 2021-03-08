@@ -64,12 +64,8 @@ impl std::fmt::Debug for Error {
 				}
 			}
 		}
-		let name = kind_to_str!(
-			ContentNotAvailable,
-			ClipboardOccupied,
-			ConversionFailure,
-			Unknown { .. }
-		);
+		let name =
+			kind_to_str!(ContentNotAvailable, ClipboardOccupied, ConversionFailure, Unknown { .. });
 		f.write_fmt(format_args!("{} - \"{}\"", name, self))
 	}
 }
