@@ -388,14 +388,14 @@ impl Manager {
 		match &mut self.reply_data {
 			None => {
 				self.reply_offset = 0; // Rust impl: I added this just to be extra sure.
-				self.reply_data = Some(Arc::new(Mutex::new(vec![0u8; req])));
+				self.reply_data = Some(Arc::new(Mutex::new(vec![0; req])));
 			}
 			// The "m_reply_data" size can be smaller because the size
 			// specified in INCR property is just a lower bound.
 			Some(reply_data) => {
 				let mut reply_data = reply_data.lock().unwrap();
 				if req > reply_data.len() {
-					reply_data.resize(req, 0u8);
+					reply_data.resize(req, 0);
 				}
 			}
 		}
@@ -460,10 +460,8 @@ impl Manager {
 			}
 
 			if manager!().window != 0 {
-				{
-					let guard = guard.as_mut().unwrap();
-					guard.shared.conn.as_ref().unwrap().destroy_window(guard.manager.window);
-				}
+				let window = manager!().window;
+				shared!().conn.as_ref().unwrap().destroy_window(window);
 				shared!().conn.as_ref().unwrap().flush();
 				manager!().window = 0;
 			}
