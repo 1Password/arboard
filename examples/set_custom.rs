@@ -17,7 +17,7 @@ fn main() {
         </svg>
     ";
 	//let custom_item = CustomItem::ImageSvg(data.into());
-    let custom_item = CustomItem::TextPlain(data.into());
+	let custom_item = CustomItem::TextPlain(data.into());
 	ctx.set_custom(vec![custom_item]).unwrap();
-    println!("Succesfully set custom data!");
+	println!("Succesfully set custom data!");
 }

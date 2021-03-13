@@ -52,7 +52,6 @@ pub enum Error {
 	// /// is returned.
 	// #[error("The data provided with the clipboard item, does not match its `format`")]
 	// FormatDataMismatch,
-
 	/// Any error that doesn't fit the other error types.
 	///
 	/// The `description` field is only meant to help the developer and should not be relied on as a

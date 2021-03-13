@@ -8,12 +8,16 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use std::{slice, ffi::c_void, mem::transmute, io::Cursor};
+use std::{ffi::c_void, io::Cursor, mem::transmute, slice};
 
-use objc::{class, msg_send, sel, sel_impl, runtime::{BOOL, Class, NO, Object, YES}};
+use objc::{
+	class, msg_send,
+	runtime::{Class, Object, BOOL, NO, YES},
+	sel, sel_impl,
+};
 use objc_id::{Id, Owned};
 
-use objc_foundation::{NSArray, NSDictionary, NSObject, NSString, INSArray, INSObject, INSString};
+use objc_foundation::{INSArray, INSObject, INSString, NSArray, NSDictionary, NSObject, NSString};
 
 use core_graphics::color_space::CGColorSpace;
 use core_graphics::image::CGImage;
@@ -28,7 +32,7 @@ use util::{nil, ns_string_to_rust};
 use super::common::{CustomItem, Error, ImageData};
 
 mod util;
-use self::util::{NSSize, pasteboard_type_to_mime};
+use self::util::{pasteboard_type_to_mime, NSSize};
 
 // required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
@@ -301,21 +305,23 @@ impl OSXClipboardContext {
 		let type_count: usize = unsafe { msg_send![types, count] };
 		let mut result = Vec::with_capacity(type_count);
 		for i in 0..type_count {
-			let pb_type: *const Object = unsafe { msg_send![types, objectAtIndex:i] };
+			let pb_type: *const Object = unsafe { msg_send![types, objectAtIndex: i] };
 			//println!("Raw type: '{}'", unsafe { ns_string_to_rust(pb_type) });
 			let mime = unsafe { pasteboard_type_to_mime(pb_type) };
 			//println!("clb data: '{}'", mime);
 			if CustomItem::is_supported_text_type(&mime) {
-				let text: *const Object = unsafe { msg_send![self.pasteboard, stringForType:pb_type] };
+				let text: *const Object =
+					unsafe { msg_send![self.pasteboard, stringForType: pb_type] };
 				let data = unsafe { ns_string_to_rust(text) };
 				if let Some(item) = CustomItem::from_text_media_type(data, &mime) {
 					result.push(item);
 				}
 			} else if CustomItem::is_supported_octet_type(&mime) {
-				let ns_data: *const Object = unsafe { msg_send![self.pasteboard, dataForType:pb_type] };
+				let ns_data: *const Object =
+					unsafe { msg_send![self.pasteboard, dataForType: pb_type] };
 				let len: usize = unsafe { msg_send![ns_data, length] };
-    			let bytes: *const c_void = unsafe { msg_send![ns_data, bytes] };
-    			let slice = unsafe { slice::from_raw_parts(bytes as *const u8, len) };
+				let bytes: *const c_void = unsafe { msg_send![ns_data, bytes] };
+				let slice = unsafe { slice::from_raw_parts(bytes as *const u8, len) };
 				if let Some(item) = CustomItem::from_octet_media_type(slice.to_vec(), &mime) {
 					result.push(item);
 				}
@@ -328,33 +334,23 @@ impl OSXClipboardContext {
 		match &item {
 			CustomItem::TextPlain(t) => unsafe {
 				let ns_str = NSString::from_str(&t);
-				let success: BOOL = msg_send![self.pasteboard, setString:ns_str forType: NSPasteboardTypeString];
+				let success: BOOL =
+					msg_send![self.pasteboard, setString:ns_str forType: NSPasteboardTypeString];
 				if success == YES {
 					Ok(())
 				} else {
-					Err(Error::Unknown { 
-						description: "Failed setting plain text. (`setString:forType:` returned `NO`)".into() 
+					Err(Error::Unknown {
+						description:
+							"Failed setting plain text. (`setString:forType:` returned `NO`)".into(),
 					})
 				}
 			},
-			CustomItem::TextUriList(text) => {
-				self.set_string_for_custom_format(&item, &text)
-			},
-			CustomItem::TextCsv(text) => {
-				self.set_string_for_custom_format(&item, &text)
-			},
-			CustomItem::TextHtml(text) => {
-				self.set_string_for_custom_format(&item, &text)
-			},
-			CustomItem::ImageSvg(text) => {
-				self.set_string_for_custom_format(&item, &text)
-			},
-			CustomItem::ApplicationXml(text) => {
-				self.set_string_for_custom_format(&item, &text)
-			},
-			CustomItem::ApplicationJson(text) => {
-				self.set_string_for_custom_format(&item, &text)
-			},
+			CustomItem::TextUriList(text) => self.set_string_for_custom_format(&item, &text),
+			CustomItem::TextCsv(text) => self.set_string_for_custom_format(&item, &text),
+			CustomItem::TextHtml(text) => self.set_string_for_custom_format(&item, &text),
+			CustomItem::ImageSvg(text) => self.set_string_for_custom_format(&item, &text),
+			CustomItem::ApplicationXml(text) => self.set_string_for_custom_format(&item, &text),
+			CustomItem::ApplicationJson(text) => self.set_string_for_custom_format(&item, &text),
 			_ => Err(Error::ConversionFailure),
 		}
 	}
@@ -367,8 +363,9 @@ impl OSXClipboardContext {
 		if success == YES {
 			Ok(())
 		} else {
-			Err(Error::Unknown { 
-				description: "Failed setting text format. (`setString:forType:` returned `NO`)".into() 
+			Err(Error::Unknown {
+				description: "Failed setting text format. (`setString:forType:` returned `NO`)"
+					.into(),
 			})
 		}
 	}
