@@ -17,6 +17,7 @@ use core_graphics::base::CGFloat;
 use core_services::{
 	kUTTagClassMIMEType, CFStringRef, TCFType, UTTypeCreatePreferredIdentifierForTag,
 };
+use objc_foundation::{INSString, NSString};
 
 use crate::CustomItem;
 
@@ -42,60 +43,64 @@ unsafe impl Sync for ConstObject {}
 
 #[rustfmt::skip]
 lazy_static! {
-	pub static ref TEXT_PLAIN_UTI: ConstObject = {
-        let uti = mime_to_uti("text/plain");
+    /////////////////////////////////////////////////////
+    // Pasteboard type cache
+    /////////////////////////////////////////////////////
+
+	pub static ref TEXT_PLAIN_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("text/plain");
         ConstObject(uti)
     };
-	pub static ref TEXT_URI_LIST_UTI: ConstObject = {
-        let uti = mime_to_uti("text/uri-list");
+	pub static ref TEXT_URI_LIST_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("text/uri-list");
         ConstObject(uti)
     };
-	pub static ref TEXT_CSV_UTI: ConstObject = {
-        let uti = mime_to_uti("text/csv");
+	pub static ref TEXT_CSV_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("text/csv");
         ConstObject(uti)
     };
-	pub static ref TEXT_CSS_UTI: ConstObject = {
-        let uti = mime_to_uti("text/css");
+	pub static ref TEXT_CSS_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("text/css");
         ConstObject(uti)
     };
-	pub static ref TEXT_HTML_UTI: ConstObject = {
-        let uti = mime_to_uti("text/html");
+	pub static ref TEXT_HTML_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("text/html");
         ConstObject(uti)
     };
-	pub static ref APPLICATION_XHTML_UTI: ConstObject = {
-        let uti = mime_to_uti("application/xhtml+xml");
+	pub static ref APPLICATION_XHTML_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("application/xhtml+xml");
         ConstObject(uti)
     };
-	pub static ref IMAGE_PNG_UTI: ConstObject = {
-        let uti = mime_to_uti("image/png");
+	pub static ref IMAGE_PNG_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("image/png");
         ConstObject(uti)
     };
-	pub static ref IMAGE_JPG_UTI: ConstObject = {
-        let uti = mime_to_uti("image/jpg");
+	pub static ref IMAGE_JPG_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("image/jpg");
         ConstObject(uti)
     };
-	pub static ref IMAGE_GIF_UTI: ConstObject = {
-        let uti = mime_to_uti("image/gif");
+	pub static ref IMAGE_GIF_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("image/gif");
         ConstObject(uti)
     };
-	pub static ref IMAGE_SVG_UTI: ConstObject = {
-        let uti = mime_to_uti("image/svg+xml");
+	pub static ref IMAGE_SVG_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("image/svg+xml");
         ConstObject(uti)
     };
-	pub static ref APPLICATION_XML_UTI: ConstObject = {
-        let uti = mime_to_uti("application/xml");
+	pub static ref APPLICATION_XML_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("application/xml");
         ConstObject(uti)
     };
-	pub static ref APPLICATION_JAVASCRIPT_UTI: ConstObject = {
-        let uti = mime_to_uti("application/javascript");
+	pub static ref APPLICATION_JAVASCRIPT_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("application/javascript");
         ConstObject(uti)
     };
-	pub static ref APPLICATION_JSON_UTI: ConstObject = {
-        let uti = mime_to_uti("application/json");
+	pub static ref APPLICATION_JSON_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("application/json");
         ConstObject(uti)
     };
-	pub static ref APPLICATION_OCTET_STREAM_UTI: ConstObject = {
-        let uti = mime_to_uti("application/octet-stream");
+	pub static ref APPLICATION_OCTET_STREAM_PBT: ConstObject = {
+        let uti = mime_to_pasteboard("application/octet-stream");
         ConstObject(uti)
     };
 }
@@ -140,19 +145,19 @@ pub fn item_to_pasteboard_type(item: &CustomItem) -> *const Object {
 	unsafe {
 		match item {
 			CustomItem::TextPlain(_) => NSPasteboardTypeString,
-			CustomItem::TextUriList(_) => TEXT_URI_LIST_UTI.0,
-			CustomItem::TextCsv(_) => TEXT_CSV_UTI.0,
-			CustomItem::TextCss(_) => TEXT_CSS_UTI.0,
+			CustomItem::TextUriList(_) => TEXT_URI_LIST_PBT.0,
+			CustomItem::TextCsv(_) => TEXT_CSV_PBT.0,
+			CustomItem::TextCss(_) => TEXT_CSS_PBT.0,
 			CustomItem::TextHtml(_) => NSPasteboardTypeHTML,
-			CustomItem::ApplicationXhtml(_) => APPLICATION_XHTML_UTI.0,
+			CustomItem::ApplicationXhtml(_) => APPLICATION_XHTML_PBT.0,
 			CustomItem::ImagePng(_) => NSPasteboardTypePNG,
-			CustomItem::ImageJpg(_) => IMAGE_JPG_UTI.0,
-			CustomItem::ImageGif(_) => IMAGE_GIF_UTI.0,
-			CustomItem::ImageSvg(_) => IMAGE_SVG_UTI.0,
-			CustomItem::ApplicationXml(_) => APPLICATION_XML_UTI.0,
-			CustomItem::ApplicationJavascript(_) => APPLICATION_JAVASCRIPT_UTI.0,
-			CustomItem::ApplicationJson(_) => APPLICATION_JSON_UTI.0,
-			CustomItem::ApplicationOctetStream(_) => APPLICATION_OCTET_STREAM_UTI.0,
+			CustomItem::ImageJpg(_) => IMAGE_JPG_PBT.0,
+			CustomItem::ImageGif(_) => IMAGE_GIF_PBT.0,
+			CustomItem::ImageSvg(_) => IMAGE_SVG_PBT.0,
+			CustomItem::ApplicationXml(_) => APPLICATION_XML_PBT.0,
+			CustomItem::ApplicationJavascript(_) => APPLICATION_JAVASCRIPT_PBT.0,
+			CustomItem::ApplicationJson(_) => APPLICATION_JSON_PBT.0,
+			CustomItem::ApplicationOctetStream(_) => APPLICATION_OCTET_STREAM_PBT.0,
 		}
 	}
 }
@@ -179,8 +184,6 @@ pub fn ns_string_from_rust(string: &str) -> *mut Object {
 }
 
 pub unsafe fn ns_string_to_rust(string: *const Object) -> String {
-	//let string_cls = class!(NSString);
-	//let data_cls = class!(NSData);
 	let data: *mut Object = msg_send![string, dataUsingEncoding: NSUTF8StringEncoding];
 	let len: usize = msg_send![data, length];
 	let bytes: *const c_void = msg_send![data, bytes];
@@ -190,7 +193,11 @@ pub unsafe fn ns_string_to_rust(string: *const Object) -> String {
 }
 
 // Returns the UTI as an NSString
-fn mime_to_uti(mime_str: &str) -> *const Object {
+fn mime_to_pasteboard(mime_str: &str) -> *const Object {
+	// TODO: This is the only method that works with Inkscape.
+	// I'm not sure about other software.
+	return ns_string_from_rust(mime_str);
+
 	// The following is deprecated on macOS 11 (I don't know if it works at all)
 	// But the solution that seems to be current for macOS 11
 	// is not available on macOS 10
@@ -206,5 +213,15 @@ fn mime_to_uti(mime_str: &str) -> *const Object {
 	};
 	// A CFString has the same memory layout as an NSString
 	// Source: https://stackoverflow.com/questions/18274022/difference-between-cfstring-and-nsstring
-	cf_uti as *const Object
+	let ns_uti = cf_uti as *const Object;
+	let dyn_prefix = NSString::from_str("dyn.");
+	let is_dyn: BOOL = unsafe { msg_send![ns_uti, hasPrefix: dyn_prefix] };
+	if is_dyn == YES {
+		// just use the mime type string itself as the pasteboard type
+		// in case we got some dynamic nonesense (this is what Inkscape does for example)
+		let () = unsafe { msg_send![ns_uti, release] };
+		ns_string_from_rust(mime_str)
+	} else {
+		ns_uti
+	}
 }

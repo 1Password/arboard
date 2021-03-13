@@ -306,7 +306,7 @@ impl OSXClipboardContext {
 		let mut result = Vec::with_capacity(type_count);
 		for i in 0..type_count {
 			let pb_type: *const Object = unsafe { msg_send![types, objectAtIndex: i] };
-			//println!("Raw type: '{}'", unsafe { ns_string_to_rust(pb_type) });
+			println!("Raw type: '{}'", unsafe { ns_string_to_rust(pb_type) });
 			let mime = unsafe { pasteboard_type_to_mime(pb_type) };
 			//println!("clb data: '{}'", mime);
 			if CustomItem::is_supported_text_type(&mime) {
@@ -332,25 +332,13 @@ impl OSXClipboardContext {
 
 	fn set_item_for_format(&self, item: CustomItem) -> Result<(), Error> {
 		match &item {
-			CustomItem::TextPlain(t) => unsafe {
-				let ns_str = NSString::from_str(&t);
-				let success: BOOL =
-					msg_send![self.pasteboard, setString:ns_str forType: NSPasteboardTypeString];
-				if success == YES {
-					Ok(())
-				} else {
-					Err(Error::Unknown {
-						description:
-							"Failed setting plain text. (`setString:forType:` returned `NO`)".into(),
-					})
-				}
-			},
-			CustomItem::TextUriList(text) => self.set_string_for_custom_format(&item, &text),
-			CustomItem::TextCsv(text) => self.set_string_for_custom_format(&item, &text),
-			CustomItem::TextHtml(text) => self.set_string_for_custom_format(&item, &text),
-			CustomItem::ImageSvg(text) => self.set_string_for_custom_format(&item, &text),
-			CustomItem::ApplicationXml(text) => self.set_string_for_custom_format(&item, &text),
-			CustomItem::ApplicationJson(text) => self.set_string_for_custom_format(&item, &text),
+			CustomItem::TextPlain(text) => self.set_string_for_custom_format(&item, text),
+			CustomItem::TextUriList(text) => self.set_string_for_custom_format(&item, text),
+			CustomItem::TextCsv(text) => self.set_string_for_custom_format(&item, text),
+			CustomItem::TextHtml(text) => self.set_string_for_custom_format(&item, text),
+			CustomItem::ImageSvg(text) => self.set_string_for_custom_format(&item, text),
+			CustomItem::ApplicationXml(text) => self.set_string_for_custom_format(&item, text),
+			CustomItem::ApplicationJson(text) => self.set_string_for_custom_format(&item, text),
 			_ => Err(Error::ConversionFailure),
 		}
 	}
