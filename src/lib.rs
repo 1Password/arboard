@@ -19,7 +19,7 @@ extern crate clipboard_win;
 extern crate image;
 
 mod common;
-pub use common::{Error, ImageData};
+pub use common::{CustomItem, Error, ImageData};
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 pub mod x11_clipboard;
@@ -28,7 +28,7 @@ pub mod x11_clipboard;
 pub mod windows_clipboard;
 
 #[cfg(target_os = "macos")]
-pub mod osx_clipboard;
+mod osx_clipboard;
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
 type PlatformClipboard = x11_clipboard::X11ClipboardContext;
@@ -86,6 +86,17 @@ impl Clipboard {
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		self.platform.set_image(image)
+	}
+
+	/// Places a list of representations of the same object onto the clipboard.
+	///
+	/// Each `CustomItem` is one representation of the object.
+	pub fn set_custom(&mut self, items: Vec<CustomItem>) -> Result<(), Error> {
+		self.platform.set_custom(items)
+	}
+
+	pub fn get_all(&mut self) -> Result<Vec<CustomItem>, Error> {
+		self.platform.get_all()
 	}
 }
 

@@ -44,6 +44,15 @@ pub enum Error {
 	#[error("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format.")]
 	ConversionFailure,
 
+	// /// The format and the data fields of a `CustomItem` don't match.
+	// ///
+	// /// This is returned from `set_custom`.
+	// ///
+	// /// For example if the format is `TextCsv` but the data is `Bytes` this error
+	// /// is returned.
+	// #[error("The data provided with the clipboard item, does not match its `format`")]
+	// FormatDataMismatch,
+
 	/// Any error that doesn't fit the other error types.
 	///
 	/// The `description` field is only meant to help the developer and should not be relied on as a
@@ -118,6 +127,115 @@ impl<'a> ImageData<'a> {
 			width: self.width,
 			height: self.height,
 			bytes: self.bytes.clone().into_owned().into(),
+		}
+	}
+}
+
+// #[derive(Debug, Clone)]
+// pub enum CustomData {
+// 	Text(String),
+// 	Bytes(Vec<u8>),
+// }
+
+// #[derive(Debug, Clone)]
+// pub struct CustomItem {
+// 	pub format: Format,
+// 	pub data: CustomData,
+// }
+
+/// Possible custom clipboard formats.
+///
+/// This reflects the list of "mandatory data types" specified by
+/// The W3C Clipboard APIs document.
+/// https://www.w3.org/TR/2021/WD-clipboard-apis-20210203/#mandatory-data-types
+///
+#[derive(Debug, Clone)]
+pub enum CustomItem {
+	/// "text/plain"
+	TextPlain(String),
+	/// "text/uri-list"
+	TextUriList(String),
+	/// "text/csv"
+	TextCsv(String),
+	/// "text/css"
+	TextCss(String),
+	/// "text/html"
+	TextHtml(String),
+	/// "application/xhtml+xml"
+	ApplicationXhtml(String),
+	/// "image/png"
+	ImagePng(Vec<u8>),
+	/// "image/jpg", "image/jpeg"
+	ImageJpg(Vec<u8>),
+	/// "image/gif"
+	ImageGif(Vec<u8>),
+	/// "image/svg+xml"
+	ImageSvg(String),
+	/// "application/xml", "text/xml"
+	ApplicationXml(String),
+	/// "application/javascript"
+	ApplicationJavascript(String),
+	/// "application/json"
+	ApplicationJson(String),
+	/// "application/octet-stream"
+	ApplicationOctetStream(Vec<u8>),
+}
+impl CustomItem {
+	/// The MIME type of this item
+	pub fn media_type(&self) -> &'static str {
+		match self {
+			CustomItem::TextPlain(_) => "text/plain",
+			CustomItem::TextUriList(_) => "text/uri-list",
+			CustomItem::TextCsv(_) => "text/csv",
+			CustomItem::TextCss(_) => "text/css",
+			CustomItem::TextHtml(_) => "text/html",
+			CustomItem::ApplicationXhtml(_) => "application/xhtml+xml",
+			CustomItem::ImagePng(_) => "image/png",
+			CustomItem::ImageJpg(_) => "image/jpg",
+			CustomItem::ImageGif(_) => "image/gif",
+			CustomItem::ImageSvg(_) => "image/svg+xml",
+			CustomItem::ApplicationXml(_) => "application/xml",
+			CustomItem::ApplicationJavascript(_) => "application/javascript",
+			CustomItem::ApplicationJson(_) => "application/json",
+			CustomItem::ApplicationOctetStream(_) => "application/octet-stream",
+		}
+	}
+
+	pub fn is_supported_text_type(media_type: &str) -> bool {
+		Self::from_text_media_type(String::new(), media_type).is_some()
+	}
+
+	pub fn is_supported_octet_type(media_type: &str) -> bool {
+		Self::from_octet_media_type(Vec::new(), media_type).is_some()
+	}
+
+	/// Return None if the `media_type` is not a supported text format, returns Some otherwise.
+	pub fn from_text_media_type(data: String, media_type: &str) -> Option<CustomItem> {
+		match media_type {
+			"text/plain" => Some(CustomItem::TextPlain(data)),
+			"text/uri-list" => Some(CustomItem::TextUriList(data)),
+			"text/csv" => Some(CustomItem::TextCsv(data)),
+			"text/css" => Some(CustomItem::TextCss(data)),
+			"text/html" => Some(CustomItem::TextHtml(data)),
+			"application/xhtml+xml" => Some(CustomItem::ApplicationXhtml(data)),
+			"image/svg+xml" => Some(CustomItem::ImageSvg(data)),
+			"application/xml" => Some(CustomItem::ApplicationXml(data)),
+			"text/xml" => Some(CustomItem::ApplicationXml(data)),
+			"application/javascript" => Some(CustomItem::ApplicationJavascript(data)),
+			"application/json" => Some(CustomItem::ApplicationJson(data)),
+			_ => None,
+		}
+	}
+
+	/// Return None if the `media_type` is not a supported binary format, returns Some otherwise.
+	pub fn from_octet_media_type(data: Vec<u8>, media_type: &str) -> Option<CustomItem> {
+		match media_type {
+			"image/png" => Some(CustomItem::ImagePng(data)),
+			"image/jpg" => Some(CustomItem::ImageJpg(data)),
+			"image/jpeg" => Some(CustomItem::ImageJpg(data)),
+			"image/gif" => Some(CustomItem::ImageGif(data)),
+			"application/octet-stream" => Some(CustomItem::ApplicationOctetStream(data)),
+			_ => None,
 		}
 	}
 }

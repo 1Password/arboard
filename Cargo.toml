@@ -11,6 +11,7 @@ edition = "2018"
 
 [dependencies]
 thiserror = "1.0"
+lazy_static = "1.4.0"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = [
@@ -30,11 +31,13 @@ image = { version = "0.23.12", default-features = false, features = ["bmp"] }
 objc = "0.2"
 objc_id = "0.1"
 objc-foundation = "0.1"
-core-graphics = "0.21"
+core-graphics = "0.22"
+core-foundation = "0.9"
+core-services = "0.2"
+#cocoa = "0.24"
 image = { version = "0.23", default-features = false, features = ["tiff"] }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
 log = "0.4"
 x11rb = "0.8"
-lazy_static = "1.4.0"
 image = { version = "0.23.9", default-features = false, features = ["png"] }
