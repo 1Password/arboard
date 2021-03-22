@@ -500,6 +500,7 @@ fn process_x11_events() {
 				Err(_) => break,
 			}
 		};
+		println!();
 		match event {
 			Event::DestroyNotify(_) => {
 				//println!("Received destroy event, stopping");
@@ -539,6 +540,7 @@ fn process_x11_events() {
 }
 
 fn handle_selection_clear_event(event: SelectionClearEvent) {
+	println!("SelectionClearEvent");
 	let selection = event.selection;
 	let mut guard = LOCKED_OBJECTS.lock().unwrap();
 	let locked = guard.as_mut().unwrap();
@@ -562,6 +564,11 @@ fn handle_selection_request_event(event: SelectionRequestEvent) {
 		let mut guard = LOCKED_OBJECTS.lock().unwrap();
 		let locked = guard.as_mut().unwrap();
 		let shared = &mut locked.shared;
+
+		let stuff = shared.conn.as_ref().unwrap().get_atom_name(target).unwrap().reply().unwrap();
+		let target_name = String::from_utf8_lossy(&stuff.name);
+		println!("SelectionRequestEvent: '{:?}'", target_name);
+
 		targets_atom = shared.common_atoms().TARGETS;
 		save_targets_atom = shared.common_atoms().SAVE_TARGETS;
 		multiple_atom = shared.common_atoms().MULTIPLE;
@@ -671,6 +678,7 @@ fn handle_selection_request_event(event: SelectionRequestEvent) {
 }
 
 fn handle_selection_notify_event(event: SelectionNotifyEvent) {
+	println!("SelectionNotifyEvent");
 	let target = event.target;
 	let requestor = event.requestor;
 	let property = event.property;
@@ -726,6 +734,7 @@ fn handle_selection_notify_event(event: SelectionNotifyEvent) {
 }
 
 fn handle_property_notify_event(event: PropertyNotifyEvent) {
+	println!("PropertyNotifyEvent");
 	let state = event.state;
 	let atom = event.atom;
 	let window = event.window;
