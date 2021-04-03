@@ -12,6 +12,7 @@ use wl_clipboard_rs::paste::{get_contents, ClipboardType, Error as PasteError, S
 pub struct WaylandDataControlClipboardContext {}
 
 impl WaylandDataControlClipboardContext {
+	#[allow(clippy::unnecessary_wraps)]
 	pub(crate) fn new() -> Result<Self, Error> {
 		Ok(Self {})
 	}
@@ -31,7 +32,7 @@ impl WaylandDataControlClipboardContext {
 				Err(Error::ContentNotAvailable)
 			}
 
-			Err(err) => Err(Error::Unknown { description: format!("{}", err) })?,
+			Err(err) => return Err(Error::Unknown { description: format!("{}", err) }),
 		}
 	}
 
@@ -74,7 +75,7 @@ impl WaylandDataControlClipboardContext {
 				Err(Error::ContentNotAvailable)
 			}
 
-			Err(err) => Err(Error::Unknown { description: format!("{}", err) })?,
+			Err(err) => return Err(Error::Unknown { description: format!("{}", err) }),
 		}
 	}
 
