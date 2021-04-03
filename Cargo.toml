@@ -9,6 +9,11 @@ readme = "README.md"
 keywords = ["clipboard", "image"]
 edition = "2018"
 
+[features]
+default = ["x11"]
+x11 = ["x11rb"]
+wayland-data-control = ["wl-clipboard-rs"]
+
 [dependencies]
 thiserror = "1.0"
 
@@ -35,6 +40,7 @@ image = { version = "0.23", default-features = false, features = ["tiff"] }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
 log = "0.4"
-x11rb = "0.8"
+x11rb = { version = "0.8", optional = true }
+wl-clipboard-rs = { version = "0.4.1", optional = true }
 lazy_static = "1.4.0"
 image = { version = "0.23.9", default-features = false, features = ["png"] }
