@@ -40,7 +40,7 @@ impl WaylandDataControlClipboardContext {
 		use wl_clipboard_rs::copy::MimeType;
 		let opts = Options::new();
 		let source = Source::Bytes(text.as_bytes().into());
-		opts.copy(source, MimeType::Autodetect).map_err(map_copy_error)?;
+		opts.copy(source, MimeType::Text).map_err(into_unknown)?;
 		Ok(())
 	}
 
@@ -120,13 +120,13 @@ impl WaylandDataControlClipboardContext {
 		if encoding_result.is_ok() {
 			let opts = Options::new();
 			let source = Source::Bytes(Rc::try_unwrap(buffer.inner).unwrap().into_inner().into());
-			opts.copy(source, MimeType::Autodetect).map_err(map_copy_error)?;
+			opts.copy(source, MimeType::Specific("image/png".into())).map_err(into_unknown)?;
 		}
 
 		Ok(())
 	}
 }
 
-fn map_copy_error(error: wl_clipboard_rs::copy::Error) -> Error {
+fn into_unknown(error: wl_clipboard_rs::copy::Error) -> Error {
 	Error::Unknown { description: format!("{}", error) }
 }
