@@ -970,9 +970,8 @@ fn encode_data_on_demand(
 	buffer: &mut Option<Arc<Mutex<Vec<u8>>>>,
 ) {
 	if atom == shared.common_atoms().MIME_IMAGE_PNG {
-		let _ = convert_to_png(image.to_owned_img()).and_then(|image| {
+		let _ = convert_to_png(image.to_owned_img()).map(|image| {
 			*buffer = Some(Arc::new(Mutex::new(image.bytes.into())));
-			Ok(())
 		});
 	}
 }
