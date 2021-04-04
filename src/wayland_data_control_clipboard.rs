@@ -1,10 +1,6 @@
-use super::common::{Error, ImageData};
+use super::common::{convert_to_png, Error, ImageData};
 
-use std::{
-	cell::RefCell,
-	io::{Cursor, Read},
-	rc::Rc,
-};
+use std::io::{Cursor, Read};
 
 use wl_clipboard_rs::copy::{Options, Source};
 use wl_clipboard_rs::paste::{get_contents, ClipboardType, Error as PasteError, Seat};
@@ -82,51 +78,15 @@ impl WaylandDataControlClipboardContext {
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		use wl_clipboard_rs::copy::MimeType;
 
-		/// This is a workaround for the PNGEncoder not having a `into_inner` like function
-		/// which would allow us to take back our Vec after the encoder finished encoding.
-		/// So instead we create this wrapper around an Rc Vec which implements `io::Write`
-		#[derive(Clone)]
-		struct RcBuffer {
-			inner: Rc<RefCell<Vec<u8>>>,
-		}
-		impl std::io::Write for RcBuffer {
-			fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-				self.inner.borrow_mut().extend_from_slice(buf);
-				Ok(buf.len())
-			}
-			fn flush(&mut self) -> std::io::Result<()> {
-				// Noop
-				Ok(())
-			}
-		}
-
-		if image.bytes.is_empty() || image.width == 0 || image.height == 0 {
-			return Err(Error::ConversionFailure);
-		}
-
-		let buffer = RcBuffer { inner: Rc::new(RefCell::new(Vec::new())) };
-		let encoding_result;
-		{
-			let encoder = image::png::PngEncoder::new(buffer.clone());
-			encoding_result = encoder.encode(
-				image.bytes.as_ref(),
-				image.width as u32,
-				image.height as u32,
-				image::ColorType::Rgba8,
-			);
-		}
-		// Rust impl: The encoder must be destroyed so that it lets go of its reference to the
-		// `output` before we `try_unwrap()`
-		if encoding_result.is_ok() {
+		convert_to_png(image).and_then(|image| {
 			let opts = Options::new();
-			let source = Source::Bytes(Rc::try_unwrap(buffer.inner).unwrap().into_inner().into());
+			let source = Source::Bytes(image.bytes.into());
 			opts.copy(source, MimeType::Specific("image/png".into())).map_err(into_unknown)?;
-		}
-
-		Ok(())
+			Ok(())
+		})
 	}
 }
 
-fn into_unknown(error: wl_clipboard_rs::copy::Error) -> Error {
+fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
 	Error::Unknown { description: format!("{}", error) }
 }

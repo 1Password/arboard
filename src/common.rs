@@ -8,7 +8,7 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use std::borrow::Cow;
+use std::{borrow::Cow, cell::RefCell, rc::Rc};
 use thiserror::Error;
 
 /// An error that might happen during a clipboard operation.
@@ -119,5 +119,47 @@ impl<'a> ImageData<'a> {
 			height: self.height,
 			bytes: self.bytes.clone().into_owned().into(),
 		}
+	}
+}
+
+pub(crate) fn convert_to_png<'a>(image: ImageData<'a>) -> Result<ImageData<'a>, Error> {
+	/// This is a workaround for the PNGEncoder not having a `into_inner` like function
+	/// which would allow us to take back our Vec after the encoder finished encoding.
+	/// So instead we create this wrapper around an Rc Vec which implements `io::Write`
+	#[derive(Clone)]
+	struct RcBuffer {
+		inner: Rc<RefCell<Vec<u8>>>,
+	}
+	impl std::io::Write for RcBuffer {
+		fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+			self.inner.borrow_mut().extend_from_slice(buf);
+			Ok(buf.len())
+		}
+		fn flush(&mut self) -> std::io::Result<()> {
+			// Noop
+			Ok(())
+		}
+	}
+
+	if image.bytes.is_empty() || image.width == 0 || image.height == 0 {
+		return Err(Error::ConversionFailure);
+	}
+
+	let mut image = image.to_owned_img();
+	let buffer = RcBuffer { inner: Rc::new(RefCell::new(Vec::new())) };
+	let encoding_result;
+	let encoder = image::png::PngEncoder::new(buffer.clone());
+	encoding_result = encoder.encode(
+		image.bytes.as_ref(),
+		image.width as u32,
+		image.height as u32,
+		image::ColorType::Rgba8,
+	);
+
+	if encoding_result.is_ok() {
+		image.bytes = Rc::try_unwrap(buffer.inner).unwrap().into_inner().into();
+		Ok(image)
+	} else {
+		Err(Error::ConversionFailure)
 	}
 }
