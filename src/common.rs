@@ -122,7 +122,8 @@ impl<'a> ImageData<'a> {
 	}
 }
 
-pub(crate) fn convert_to_png<'a>(image: ImageData<'a>) -> Result<ImageData<'a>, Error> {
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
+pub(crate) fn convert_to_png(image: ImageData) -> Result<ImageData, Error> {
 	/// This is a workaround for the PNGEncoder not having a `into_inner` like function
 	/// which would allow us to take back our Vec after the encoder finished encoding.
 	/// So instead we create this wrapper around an Rc Vec which implements `io::Write`
