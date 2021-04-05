@@ -21,8 +21,19 @@ extern crate image;
 mod common;
 pub use common::{Error, ImageData};
 
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
+#[cfg(all(
+	unix,
+	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+	feature = "x11"
+))]
 pub mod x11_clipboard;
+
+#[cfg(all(
+	unix,
+	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+	feature = "wayland-data-control"
+))]
+pub mod wayland_data_control_clipboard;
 
 #[cfg(windows)]
 pub mod windows_clipboard;
@@ -30,8 +41,18 @@ pub mod windows_clipboard;
 #[cfg(target_os = "macos")]
 pub mod osx_clipboard;
 
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
+#[cfg(all(
+	unix,
+	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+	feature = "x11"
+))]
 type PlatformClipboard = x11_clipboard::X11ClipboardContext;
+#[cfg(all(
+	unix,
+	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+	feature = "wayland-data-control"
+))]
+type PlatformClipboard = wayland_data_control_clipboard::WaylandDataControlClipboardContext;
 #[cfg(windows)]
 type PlatformClipboard = windows_clipboard::WindowsClipboardContext;
 #[cfg(target_os = "macos")]

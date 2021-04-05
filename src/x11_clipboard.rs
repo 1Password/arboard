@@ -32,9 +32,7 @@ and conditions of the chosen license apply to this file.
 //!
 //!
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -53,6 +51,8 @@ use x11rb::{
 	rust_connection::RustConnection,
 	wrapper::ConnectionExt as _,
 };
+
+use crate::common::convert_to_png;
 
 use super::common::{Error, ImageData};
 
@@ -969,46 +969,10 @@ fn encode_data_on_demand(
 	atom: xproto::Atom,
 	buffer: &mut Option<Arc<Mutex<Vec<u8>>>>,
 ) {
-	/// This is a workaround for the PNGEncoder not having a `into_inner` like function
-	/// which would allow us to take back our Vec after the encoder finished encoding.
-	/// So instead we create this wrapper around an Rc Vec which implements `io::Write`
-	#[derive(Clone)]
-	struct RcBuffer {
-		inner: Rc<RefCell<Vec<u8>>>,
-	}
-	impl std::io::Write for RcBuffer {
-		fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-			self.inner.borrow_mut().extend_from_slice(buf);
-			Ok(buf.len())
-		}
-		fn flush(&mut self) -> std::io::Result<()> {
-			// Noop
-			Ok(())
-		}
-	}
-
 	if atom == shared.common_atoms().MIME_IMAGE_PNG {
-		if image.bytes.is_empty() || image.width == 0 || image.height == 0 {
-			return;
-		}
-
-		let output = RcBuffer { inner: Rc::new(RefCell::new(Vec::new())) };
-		let encoding_result;
-		{
-			let encoder = image::png::PngEncoder::new(output.clone());
-			encoding_result = encoder.encode(
-				image.bytes.as_ref(),
-				image.width as u32,
-				image.height as u32,
-				image::ColorType::Rgba8,
-			);
-		}
-		// Rust impl: The encoder must be destroyed so that it lets go of its reference to the
-		// `output` before we `try_unwrap()`
-		if encoding_result.is_ok() {
-			*buffer =
-				Some(Arc::new(Mutex::new(Rc::try_unwrap(output.inner).unwrap().into_inner())));
-		}
+		let _ = convert_to_png(image.to_owned_img()).map(|image| {
+			*buffer = Some(Arc::new(Mutex::new(image.bytes.into())));
+		});
 	}
 }
 
