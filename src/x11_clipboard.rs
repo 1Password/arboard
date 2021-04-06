@@ -52,7 +52,7 @@ use x11rb::{
 	wrapper::ConnectionExt as _,
 };
 
-use crate::common::convert_to_png;
+use crate::common_linux::encode_as_png;
 
 use super::common::{Error, ImageData};
 
@@ -970,9 +970,9 @@ fn encode_data_on_demand(
 	buffer: &mut Option<Arc<Mutex<Vec<u8>>>>,
 ) {
 	if atom == shared.common_atoms().MIME_IMAGE_PNG {
-		let _ = convert_to_png(image.to_owned_img()).map(|image| {
-			*buffer = Some(Arc::new(Mutex::new(image.bytes.into())));
-		});
+		if let Ok(image) = encode_as_png(image) {
+			*buffer = Some(Arc::new(Mutex::new(image)));
+		}
 	}
 }
 
@@ -1019,8 +1019,8 @@ impl Drop for X11ClipboardContext {
 }
 
 impl X11ClipboardContext {
-	pub(crate) fn new() -> Result<Self, Error> {
-		Ok(X11ClipboardContext { _owned: LOCKED_OBJECTS.clone() })
+	pub(crate) fn new() -> Self {
+		X11ClipboardContext { _owned: LOCKED_OBJECTS.clone() }
 	}
 
 	pub(crate) fn get_text(&mut self) -> Result<String, Error> {

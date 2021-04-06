@@ -1,15 +1,27 @@
-use super::common::{convert_to_png, Error, ImageData};
+use crate::{
+	common::{Error, ImageData},
+	common_linux::encode_as_png,
+};
 
 use std::io::{Cursor, Read};
 
-use wl_clipboard_rs::copy::{Options, Source};
-use wl_clipboard_rs::paste::{get_contents, ClipboardType, Error as PasteError, Seat};
+use wl_clipboard_rs::{
+	copy::{Options, Source},
+	paste::{get_contents, ClipboardType, Error as PasteError, Seat},
+	utils::is_primary_selection_supported,
+};
+
+static MIME_PNG: &str = "image/png";
 
 pub struct WaylandDataControlClipboardContext {}
 
 impl WaylandDataControlClipboardContext {
 	#[allow(clippy::unnecessary_wraps)]
 	pub(crate) fn new() -> Result<Self, Error> {
+		// Check if it's possible to communicate with the wayland compositor
+		if let Err(e) = is_primary_selection_supported() {
+			return Err(into_unknown(e));
+		}
 		Ok(Self {})
 	}
 
@@ -19,8 +31,7 @@ impl WaylandDataControlClipboardContext {
 		match result {
 			Ok((mut pipe, _)) => {
 				let mut contents = vec![];
-				pipe.read_to_end(&mut contents)
-					.map_err(|e| Error::Unknown { description: format!("{}", e) })?;
+				pipe.read_to_end(&mut contents).map_err(into_unknown)?;
 				String::from_utf8(contents).map_err(|_| Error::ConversionFailure)
 			}
 
@@ -42,13 +53,12 @@ impl WaylandDataControlClipboardContext {
 
 	pub fn get_image(&mut self) -> Result<ImageData, Error> {
 		use wl_clipboard_rs::paste::MimeType;
-		let result = get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Any);
+		let result =
+			get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Specific(MIME_PNG));
 		match result {
-			//TODO: Use mime_type to select Reader format
 			Ok((mut pipe, _mime_type)) => {
 				let mut buffer = vec![];
-				pipe.read_to_end(&mut buffer)
-					.map_err(|e| Error::Unknown { description: format!("{}", e) })?;
+				pipe.read_to_end(&mut buffer).map_err(into_unknown)?;
 				dbg!(&buffer);
 				let image = image::io::Reader::new(Cursor::new(buffer))
 					.with_guessed_format()
@@ -78,12 +88,11 @@ impl WaylandDataControlClipboardContext {
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		use wl_clipboard_rs::copy::MimeType;
 
-		convert_to_png(image).and_then(|image| {
-			let opts = Options::new();
-			let source = Source::Bytes(image.bytes.into());
-			opts.copy(source, MimeType::Specific("image/png".into())).map_err(into_unknown)?;
-			Ok(())
-		})
+		let image = encode_as_png(&image)?;
+		let opts = Options::new();
+		let source = Source::Bytes(image.into());
+		opts.copy(source, MimeType::Specific(MIME_PNG.into())).map_err(into_unknown)?;
+		Ok(())
 	}
 }
 
