@@ -1,6 +1,6 @@
 [package]
 name = "arboard"
-version = "1.1.0"
+version = "1.2.0"
 authors = ["Artur Kovacs <kovacs.artur.barnabas@gmail.com>", "Avi Weinstock <aweinstock314@gmail.com>"]
 description = "Image and text handling for the OS clipboard."
 repository = "https://github.com/ArturKovacs/arboard"
