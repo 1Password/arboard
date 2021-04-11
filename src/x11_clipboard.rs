@@ -13,11 +13,14 @@ and conditions of the chosen license apply to this file.
 // https://freedesktop.org/wiki/ClipboardManager/
 
 use std::{
+	cell::RefCell,
+	collections::{hash_map::Entry, HashMap},
 	sync::{
 		atomic::{AtomicBool, Ordering},
 		Arc,
 	},
 	thread::JoinHandle,
+	thread_local,
 	time::{Duration, Instant},
 	usize,
 };
@@ -75,6 +78,10 @@ x11rb::atom_manager! {
 		// the clipboard owner writes the data we requested.
 		ARBOARD_CLIPBOARD,
 	}
+}
+
+thread_local! {
+	static ATOM_NAME_CACHE: RefCell<HashMap<u32, &'static str>> = Default::default();
 }
 
 // Some clipboard items, like images, may take a very long time to produce a
@@ -282,7 +289,7 @@ impl ClipboardContext {
 				}
 			};
 			match event {
-				// a selection exists
+				// The first response after requesting a selection.
 				Event::SelectionNotify(event) => {
 					trace!("Read SelectionNotify");
 					let result = self.handle_read_selection_notify(
@@ -303,6 +310,9 @@ impl ClipboardContext {
 						ReadSelNotifyResult::EventNotRecognized => (),
 					}
 				}
+				// If the previous SelectionNotify event specified that the data
+				// will be sent in INCR segments, each segment is transferred in
+				// a PropertyNotify event.
 				Event::PropertyNotify(event) => {
 					let result = self.handle_read_property_notify(
 						&reader,
@@ -348,8 +358,21 @@ impl ClipboardContext {
 		)
 		.map_err(into_unknown)
 	}
-	fn atom_name_dbg(&self, atom: x11rb::protocol::xproto::Atom) -> String {
-		self.atom_name(atom).unwrap_or_else(|_| "FAILED-TO-GET-THE-ATOM-NAME".into())
+	fn atom_name_dbg(&self, atom: x11rb::protocol::xproto::Atom) -> &'static str {
+		ATOM_NAME_CACHE.with(|cache| {
+			let mut cache = cache.borrow_mut();
+			match cache.entry(atom) {
+				Entry::Occupied(entry) => *entry.get(),
+				Entry::Vacant(entry) => {
+					let s = self
+						.atom_name(atom)
+						.map(|s| Box::leak(s.into_boxed_str()) as &str)
+						.unwrap_or("FAILED-TO-GET-THE-ATOM-NAME");
+					entry.insert(s);
+					s
+				}
+			}
+		})
 	}
 
 	fn handle_read_selection_notify(
@@ -360,7 +383,6 @@ impl ClipboardContext {
 		incr_data: &mut Vec<u8>,
 		event: SelectionNotifyEvent,
 	) -> Result<ReadSelNotifyResult> {
-		trace!("Event::SelectionNotify: {}, {}, {}", event.selection, event.target, event.property);
 		// The property being set to NONE means that the `convert_selection`
 		// failed.
 
@@ -499,7 +521,7 @@ impl ClipboardContext {
 			self.server.conn.flush().map_err(into_unknown)?;
 			success = true;
 		} else {
-			// we are asked to send a the data in a supported UTF8 format
+			trace!("Handling request for (probably) the clipboard contents.");
 			let data = self.data.read();
 			if let Some(data) = &*data {
 				if data.format == event.target {
@@ -519,8 +541,6 @@ impl ClipboardContext {
 					success = false
 				}
 			} else {
-				// TODO: we should still continue sending data
-
 				// This must mean that we lost ownership of the data
 				// since the other side requested the selection.
 				// Let's respond with the property set to none.
@@ -713,18 +733,9 @@ fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::e
 					}
 				}
 			}
-			// TODO: remove when we know more
-			// We've requested the clipboard content and this is the
-			// answer.
-			Event::PropertyNotify(event) => {
-				trace!(
-					"PropertyNotify: {}, {:?}",
-					clipboard.atom_name_dbg(event.atom),
-					event.state
-				);
-			}
-			event => {
-				trace!("Received unexpected event: {:?}", event);
+			_event => {
+				// May be useful for debbuging but nothing else really.
+				// trace!("Received unwanted event: {:?}", event);
 			}
 		}
 	}
