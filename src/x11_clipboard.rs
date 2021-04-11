@@ -22,7 +22,7 @@ use std::{
 	usize,
 };
 
-use log::{error, info, trace, warn};
+use log::{error, trace, warn};
 use once_cell::sync::Lazy;
 use parking_lot::{Condvar, Mutex, MutexGuard, RwLock};
 use x11rb::{
@@ -389,7 +389,7 @@ impl ClipboardContext {
 
 		// we found something
 		if reply.type_ == target_format {
-			return Ok(ReadSelNotifyResult::GotData(reply.value));
+			Ok(ReadSelNotifyResult::GotData(reply.value))
 		} else if reply.type_ == self.atoms.INCR {
 			// Note that we call the get_property again because we are
 			// indicating that we are ready to receive the data by deleting the
@@ -414,12 +414,12 @@ impl ClipboardContext {
 				let min_data_len = reply.value32().and_then(|mut vals| vals.next()).unwrap_or(0);
 				incr_data.reserve(min_data_len as usize);
 			}
-			return Ok(ReadSelNotifyResult::IncrStarted);
+			Ok(ReadSelNotifyResult::IncrStarted)
 		} else {
 			// this should never happen, we have sent a request only for supported types
-			return Err(Error::Unknown {
+			Err(Error::Unknown {
 				description: String::from("incorrect type received from clipboard"),
-			});
+			})
 		}
 	}
 
@@ -723,7 +723,7 @@ fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::e
 					event.state
 				);
 			}
-			event @ _ => {
+			event => {
 				trace!("Received unexpected event: {:?}", event);
 			}
 		}
@@ -832,8 +832,21 @@ impl Drop for X11ClipboardContext {
 				return;
 			}
 			if let Some(global_cb) = global_cb {
-				if let Err(_) = global_cb.server_handle.join() {
-					error!("The clipboard server thread paniced.");
+				if let Err(e) = global_cb.server_handle.join() {
+					// Let's try extracting the error message
+					let message;
+					if let Some(msg) = e.downcast_ref::<&'static str>() {
+						message = Some((*msg).to_string());
+					} else if let Some(msg) = e.downcast_ref::<String>() {
+						message = Some(msg.clone());
+					} else {
+						message = None;
+					}
+					if let Some(message) = message {
+						error!("The clipboard server thread paniced. Panic message: '{}'", message);
+					} else {
+						error!("The clipboard server thread paniced.");
+					}
 				}
 			}
 		}
