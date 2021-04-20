@@ -32,7 +32,7 @@ use x11rb::{
 	connection::Connection,
 	protocol::{
 		xproto::{
-			AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
+			Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
 			PropertyNotifyEvent, SelectionNotifyEvent, SelectionRequestEvent, Time, WindowClass,
 			SELECTION_NOTIFY_EVENT,
 		},
@@ -81,7 +81,7 @@ x11rb::atom_manager! {
 }
 
 thread_local! {
-	static ATOM_NAME_CACHE: RefCell<HashMap<u32, &'static str>> = Default::default();
+	static ATOM_NAME_CACHE: RefCell<HashMap<Atom, &'static str>> = Default::default();
 }
 
 // Some clipboard items, like images, may take a very long time to produce a
@@ -166,7 +166,7 @@ struct ClipboardData {
 	bytes: Vec<u8>,
 
 	/// The atom represeting the format in which the data is encoded.
-	format: u32,
+	format: Atom,
 }
 
 enum ReadSelNotifyResult {
@@ -218,7 +218,7 @@ impl ClipboardContext {
 	/// `formats` must be a slice of atoms, where each atom represents a target format.
 	/// The first format from `formats`, which the clipboard owner supports will be the
 	/// format of the return value.
-	fn read(&self, formats: &[u32]) -> Result<ClipboardData> {
+	fn read(&self, formats: &[Atom]) -> Result<ClipboardData> {
 		// if we are the current owner, we can get the current clipboard ourselves
 		if self.is_owner()? {
 			let data = self.data.read();
@@ -251,7 +251,7 @@ impl ClipboardContext {
 		Err(Error::ContentNotAvailable)
 	}
 
-	fn read_single(&self, reader: &XContext, target_format: u32) -> Result<Vec<u8>> {
+	fn read_single(&self, reader: &XContext, target_format: Atom) -> Result<Vec<u8>> {
 		// Delete the property so that we can detect (using property notify)
 		// when the selection owner receives our request.
 		reader
@@ -619,8 +619,9 @@ impl ClipboardContext {
 			return Ok(());
 		}
 
-		warn!("The handover was not finished and the condvar didn't time out, yet the condvar wait ended. This should be unreachable.");
-		Ok(())
+		Err(Error::Unknown {
+			description: "The handover was not finished and the condvar didn't time out, yet the condvar wait ended. This should be unreachable.".into()
+		})
 	}
 }
 
