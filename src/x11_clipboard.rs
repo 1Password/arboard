@@ -8,1044 +8,859 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-//!
-//!
-//! This implementation is a port of https://github.com/dacap/clip to Rust
-//! The structure of the original is more or less maintained.
-//!
-//! Disclaimer: The original C++ code is well organized and feels clean but it relies on C++
-//! allowing a liberal data sharing between threads and it is painfully obvious from certain parts
-//! of this port that this code was not designed for Rust. It should probably be reworked because
-//! the absolute plague that the Arc<Mutex<>> objects are in this code is horrible just to look at
-//! and will forever haunt me in my nightmares.
-//!
-//! Most changes are to conform with Rusts rules for example there are multiple overloads of
-//! the `get_atom` functtion in the original but there's no function overloading in Rust so
-//! those are split apart into functions with different names. (`get_atom_by_id` and the other one
-//! at the time of writing I haven't needed to use)
-//!
-//! More noteably the `Manager` class had to be split into mutliple `structs` and some member
-//! functions were made into global functions to conform Rust's aliasing rules.
-//! Furthermore the signature of many functions was changed to follow a simple locking philosophy;
-//! namely that the mutex gets locked at the topmost level possible and then most functions don't
-//! need to attempt to lock, instead they just use the direct object references passed on as arguments.
-//!
-//!
+// More info about using the clipboard on X11:
+// https://tronche.com/gui/x/icccm/sec-2.html#s-2.6
+// https://freedesktop.org/wiki/ClipboardManager/
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::Duration;
+use std::{
+	cell::RefCell,
+	collections::{hash_map::Entry, HashMap},
+	sync::{
+		atomic::{AtomicBool, Ordering},
+		Arc,
+	},
+	thread::JoinHandle,
+	thread_local,
+	time::{Duration, Instant},
+	usize,
+};
 
-use lazy_static::lazy_static;
-use x11rb::protocol::xproto;
+use log::{error, trace, warn};
+use once_cell::sync::Lazy;
+use parking_lot::{Condvar, Mutex, MutexGuard, RwLock};
 use x11rb::{
 	connection::Connection,
 	protocol::{
 		xproto::{
-			Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, GetPropertyReply,
-			PropMode, Property, PropertyNotifyEvent, SelectionClearEvent, SelectionNotifyEvent,
-			SelectionRequestEvent, Time, Window, WindowClass,
+			Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
+			PropertyNotifyEvent, SelectionNotifyEvent, SelectionRequestEvent, Time, WindowClass,
+			SELECTION_NOTIFY_EVENT,
 		},
 		Event,
 	},
 	rust_connection::RustConnection,
 	wrapper::ConnectionExt as _,
+	COPY_DEPTH_FROM_PARENT, COPY_FROM_PARENT, NONE,
 };
 
-use crate::common_linux::encode_as_png;
+use crate::{
+	common_linux::{encode_as_png, into_unknown},
+	Error, ImageData,
+};
 
-use super::common::{Error, ImageData};
+type Result<T, E = Error> = std::result::Result<T, E>;
+
+static CLIPBOARD: Lazy<Mutex<Option<GlobalClipboard>>> = Lazy::new(|| Mutex::new(None));
 
 x11rb::atom_manager! {
-	pub CommonAtoms: CommonAtomCookies {
+	pub Atoms: AtomCookies {
+		CLIPBOARD,
+		CLIPBOARD_MANAGER,
+		SAVE_TARGETS,
+		TARGETS,
 		ATOM,
 		INCR,
-		TARGETS,
-		CLIPBOARD,
-		MIME_IMAGE_PNG: b"image/png",
-		ATOM_PAIR,
-		SAVE_TARGETS,
-		MULTIPLE,
-		CLIPBOARD_MANAGER,
-	}
-}
 
-x11rb::atom_manager! {
-	pub TextAtoms: TextAtomCookies {
 		UTF8_STRING,
-		TEXT_PLAIN_1: b"text/plain;charset=utf-8",
-		TEXT_PLAIN_2: b"text/plain;charset=UTF-8",
-		// ANSI C strings?
+		UTF8_MIME_0: b"text/plain;charset=utf-8",
+		UTF8_MIME_1: b"text/plain;charset=UTF-8",
+		// Text in ISO Latin-1 encoding
+		// See: https://tronche.com/gui/x/icccm/sec-2.html#s-2.6.2
 		STRING,
+		// Text in unknown encoding
+		// See: https://tronche.com/gui/x/icccm/sec-2.html#s-2.6.2
 		TEXT,
-		TEXT_PLAIN_0: b"text/plain",
+		TEXT_MIME_UNKNOWN: b"text/plain",
+
+		PNG_MIME: b"image/png",
+
+		// This is just some random name for the property on our window, into which
+		// the clipboard owner writes the data we requested.
+		ARBOARD_CLIPBOARD,
 	}
 }
 
-type BufferPtr = Option<Arc<Mutex<Vec<u8>>>>;
-type Atoms = Vec<Atom>;
-type NotifyCallback = Option<Arc<dyn (Fn(&BufferPtr) -> bool) + Send + Sync + 'static>>;
-
-lazy_static! {
-	static ref LOCKED_OBJECTS: Arc<Mutex<Option<LockedObjects>>> = Arc::new(Mutex::new(None));
-
-	// Used to wait/notify the arrival of the SelectionNotify event when
-	// we requested the clipboard content from other selection owner.
-	static ref CONDVAR: Condvar = Condvar::new();
+thread_local! {
+	static ATOM_NAME_CACHE: RefCell<HashMap<Atom, &'static str>> = Default::default();
 }
 
-struct LockedObjects {
-	shared: SharedState,
-	manager: Manager,
+// Some clipboard items, like images, may take a very long time to produce a
+// `SelectionNotify`. Multiple seconds long.
+const LONG_TIMEOUT_DUR: Duration = Duration::from_millis(4000);
+const SHORT_TIMEOUT_DUR: Duration = Duration::from_millis(10);
+
+#[derive(Debug, PartialEq, Eq)]
+enum ManagerHandoverState {
+	Idle,
+	InProgress,
+	Finished,
 }
 
-impl LockedObjects {
-	fn new() -> Result<LockedObjects, Error> {
-		let (connection, screen) = RustConnection::connect(None).unwrap();
-		match Manager::new(&connection, screen) {
-			Ok(manager) => {
-				//unsafe { libc::atexit(Manager::destruct); }
-				Ok(LockedObjects {
-					shared: SharedState {
-						conn: Some(Arc::new(connection)),
-						common_atoms: Default::default(),
-						text_atoms: Default::default(),
-					},
-					manager,
-				})
-			}
-			Err(e) => Err(e),
-		}
-	}
+struct GlobalClipboard {
+	context: Arc<ClipboardContext>,
+
+	/// Join handle to the thread which serves selection requests.
+	server_handle: JoinHandle<()>,
 }
 
-/// The name indicates that objects in this struct are shared between
-/// the event processing thread and the user tread. However it's important
-/// that the `Manager` itself is also shared. So the real reason for splitting these
-/// apart from the `Manager` is to conform to Rust's aliasing rules but that is hard to
-/// convey in a short name.
-struct SharedState {
-	conn: Option<Arc<RustConnection>>,
-
-	// Cache of common used atoms by us
-	common_atoms: Option<CommonAtoms>,
-
-	// Cache of atoms related to text or image content
-	text_atoms: Option<TextAtoms>,
-	//image_atoms: Atoms,
+struct XContext {
+	conn: RustConnection,
+	win_id: u32,
 }
 
-impl SharedState {
-	fn common_atoms(&mut self) -> CommonAtoms {
-		self.common_atoms.unwrap_or_else(|| {
-			CommonAtoms::new(self.conn.as_ref().unwrap().as_ref()).unwrap().reply().unwrap()
-		})
-	}
+struct ClipboardContext {
+	/// The context for the thread which serves clipboard read
+	/// requests coming to us.
+	server: XContext,
+	atoms: Atoms,
+	data: RwLock<Option<ClipboardData>>,
+	handover_state: Mutex<ManagerHandoverState>,
+	handover_cv: Condvar,
 
-	fn text_atoms(&mut self) -> Atoms {
-		let atoms = self.text_atoms.unwrap_or_else(|| {
-			TextAtoms::new(self.conn.as_ref().unwrap().as_ref()).unwrap().reply().unwrap()
-		});
-
-		vec![
-			atoms.UTF8_STRING,
-			atoms.TEXT_PLAIN_1,
-			atoms.TEXT_PLAIN_2,
-			atoms.STRING,
-			atoms.TEXT,
-			atoms.TEXT_PLAIN_0,
-		]
-	}
+	serve_stopped: AtomicBool,
 }
 
-struct Manager {
-	// Temporal background window used to own the clipboard and process
-	// all events related about the clipboard in a background thread
-	window: Window,
+impl XContext {
+	fn new() -> Result<Self> {
+		// create a new connection to an X11 server
+		let (conn, screen_num): (RustConnection, _) =
+			RustConnection::connect(None).map_err(into_unknown)?;
+		let screen = conn
+			.setup()
+			.roots
+			.get(screen_num)
+			.ok_or(Error::Unknown { description: String::from("no screen found") })?;
+		let win_id = conn.generate_id().map_err(into_unknown)?;
 
-	// Thread used to run a background message loop to wait X11 events
-	// about clipboard. The X11 selection owner will be a hidden window
-	// created by us just for the clipboard purpose/communication.
-	thread_handle: Option<std::thread::JoinHandle<()>>,
-
-	// WARNING: The callback must not attempt to lock the manager or the shared state.
-	// (Otherwise the code needs to be restructured slightly)
-	//
-	// Internal callback used when a SelectionNotify is received (or the
-	// whole data content is received by the INCR method). So this
-	// callback can use the notification by different purposes (e.g. get
-	// the data length only, or get/process the data content, etc.).
-	callback: NotifyCallback,
-
-	// Result returned by the m_callback. Used as return value in the
-	// get_data_from_selection_owner() function. For example, if the
-	// callback must read a "image/png" file from the clipboard data and
-	// fails, the callback can return false and finally the get_image()
-	// will return false (i.e. there is data, but it's not a valid image
-	// format).
-	callback_result: bool,
-
-	// Actual clipboard data generated by us (when we "copy" content in
-	// the clipboard, it means that we own the X11 "CLIPBOARD"
-	// selection, and in case of SelectionRequest events, we've to
-	// return the data stored in this "m_data" field)
-	data: BTreeMap<Atom, BufferPtr>,
-
-	// Copied image in the clipboard. As we have to transfer the image
-	// in some specific format (e.g. image/png) we want to keep a copy
-	// of the image and make the conversion when the clipboard data is
-	// requested by other process.
-	image: super::common::ImageData<'static>,
-
-	// True if we have received an INCR notification so we're going to
-	// process several PropertyNotify to concatenate all data chunks.
-	incr_process: bool,
-
-	/// Variable used to wait more time if we've received an INCR
-	/// notification, which means that we're going to receive large
-	/// amounts of data from the selection owner.
-	///mutable bool m_incr_received;
-	incr_received: bool,
-
-	// Target/selection format used in the SelectionNotify. Used in the
-	// INCR method to get data from the same property in the same format
-	// (target) on each PropertyNotify.
-	target_atom: Atom,
-
-	// Each time we receive data from the selection owner, we put that
-	// data in this buffer. If we get the data with the INCR method,
-	// we'll concatenate chunks of data in this buffer to complete the
-	// whole clipboard content.
-	reply_data: BufferPtr,
-
-	// Used to concatenate chunks of data in "m_reply_data" from several
-	// PropertyNotify when we are getting the selection owner data with
-	// the INCR method.
-	reply_offset: usize,
-	// List of user-defined formats/atoms.
-	//custom_formats: Vec<xcb::xproto::Atom>,
-}
-
-impl Manager {
-	fn new(connection: &RustConnection, screen: usize) -> Result<Self, Error> {
-		let setup = connection.setup();
-		let screen = setup.roots.get(screen).ok_or(Error::Unknown {
-			description: String::from("Could not get screen from setup"),
-		})?;
 		let event_mask =
             // Just in case that some program reports SelectionNotify events
             // with XCB_EVENT_MASK_PROPERTY_CHANGE mask.
             EventMask::PROPERTY_CHANGE |
             // To receive DestroyNotify event and stop the message loop.
             EventMask::STRUCTURE_NOTIFY;
-		let window = connection
-			.generate_id()
-			.map_err(|e| Error::Unknown { description: format!("{}", e) })?;
-		connection
-			.create_window(
-				0,
-				window,
-				screen.root,
-				0,
-				0,
-				1,
-				1,
-				0,
-				WindowClass::INPUT_OUTPUT,
-				screen.root_visual,
-				&CreateWindowAux::new().event_mask(event_mask),
-			)
-			.map_err(|e| Error::Unknown { description: format!("{}", e) })?;
+		// create the window
+		conn.create_window(
+			// copy as much as possible from the parent, because no other specific input is needed
+			COPY_DEPTH_FROM_PARENT,
+			win_id,
+			screen.root,
+			0,
+			0,
+			1,
+			1,
+			0,
+			WindowClass::COPY_FROM_PARENT,
+			COPY_FROM_PARENT,
+			// don't subscribe to any special events because we are requesting everything we need ourselves
+			&CreateWindowAux::new().event_mask(event_mask),
+		)
+		.map_err(into_unknown)?;
+		conn.flush().map_err(into_unknown)?;
 
-		let thread_handle = std::thread::spawn(process_x11_events);
+		Ok(Self { conn, win_id })
+	}
+}
 
-		Ok(Manager {
-			//mutex: Mutex::new(()),
-			window,
-			thread_handle: Some(thread_handle),
-			callback: None,
-			callback_result: false,
-			data: Default::default(),
-			image: super::common::ImageData {
-				width: 0,
-				height: 0,
-				bytes: std::borrow::Cow::from(vec![]),
-			},
-			incr_process: false,
-			incr_received: false,
-			target_atom: 0,
-			reply_data: Default::default(),
-			reply_offset: 0,
+#[derive(Debug, Clone)]
+struct ClipboardData {
+	bytes: Vec<u8>,
+
+	/// The atom represeting the format in which the data is encoded.
+	format: Atom,
+}
+
+enum ReadSelNotifyResult {
+	GotData(Vec<u8>),
+	IncrStarted,
+	EventNotRecognized,
+}
+
+impl ClipboardContext {
+	fn new() -> Result<Self> {
+		let server = XContext::new()?;
+		let atoms =
+			Atoms::new(&server.conn).map_err(into_unknown)?.reply().map_err(into_unknown)?;
+
+		Ok(Self {
+			server,
+			atoms,
+			data: RwLock::default(),
+			handover_state: Mutex::new(ManagerHandoverState::Idle),
+			handover_cv: Condvar::new(),
+			serve_stopped: AtomicBool::new(false),
 		})
 	}
 
-	fn set_x11_selection_owner(&self, shared: &mut SharedState) -> bool {
-		let clipboard_atom = shared.common_atoms().CLIPBOARD;
-		let cookie = shared.conn.as_ref().unwrap().set_selection_owner(
-			self.window,
-			clipboard_atom,
-			Time::CURRENT_TIME,
-		);
-
-		cookie.is_ok()
-	}
-
-	fn set_image(&mut self, shared: &mut SharedState, image: ImageData) -> Result<(), Error> {
-		if !self.set_x11_selection_owner(shared) {
+	fn write(&self, data: ClipboardData) -> Result<()> {
+		if self.serve_stopped.load(Ordering::Relaxed) {
 			return Err(Error::Unknown {
-				description: "Failed to set x11 selection owner.".into(),
-			});
+                description: "The clipboard handler thread seems to have stopped. Logging messages may reveal the cause. (See the `log` crate.)".into()
+            });
+		}
+		// only if the current owner isn't us, we try to become it
+		if !self.is_owner()? {
+			let selection = self.atoms.CLIPBOARD;
+			let server_win = self.server.win_id;
+
+			self.server
+				.conn
+				.set_selection_owner(server_win, selection, Time::CURRENT_TIME)
+				.map_err(|_| Error::ClipboardOccupied)?;
+			self.server.conn.flush().map_err(into_unknown)?;
 		}
 
-		self.image.width = image.width;
-		self.image.height = image.height;
-		self.image.bytes = image.bytes.into_owned().into();
-
-		// Put a ~nullptr~ (None) in the m_data for image/png format and then we'll
-		// encode the png data when the image is requested in this format.
-		self.data.insert(shared.common_atoms().MIME_IMAGE_PNG, None);
+		// Just setting the data, and the `serve_requests` will take care of the rest.
+		*self.data.write() = Some(data);
 
 		Ok(())
 	}
 
-	/// Rust impl: instead of this function there's a more generic `set_data` which I believe can
-	/// also set user formats, but arboard doesn't support that for now.
-	fn set_text(&mut self, shared: &mut SharedState, bytes: Vec<u8>) -> Result<(), Error> {
-		if !self.set_x11_selection_owner(shared) {
-			return Err(Error::Unknown {
-				description: "Could not take ownership of the x11 selection".into(),
-			});
-		}
-
-		let atoms = shared.text_atoms();
-		if atoms.is_empty() {
-			return Err(Error::Unknown { description:
-				"Couldn't get the atoms that identify supported text formats for the x11 clipboard"
-					.into(),
-			});
-		}
-
-		let arc_data = Arc::new(Mutex::new(bytes));
-		for atom in atoms {
-			self.data.insert(atom, Some(arc_data.clone()));
-		}
-
-		Ok(())
-	}
-
-	fn clear_data(&mut self) {
-		self.data.clear();
-		self.image.width = 0;
-		self.image.height = 0;
-		self.image.bytes = Vec::new().into();
-	}
-
-	fn set_requestor_property_with_clipboard_content(
-		&mut self,
-		shared: &mut SharedState,
-		requestor: Window,
-		property: Atom,
-		target: Atom,
-	) -> bool {
-		let item = {
-			if let Some(item) = self.data.get_mut(&target) {
-				item
-			} else {
-				// Nothing to do (unsupported target)
-				return false;
-			}
-		};
-
-		// This can be null if the data was set from an image but we
-		// didn't encode the image yet (e.g. to image/png format).
-		if item.is_none() {
-			encode_data_on_demand(shared, &mut self.image, target, item);
-
-			// Return nothing, the given "target" cannot be constructed
-			// (maybe by some encoding error).
-			if item.is_none() {
-				return false;
-			}
-		}
-
-		let item = item.as_ref().unwrap().lock().unwrap();
-		// Set the "property" of "requestor" with the
-		// clipboard content in the requested format ("target").
-		if let Err(e) = shared.conn.as_ref().unwrap().change_property8(
-			PropMode::REPLACE,
-			requestor,
-			property,
-			target,
-			item.as_slice(),
-		) {
-			log::error!("{}", e)
-		}
-
-		true
-	}
-
-	fn copy_reply_data(&mut self, reply: &GetPropertyReply) {
-		let src = &reply.value;
-		// n = length of "src" in bytes
-		let n = reply.value_len;
-		let req = self.reply_offset + n as usize;
-		match &mut self.reply_data {
-			None => {
-				self.reply_offset = 0; // Rust impl: I added this just to be extra sure.
-				self.reply_data = Some(Arc::new(Mutex::new(vec![0; req])));
-			}
-			// The "m_reply_data" size can be smaller because the size
-			// specified in INCR property is just a lower bound.
-			Some(reply_data) => {
-				let mut reply_data = reply_data.lock().unwrap();
-				if req > reply_data.len() {
-					reply_data.resize(req, 0);
-				}
-			}
-		}
-		let src_slice = src.as_slice();
-		let mut reply_data_locked = self.reply_data.as_mut().unwrap().lock().unwrap();
-		reply_data_locked[self.reply_offset..req].copy_from_slice(src_slice);
-		self.reply_offset += n as usize;
-	}
-
-	// Rust impl: It's strange, the reply attribute is also unused in the original code.
-	fn call_callback(&mut self, _reply: GetPropertyReply) {
-		self.callback_result = false;
-		if let Some(callback) = &self.callback {
-			self.callback_result = callback(&self.reply_data);
-		}
-		CONDVAR.notify_one();
-
-		self.reply_data = None;
-	}
-
-	/// Rust impl: This function was added instead of the destructor because the drop
-	/// does not get called on lazy static objects. This function is registered for `libc::atexit`
-	/// on a successful initialization
-	fn destruct() {
-		let join_handle;
-
-		// The following scope is to ensure that we release the lock
-		// before attempting to join the thread.
-		{
-			let mut guard = LOCKED_OBJECTS.lock().unwrap();
-			if guard.is_none() {
-				return;
-			}
-			macro_rules! manager {
-				() => {
-					guard.as_mut().unwrap().manager
-				};
-			}
-			macro_rules! shared {
-				() => {
-					guard.as_mut().unwrap().shared
-				};
-			}
-
-			if !manager!().data.is_empty()
-				&& manager!().window != 0
-				&& manager!().window == get_x11_selection_owner(&mut shared!())
-			{
-				let atoms = vec![shared!().common_atoms().SAVE_TARGETS];
-				let selection = shared!().common_atoms().CLIPBOARD_MANAGER;
-
-				// Start the SAVE_TARGETS mechanism so the X11
-				// CLIPBOARD_MANAGER will save our clipboard data
-				// from now on.
-				guard = get_data_from_selection_owner(
-					guard,
-					&atoms,
-					Some(Arc::new(|_| true)),
-					selection,
-				)
-				.1;
-			}
-
-			if manager!().window != 0 {
-				let window = manager!().window;
-				let _ = shared!().conn.as_ref().unwrap().destroy_window(window);
-				let _ = shared!().conn.as_ref().unwrap().flush();
-				manager!().window = 0;
-			}
-			join_handle = manager!().thread_handle.take();
-		}
-
-		if let Some(handle) = join_handle {
-			handle.join().ok();
-		}
-
-		// This is not needed because the connection is automatically disconnected when droped
-		// if (m_connection)
-		//     xcb_disconnect(m_connection);
-	}
-}
-
-fn process_x11_events() {
-	let connection = {
-		let lo = LOCKED_OBJECTS.lock().unwrap();
-		lo.as_ref().unwrap().shared.conn.clone()
-	};
-
-	let mut stop = false;
-	while !stop {
-		let event = {
-			// If this doesn't work, wrap the connection into an Arc
-			std::thread::sleep(Duration::from_millis(5));
-			let maybe_event = connection.as_ref().unwrap().poll_for_event();
-			match maybe_event {
-				Ok(Some(e)) => e,
-				Ok(None) => continue,
-				Err(_) => break,
-			}
-		};
-		match event {
-			Event::DestroyNotify(_) => {
-				//println!("Received destroy event, stopping");
-				stop = true;
-				//panic!("{}", line!());
-				//break;
-			}
-
-			// Someone else has new content in the clipboard, so is
-			// notifying us that we should delete our data now.
-			Event::SelectionClear(event) => {
-				//println!("Received selection clear,");
-				handle_selection_clear_event(event);
-			}
-
-			// Someone is requesting the clipboard content from us.
-			Event::SelectionRequest(event) => {
-				//println!("Received selection request");
-				handle_selection_request_event(event);
-			}
-
-			// We've requested the clipboard content and this is the
-			// answer.
-			Event::SelectionNotify(event) => {
-				//println!("Received selection notify");
-				handle_selection_notify_event(event);
-			}
-
-			Event::PropertyNotify(event) => {
-				//println!("Received property notify");
-				handle_property_notify_event(event);
-			}
-			_ => {}
-		}
-		// The event uses RAII, so it's free'd automatically
-	}
-}
-
-fn handle_selection_clear_event(event: SelectionClearEvent) {
-	let selection = event.selection;
-	let mut guard = LOCKED_OBJECTS.lock().unwrap();
-	let locked = guard.as_mut().unwrap();
-	let clipboard_atom = { locked.shared.common_atoms().CLIPBOARD };
-	if selection == clipboard_atom {
-		locked.manager.clear_data();
-	}
-}
-
-fn handle_selection_request_event(event: SelectionRequestEvent) {
-	let target = event.target;
-	let requestor = event.requestor;
-	let property = event.property;
-	let time = event.time;
-	let selection = event.selection;
-	let targets_atom;
-	let save_targets_atom;
-	let multiple_atom;
-	let atom_atom;
-	{
-		let mut guard = LOCKED_OBJECTS.lock().unwrap();
-		let locked = guard.as_mut().unwrap();
-		let shared = &mut locked.shared;
-		targets_atom = shared.common_atoms().TARGETS;
-		save_targets_atom = shared.common_atoms().SAVE_TARGETS;
-		multiple_atom = shared.common_atoms().MULTIPLE;
-		atom_atom = shared.common_atoms().ATOM;
-	}
-	if target == targets_atom {
-		let mut targets = Atoms::with_capacity(4);
-		targets.push(targets_atom);
-		targets.push(save_targets_atom);
-		targets.push(multiple_atom);
-		let mut guard = LOCKED_OBJECTS.lock().unwrap();
-		let locked = guard.as_mut().unwrap();
-		let manager = &locked.manager;
-		for atom in manager.data.keys() {
-			targets.push(*atom);
-		}
-
-		let shared = &locked.shared;
-		// Set the "property" of "requestor" with the clipboard
-		// formats ("targets", atoms) that we provide.
-		if let Err(e) = shared.conn.as_ref().unwrap().change_property32(
-			PropMode::REPLACE,
-			requestor,
-			property,
-			atom_atom,
-			targets.as_slice(),
-		) {
-			log::error!("{}", e);
-		};
-	} else if target == save_targets_atom {
-		// Do nothing
-	} else if target == multiple_atom {
-		let mut guard = LOCKED_OBJECTS.lock().unwrap();
-		let locked = guard.as_mut().unwrap();
-		let reply = {
-			let atom_pair_atom = locked.shared.common_atoms().ATOM_PAIR;
-			get_and_delete_property(
-				locked.shared.conn.as_ref().unwrap(),
-				requestor,
-				property,
-				atom_pair_atom,
-				false,
-			)
-		};
-		if let Some(reply) = reply {
-			let atoms = reply.value32();
-			for atom in atoms.into_iter().flatten() {
-				let target = atom;
-				let property = atom;
-				let property_set = locked.manager.set_requestor_property_with_clipboard_content(
-					&mut locked.shared,
-					requestor,
-					property,
-					target,
-				);
-				if !property_set {
-					if let Err(e) = locked.shared.conn.as_ref().unwrap().change_property(
-						PropMode::REPLACE,
-						requestor,
-						property,
-						AtomEnum::NONE,
-						0,
-						0,
-						&[],
-					) {
-						log::error!("{}", e)
+	/// `formats` must be a slice of atoms, where each atom represents a target format.
+	/// The first format from `formats`, which the clipboard owner supports will be the
+	/// format of the return value.
+	fn read(&self, formats: &[Atom]) -> Result<ClipboardData> {
+		// if we are the current owner, we can get the current clipboard ourselves
+		if self.is_owner()? {
+			let data = self.data.read();
+			if let Some(data) = &*data {
+				for format in formats {
+					if *format == data.format {
+						return Ok(data.clone());
 					}
 				}
 			}
+			return Err(Error::ContentNotAvailable);
 		}
-	} else {
-		let mut guard = LOCKED_OBJECTS.lock().unwrap();
-		let locked = guard.as_mut().unwrap();
-		let property_set = locked.manager.set_requestor_property_with_clipboard_content(
-			&mut locked.shared,
-			requestor,
-			property,
-			target,
-		);
-		if !property_set {
-			return;
-		}
-	}
+		// if let Some(data) = self.data.read().clone() {
+		//     return Ok(data)
+		// }
+		let reader = XContext::new()?;
 
-	let mut guard = LOCKED_OBJECTS.lock().unwrap();
-	let locked = guard.as_mut().unwrap();
-	let shared = &mut locked.shared;
-
-	// Notify the "requestor" that we've already updated the property.
-	let notify = SelectionNotifyEvent {
-		response_type: xproto::SELECTION_NOTIFY_EVENT,
-		sequence: 0,
-		time,
-		requestor,
-		selection,
-		target,
-		property,
-	};
-	if let Err(e) =
-		shared.conn.as_ref().unwrap().send_event(false, requestor, EventMask::NO_EVENT, notify)
-	{
-		log::error!("{}", e)
-	}
-	if let Err(e) = shared.conn.as_ref().unwrap().flush() {
-		log::error!("{}", e)
-	}
-}
-
-fn handle_selection_notify_event(event: SelectionNotifyEvent) {
-	let target = event.target;
-	let requestor = event.requestor;
-	let property = event.property;
-	let mut guard = LOCKED_OBJECTS.lock().unwrap();
-	let mut locked = guard.as_mut().unwrap();
-	assert_eq!(requestor, locked.manager.window);
-
-	if target == locked.shared.common_atoms().TARGETS {
-		locked.manager.target_atom = locked.shared.common_atoms().ATOM;
-	} else {
-		locked.manager.target_atom = target;
-	}
-
-	let target_atom = locked.manager.target_atom;
-	let reply = get_and_delete_property(
-		locked.shared.conn.as_ref().unwrap(),
-		requestor,
-		property,
-		target_atom,
-		true,
-	);
-	if let Some(reply) = reply {
-		let reply_type = reply.type_;
-		// In this case, We're going to receive the clipboard content in
-		// chunks of data with several PropertyNotify events.
-		let incr_atom = locked.shared.common_atoms().INCR;
-		if reply_type == incr_atom {
-			let reply = get_and_delete_property(
-				locked.shared.conn.as_ref().unwrap(),
-				requestor,
-				property,
-				incr_atom,
-				true,
-			);
-			if let Some(reply) = reply {
-				if reply.value_len == 4 {
-					let n = reply.value32().and_then(|mut values| values.next()).unwrap_or(0);
-					locked.manager.reply_data = Some(Arc::new(Mutex::new(vec![0u8; n as usize])));
-					locked.manager.reply_offset = 0;
-					locked.manager.incr_process = true;
-					locked.manager.incr_received = true;
+		trace!("Trying to get the clipboard data.");
+		for format in formats {
+			match self.read_single(&reader, *format) {
+				Ok(bytes) => {
+					return Ok(ClipboardData { bytes, format: *format });
 				}
-			}
-		} else {
-			// Simple case, the whole clipboard content in just one reply
-			// (without the INCR method).
-			locked.manager.reply_data = None;
-			locked.manager.reply_offset = 0;
-			locked.manager.copy_reply_data(&reply);
-			locked.manager.call_callback(reply);
-		}
-	}
-}
-
-fn handle_property_notify_event(event: PropertyNotifyEvent) {
-	let state = event.state;
-	let atom = event.atom;
-	let window = event.window;
-	let mut guard = LOCKED_OBJECTS.lock().unwrap();
-	let mut locked = guard.as_mut().unwrap();
-	if locked.manager.incr_process
-		&& state == Property::NEW_VALUE
-		&& atom == locked.shared.common_atoms().CLIPBOARD
-	{
-		let target_atom = locked.manager.target_atom;
-		let reply = get_and_delete_property(
-			locked.shared.conn.as_ref().unwrap(),
-			window,
-			atom,
-			target_atom,
-			true,
-		);
-		if let Some(reply) = reply {
-			locked.manager.incr_received = true;
-
-			// When the length is 0 it means that the content was
-			// completely sent by the selection owner.
-			if reply.value_len > 0 {
-				locked.manager.copy_reply_data(&reply);
-			} else {
-				// Now that m_reply_data has the complete clipboard content,
-				// we can call the m_callback.
-				locked.manager.call_callback(reply);
-				locked.manager.incr_process = false;
+				Err(Error::ContentNotAvailable) => {
+					continue;
+				}
+				Err(e) => return Err(e),
 			}
 		}
-	}
-}
-
-fn get_and_delete_property(
-	conn: &RustConnection,
-	window: Window,
-	property: Atom,
-	atom: Atom,
-	delete_prop: bool,
-) -> Option<GetPropertyReply> {
-	conn.get_property(
-		delete_prop,
-		window,
-		property,
-		atom,
-		0,
-		0x1fffffff, // 0x1fffffff = INT32_MAX / 4
-	)
-	.ok()
-	.and_then(|cookie| cookie.reply().ok())
-}
-
-fn get_data_from_selection_owner<'a>(
-	mut guard: MutexGuard<'a, Option<LockedObjects>>,
-	atoms: &[Atom],
-	callback: NotifyCallback,
-	mut selection: xproto::Atom,
-) -> (bool, MutexGuard<'a, Option<LockedObjects>>) {
-	// Wait a response for 100 milliseconds
-	const CV_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
-	{
-		let locked = guard.as_mut().unwrap();
-		if selection == 0 {
-			selection = locked.shared.common_atoms().CLIPBOARD;
-		}
-		locked.manager.callback = callback;
-
-		// Clear data if we are not the selection owner.
-		if locked.manager.window != get_x11_selection_owner(&mut locked.shared) {
-			locked.manager.data.clear();
-		}
+		Err(Error::ContentNotAvailable)
 	}
 
-	// Ask to the selection owner for its content on each known
-	// text format/atom.
-	for atom in atoms.iter() {
-		{
-			let locked = guard.as_mut().unwrap();
-			let clipboard_atom = locked.shared.common_atoms().CLIPBOARD;
-			if let Err(e) = locked.shared.conn.as_ref().unwrap().convert_selection(
-				locked.manager.window,
-				selection,
-				*atom,
-				clipboard_atom,
+	fn read_single(&self, reader: &XContext, target_format: Atom) -> Result<Vec<u8>> {
+		// Delete the property so that we can detect (using property notify)
+		// when the selection owner receives our request.
+		reader
+			.conn
+			.delete_property(reader.win_id, self.atoms.ARBOARD_CLIPBOARD)
+			.map_err(into_unknown)?;
+
+		// request to convert the clipboard selection to our data type(s)
+		reader
+			.conn
+			.convert_selection(
+				reader.win_id,
+				self.atoms.CLIPBOARD,
+				target_format,
+				self.atoms.ARBOARD_CLIPBOARD,
 				Time::CURRENT_TIME,
-			) {
-				log::error!("{}", e)
-			}
-			if let Err(e) = locked.shared.conn.as_ref().unwrap().flush() {
-				log::error!("{}", e)
-			}
-		}
+			)
+			.map_err(into_unknown)?;
+		reader.conn.sync().map_err(into_unknown)?;
 
-		// We use the "m_incr_received" to wait several timeouts in case
-		// that we've received the INCR SelectionNotify or
-		// PropertyNotify events.
-		'incr_loop: loop {
-			guard.as_mut().unwrap().manager.incr_received = false;
-			match CONDVAR.wait_timeout(guard, CV_TIMEOUT) {
-				Ok((new_guard, status)) => {
-					guard = new_guard;
-					if !status.timed_out() {
-						// If the condition variable was notified, it means that the
-						// callback was called correctly.
-						return (guard.as_ref().unwrap().manager.callback_result, guard);
-					}
+		trace!("Finished `convert_selection`");
 
-					if !guard.as_ref().unwrap().manager.incr_received {
-						break 'incr_loop;
+		let mut incr_data: Vec<u8> = Vec::new();
+		let mut using_incr = false;
+
+		let mut timeout_end = Instant::now() + LONG_TIMEOUT_DUR;
+
+		while Instant::now() < timeout_end {
+			let event = reader.conn.poll_for_event().map_err(into_unknown)?;
+			let event = match event {
+				Some(e) => e,
+				None => {
+					std::thread::sleep(Duration::from_millis(1));
+					continue;
+				}
+			};
+			match event {
+				// The first response after requesting a selection.
+				Event::SelectionNotify(event) => {
+					trace!("Read SelectionNotify");
+					let result = self.handle_read_selection_notify(
+						&reader,
+						target_format,
+						&mut using_incr,
+						&mut incr_data,
+						event,
+					)?;
+					match result {
+						ReadSelNotifyResult::GotData(data) => return Ok(data),
+						ReadSelNotifyResult::IncrStarted => {
+							// This means we received an indication that an the
+							// data is going to be sent INCRementally. Let's
+							// reset our timeout.
+							timeout_end += SHORT_TIMEOUT_DUR;
+						}
+						ReadSelNotifyResult::EventNotRecognized => (),
 					}
 				}
-				Err(err) => {
-					panic!(
-						"A critical error occured while working with the x11 clipboard. {}",
-						err
-					);
+				// If the previous SelectionNotify event specified that the data
+				// will be sent in INCR segments, each segment is transferred in
+				// a PropertyNotify event.
+				Event::PropertyNotify(event) => {
+					let result = self.handle_read_property_notify(
+						&reader,
+						target_format,
+						&mut using_incr,
+						&mut incr_data,
+						&mut timeout_end,
+						event,
+					)?;
+					if result {
+						return Ok(incr_data);
+					}
 				}
+				_ => log::trace!("An unexpected event arrived while reading the clipboard."),
 			}
 		}
+		log::info!("Time-out hit while reading the clipboard.");
+		Err(Error::ContentNotAvailable)
 	}
 
-	guard.as_mut().unwrap().manager.callback = None;
-	(false, guard)
-}
+	fn is_owner(&self) -> Result<bool> {
+		let current = self
+			.server
+			.conn
+			.get_selection_owner(self.atoms.CLIPBOARD)
+			.map_err(into_unknown)?
+			.reply()
+			.map_err(into_unknown)?
+			.owner;
 
-fn get_x11_selection_owner(shared: &mut SharedState) -> Window {
-	let mut result = 0;
-
-	let clipboard_atom = shared.common_atoms().CLIPBOARD;
-	let cookie = shared.conn.as_ref().unwrap().get_selection_owner(clipboard_atom);
-	let reply = cookie.ok().and_then(|cookie| cookie.reply().ok());
-	if let Some(reply) = reply {
-		result = reply.owner;
+		Ok(current == self.server.win_id)
 	}
 
-	result
-}
-
-fn get_text(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<String, Error> {
-	// Rust impl: This function is probably the ugliest Rust code I've ever written
-	// Make no mistake, the original, C++ code was perfectly fine (which I didn't write)
-	let owner = get_x11_selection_owner(&mut guard.as_mut().unwrap().shared);
-	if owner == guard.as_mut().unwrap().manager.window {
-		let atoms = guard.as_mut().unwrap().shared.text_atoms();
-		for atom in atoms.iter() {
-			let mut item = None;
-			if let Some(Some(i)) = guard.as_mut().unwrap().manager.data.get(atom) {
-				item = Some(i.clone());
-			}
-			if let Some(item) = item {
-				// Unwrapping the item because we always initialize text with `Some`
-				let locked = item.lock().unwrap();
-				let result = String::from_utf8(locked.clone());
-				return result.map_err(|_| Error::ConversionFailure);
-			}
-		}
-	} else if owner != 0 {
-		let atoms = guard.as_mut().unwrap().shared.text_atoms();
-		let result = Arc::new(Mutex::new(Ok(String::new())));
-		let callback = {
-			let result = result.clone();
-			Arc::new(move |data: &BufferPtr| {
-				if let Some(reply_data) = data {
-					let locked_data = reply_data.lock().unwrap();
-					let mut locked_result = result.lock().unwrap();
-					*locked_result = String::from_utf8(locked_data.clone());
+	fn atom_name(&self, atom: x11rb::protocol::xproto::Atom) -> Result<String> {
+		String::from_utf8(
+			self.server
+				.conn
+				.get_atom_name(atom)
+				.map_err(into_unknown)?
+				.reply()
+				.map_err(into_unknown)?
+				.name,
+		)
+		.map_err(into_unknown)
+	}
+	fn atom_name_dbg(&self, atom: x11rb::protocol::xproto::Atom) -> &'static str {
+		ATOM_NAME_CACHE.with(|cache| {
+			let mut cache = cache.borrow_mut();
+			match cache.entry(atom) {
+				Entry::Occupied(entry) => *entry.get(),
+				Entry::Vacant(entry) => {
+					let s = self
+						.atom_name(atom)
+						.map(|s| Box::leak(s.into_boxed_str()) as &str)
+						.unwrap_or("FAILED-TO-GET-THE-ATOM-NAME");
+					entry.insert(s);
+					s
 				}
-				true
+			}
+		})
+	}
+
+	fn handle_read_selection_notify(
+		&self,
+		reader: &XContext,
+		target_format: u32,
+		using_incr: &mut bool,
+		incr_data: &mut Vec<u8>,
+		event: SelectionNotifyEvent,
+	) -> Result<ReadSelNotifyResult> {
+		// The property being set to NONE means that the `convert_selection`
+		// failed.
+
+		// According to: https://tronche.com/gui/x/icccm/sec-2.html#s-2.4
+		// the target must be set to the same as what we requested.
+		if event.property == NONE || event.target != target_format {
+			return Err(Error::ContentNotAvailable);
+		}
+		if event.selection != self.atoms.CLIPBOARD {
+			log::info!("Received a SelectionNotify for a selection other than the `CLIPBOARD`. This is unexpected.");
+			return Ok(ReadSelNotifyResult::EventNotRecognized);
+		}
+		if *using_incr {
+			log::warn!("Received a SelectionNotify while already expecting INCR segments.");
+			return Ok(ReadSelNotifyResult::EventNotRecognized);
+		}
+		// request the selection
+		let mut reply = reader
+			.conn
+			.get_property(true, event.requestor, event.property, event.target, 0, u32::MAX / 4)
+			.map_err(into_unknown)?
+			.reply()
+			.map_err(into_unknown)?;
+
+		// trace!("Property.type: {:?}", self.atom_name(reply.type_));
+
+		// we found something
+		if reply.type_ == target_format {
+			Ok(ReadSelNotifyResult::GotData(reply.value))
+		} else if reply.type_ == self.atoms.INCR {
+			// Note that we call the get_property again because we are
+			// indicating that we are ready to receive the data by deleting the
+			// property, however deleting only works if the type matches the
+			// property type. But the type didn't match in the previous call.
+			reply = reader
+				.conn
+				.get_property(
+					true,
+					event.requestor,
+					event.property,
+					self.atoms.INCR,
+					0,
+					u32::MAX / 4,
+				)
+				.map_err(into_unknown)?
+				.reply()
+				.map_err(into_unknown)?;
+			log::trace!("Receiving INCR segments");
+			*using_incr = true;
+			if reply.value_len == 4 {
+				let min_data_len = reply.value32().and_then(|mut vals| vals.next()).unwrap_or(0);
+				incr_data.reserve(min_data_len as usize);
+			}
+			Ok(ReadSelNotifyResult::IncrStarted)
+		} else {
+			// this should never happen, we have sent a request only for supported types
+			Err(Error::Unknown {
+				description: String::from("incorrect type received from clipboard"),
 			})
-		};
-
-		let (success, _) = get_data_from_selection_owner(guard, &atoms, Some(callback as _), 0);
-		if success {
-			let mut taken = Ok(String::new());
-			let mut locked = result.lock().unwrap();
-			std::mem::swap(&mut taken, &mut locked);
-			return taken.map_err(|_| Error::ConversionFailure);
 		}
 	}
-	Err(Error::ContentNotAvailable)
+
+	/// Returns Ok(true) when the incr_data is ready
+	fn handle_read_property_notify(
+		&self,
+		reader: &XContext,
+		target_format: u32,
+		using_incr: &mut bool,
+		incr_data: &mut Vec<u8>,
+		timeout_end: &mut Instant,
+		event: PropertyNotifyEvent,
+	) -> Result<bool> {
+		if event.atom != self.atoms.ARBOARD_CLIPBOARD || event.state != Property::NEW_VALUE {
+			return Ok(false);
+		}
+		if !*using_incr {
+			// This must mean the selection owner received our request, and is
+			// now preparing the data
+			return Ok(false);
+		}
+		let reply = reader
+			.conn
+			.get_property(true, event.window, event.atom, target_format, 0, u32::MAX / 4)
+			.map_err(into_unknown)?
+			.reply()
+			.map_err(into_unknown)?;
+
+		// log::trace!("Received segment. value_len {}", reply.value_len,);
+		if reply.value_len == 0 {
+			// This indicates that all the data has been sent.
+			return Ok(true);
+		}
+		incr_data.extend(reply.value);
+
+		// Let's reset our timeout, since we received a valid chunk.
+		*timeout_end = Instant::now() + SHORT_TIMEOUT_DUR;
+
+		// Not yet complete
+		Ok(false)
+	}
+
+	fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<()> {
+		if event.selection != self.atoms.CLIPBOARD {
+			// We don't do anything here, this means that the
+			warn!("Received a selection request to a selection other than the CLIPBOARD. This is unexpected.");
+			return Ok(());
+		}
+		let success;
+		// we are asked for a list of supported conversion targets
+		if event.target == self.atoms.TARGETS {
+			trace!("Handling TARGETS, dst property is {}", self.atom_name_dbg(event.property));
+			let mut targets = Vec::with_capacity(10);
+			targets.push(self.atoms.TARGETS);
+			targets.push(self.atoms.SAVE_TARGETS);
+			let data = self.data.read();
+			if let Some(data) = &*data {
+				targets.push(data.format);
+				if data.format == self.atoms.UTF8_STRING {
+					// When we are storing a UTF8 string,
+					// add all equivalent formats to the supported targets
+					targets.push(self.atoms.UTF8_MIME_0);
+					targets.push(self.atoms.UTF8_MIME_1);
+				}
+			}
+			self.server
+				.conn
+				.change_property32(
+					PropMode::REPLACE,
+					event.requestor,
+					event.property,
+					// TODO: change to `AtomEnum::ATOM`
+					self.atoms.ATOM,
+					&targets,
+				)
+				.map_err(into_unknown)?;
+			self.server.conn.flush().map_err(into_unknown)?;
+			success = true;
+		} else {
+			trace!("Handling request for (probably) the clipboard contents.");
+			let data = self.data.read();
+			if let Some(data) = &*data {
+				if data.format == event.target {
+					self.server
+						.conn
+						.change_property8(
+							PropMode::REPLACE,
+							event.requestor,
+							event.property,
+							event.target,
+							&data.bytes,
+						)
+						.map_err(into_unknown)?;
+					self.server.conn.flush().map_err(into_unknown)?;
+					success = true;
+				} else {
+					success = false
+				}
+			} else {
+				// This must mean that we lost ownership of the data
+				// since the other side requested the selection.
+				// Let's respond with the property set to none.
+				success = false;
+			}
+		}
+		// on failure we notify the requester of it
+		let property = if success { event.property } else { AtomEnum::NONE.into() };
+		// tell the requestor that we finished sending data
+		self.server
+			.conn
+			.send_event(
+				false,
+				event.requestor,
+				EventMask::NO_EVENT,
+				SelectionNotifyEvent {
+					response_type: SELECTION_NOTIFY_EVENT,
+					sequence: event.sequence,
+					time: event.time,
+					requestor: event.requestor,
+					selection: event.selection,
+					target: event.target,
+					property,
+				},
+			)
+			.map_err(into_unknown)?;
+
+		self.server.conn.flush().map_err(into_unknown)
+	}
+
+	fn ask_clipboard_manager_to_request_our_data(&self) -> Result<()> {
+		if self.server.win_id == 0 {
+			// This shouldn't really ever happen but let's just check.
+			error!("The server's window id was 0. This is unexpected");
+			return Ok(());
+		}
+		if !self.is_owner()? {
+			// We are not owning the clipboard, nothing to do.
+			return Ok(());
+		}
+		if self.data.read().is_none() {
+			// If we don't have any data, there's nothing to do.
+			return Ok(());
+		}
+
+		// It's important that we lock the state before sending the request
+		// because we don't want the request server thread to lock the state
+		// after the request but before we can lock it here.
+		let mut handover_state = self.handover_state.lock();
+
+		trace!("Sending the data to the clipboard manager");
+		self.server
+			.conn
+			.convert_selection(
+				self.server.win_id,
+				self.atoms.CLIPBOARD_MANAGER,
+				self.atoms.SAVE_TARGETS,
+				self.atoms.ARBOARD_CLIPBOARD,
+				Time::CURRENT_TIME,
+			)
+			.map_err(into_unknown)?;
+		self.server.conn.flush().map_err(into_unknown)?;
+
+		*handover_state = ManagerHandoverState::InProgress;
+		let max_handover_duration = Duration::from_millis(100);
+
+		// Note that we are using a parking_lot condvar here, which doesn't wake up
+		// spouriously
+		let result = self.handover_cv.wait_for(&mut handover_state, max_handover_duration);
+
+		if *handover_state == ManagerHandoverState::Finished {
+			return Ok(());
+		}
+		if result.timed_out() {
+			warn!("Could not hand the clipboard contents over to the clipboard manager. The request timed out.");
+			return Ok(());
+		}
+
+		Err(Error::Unknown {
+			description: "The handover was not finished and the condvar didn't time out, yet the condvar wait ended. This should be unreachable.".into()
+		})
+	}
 }
 
-fn get_image(mut guard: MutexGuard<Option<LockedObjects>>) -> Result<ImageData, Error> {
-	let owner = get_x11_selection_owner(&mut guard.as_mut().unwrap().shared);
-	//let mut result_img;
-	if owner == guard.as_ref().unwrap().manager.window {
-		let image = &guard.as_ref().unwrap().manager.image;
-		if image.width > 0 && image.height > 0 && !image.bytes.is_empty() {
-			return Ok(image.to_owned_img());
+struct ScopeGuard<F: FnOnce()> {
+	callback: Option<F>,
+}
+impl<F: FnOnce()> ScopeGuard<F> {
+	fn new(callback: F) -> Self {
+		ScopeGuard { callback: Some(callback) }
+	}
+}
+impl<F: FnOnce()> Drop for ScopeGuard<F> {
+	fn drop(&mut self) {
+		if let Some(callback) = self.callback.take() {
+			(callback)();
 		}
-	} else if owner != 0 {
-		let atoms = vec![guard.as_mut().unwrap().shared.common_atoms().MIME_IMAGE_PNG];
-		let result: Arc<Mutex<Result<ImageData, Error>>> =
-			Arc::new(Mutex::new(Err(Error::ContentNotAvailable)));
-		let callback = {
-			let result = result.clone();
-			Arc::new(move |data: &BufferPtr| {
-				if let Some(reply_data) = data {
-					let locked_data = reply_data.lock().unwrap();
-					let cursor = std::io::Cursor::new(&*locked_data);
-					let mut reader = image::io::Reader::new(cursor);
-					reader.set_format(image::ImageFormat::Png);
-					let image;
-					match reader.decode() {
-						Ok(img) => image = img.into_rgba8(),
-						Err(_e) => {
-							let mut locked_result = result.lock().unwrap();
-							*locked_result = Err(Error::ConversionFailure);
-							return false;
+	}
+}
+
+fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::error::Error>> {
+	fn handover_finished(
+		clip: &Arc<ClipboardContext>,
+		mut handover_state: MutexGuard<ManagerHandoverState>,
+	) {
+		log::trace!("Finishing clipboard manager handover.");
+		*handover_state = ManagerHandoverState::Finished;
+
+		// Not sure if unlocking the mutext is necessary here but better safe than sorry.
+		drop(handover_state);
+
+		clip.handover_cv.notify_all();
+	}
+
+	trace!("Started serve reqests thread.");
+
+	let _guard = ScopeGuard::new(|| {
+		clipboard.serve_stopped.store(true, Ordering::Relaxed);
+	});
+
+	let mut written = false;
+	let mut notified = false;
+
+	loop {
+		match clipboard.server.conn.wait_for_event().map_err(into_unknown)? {
+			Event::DestroyNotify(_) => {
+				// This window is being destroyed.
+				trace!("Clipboard server window is being destroyed x_x");
+				return Ok(());
+			}
+			Event::SelectionClear(event) => {
+				// TODO: check if this works
+				// Someone else has new content in the clipboard, so it is
+				// notifying us that we should delete our data now.
+				trace!("Somebody else owns the clipboard now");
+				if event.selection == clipboard.atoms.CLIPBOARD {
+					let mut data = clipboard.data.write();
+					*data = None;
+				}
+			}
+			Event::SelectionRequest(event) => {
+				trace!(
+					"SelectionRequest - selection is: {}, target is {}",
+					clipboard.atom_name_dbg(event.selection),
+					clipboard.atom_name_dbg(event.target),
+				);
+				// Someone is requesting the clipboard content from us.
+				clipboard.handle_selection_request(event).map_err(into_unknown)?;
+
+				// if we are in the progress of saving to the clipboard manager
+				// make sure we save that we have finished writing
+				let handover_state = clipboard.handover_state.lock();
+				if *handover_state == ManagerHandoverState::InProgress {
+					// Only set written, when the actual contents were written,
+					// not just a response to what TARGETS we have.
+					if event.target != clipboard.atoms.TARGETS {
+						trace!("The contents were written to the clipboard manager.");
+						written = true;
+						// if we have written and notified, make sure to notify that we are done
+						if notified {
+							handover_finished(&clipboard, handover_state);
 						}
 					}
-					let (w, h) = image.dimensions();
-					let mut locked_result = result.lock().unwrap();
-					let image_data = ImageData {
-						width: w as usize,
-						height: h as usize,
-						bytes: image.into_raw().into(),
-					};
-					*locked_result = Ok(image_data);
 				}
-				true
-			})
-		};
-		let _success = get_data_from_selection_owner(guard, &atoms, Some(callback as _), 0).0;
-		// Rust impl: We return the result here no matter if it succeeded, because the result will
-		// tell us if it hasn't
-		let mut taken = Err(Error::Unknown {
-			description: format!("Implementation error at {}:{}", file!(), line!()),
-		});
-		let mut locked = result.lock().unwrap();
-		std::mem::swap(&mut taken, &mut locked);
-		return taken;
-	}
-	Err(Error::ContentNotAvailable)
-}
+			}
+			Event::SelectionNotify(event) => {
+				// We've requested the clipboard content and this is the answer.
+				// Considering that this thread is not responsible for reading
+				// clipboard contents, this must come from the clipboard manager
+				// signaling that the data was handed over successfully.
+				if event.selection != clipboard.atoms.CLIPBOARD_MANAGER {
+					error!("Received a `SelectionNotify` from a selection other than the CLIPBOARD_MANAGER. This is unexpected in this thread.");
+					continue;
+				}
+				let handover_state = clipboard.handover_state.lock();
+				if *handover_state == ManagerHandoverState::InProgress {
+					// Note that some clipboard managers send a selection notify
+					// before even sending a request for the actual contents.
+					// (That's why we use the "notified" & "written" flags)
+					trace!("The clipboard manager indicated that it's done requesting the contents from us.");
+					notified = true;
 
-fn encode_data_on_demand(
-	shared: &mut SharedState,
-	image: &mut ImageData,
-	atom: xproto::Atom,
-	buffer: &mut Option<Arc<Mutex<Vec<u8>>>>,
-) {
-	if atom == shared.common_atoms().MIME_IMAGE_PNG {
-		if let Ok(image) = encode_as_png(image) {
-			*buffer = Some(Arc::new(Mutex::new(image)));
+					// One would think that we could also finish if the property
+					// here is set 0, because that indicates failure. However
+					// this is not the case; for example on KDE plasma 5.18, we
+					// immediately get a SelectionNotify with property set to 0,
+					// but following that, we also get a valid SelectionRequest
+					// from the clipboard manager.
+					if written {
+						handover_finished(&clipboard, handover_state);
+					}
+				}
+			}
+			_event => {
+				// May be useful for debbuging but nothing else really.
+				// trace!("Received unwanted event: {:?}", event);
+			}
 		}
 	}
-}
-
-fn ensure_lo_initialized() -> Result<MutexGuard<'static, Option<LockedObjects>>, Error> {
-	let mut locked = LOCKED_OBJECTS.lock().unwrap();
-	if locked.is_none() {
-		*locked = Some(LockedObjects::new().map_err(|e| Error::Unknown {
-			description: format!(
-				"Could not initialize the x11 clipboard handling facilities. Cause: {}",
-				e
-			),
-		})?);
-	}
-	Ok(locked)
-}
-
-fn with_locked_objects<F, T>(action: F) -> Result<T, Error>
-where
-	F: FnOnce(&mut LockedObjects) -> Result<T, Error>,
-{
-	// The gobal may not have been initialized yet or may have been destroyed previously.
-	//
-	// Note: the global objects gets destroyed (replaced with None) when the last
-	// clipboard context is dropped (goes out of scope).
-	let mut locked = ensure_lo_initialized()?;
-	let lo = locked.as_mut().unwrap();
-	action(lo)
 }
 
 pub struct X11ClipboardContext {
-	_owned: Arc<Mutex<Option<LockedObjects>>>,
+	inner: Arc<ClipboardContext>,
+}
+
+impl X11ClipboardContext {
+	pub fn new() -> Result<Self> {
+		let mut global_cb = CLIPBOARD.lock();
+		if let Some(global_cb) = &*global_cb {
+			return Ok(Self { inner: Arc::clone(&global_cb.context) });
+		}
+		// At this point we know that the clipboard does not exists.
+		let ctx = Arc::new(ClipboardContext::new()?);
+		let join_handle;
+		{
+			let ctx = Arc::clone(&ctx);
+			join_handle = std::thread::spawn(move || {
+				if let Err(error) = serve_requests(ctx) {
+					error!("Worker thread errored with: {}", error);
+				}
+			});
+		}
+		*global_cb =
+			Some(GlobalClipboard { context: Arc::clone(&ctx), server_handle: join_handle });
+		Ok(Self { inner: ctx })
+	}
+
+	pub fn get_text(&self) -> Result<String> {
+		let formats = [
+			self.inner.atoms.UTF8_STRING,
+			self.inner.atoms.UTF8_MIME_0,
+			self.inner.atoms.UTF8_MIME_1,
+			self.inner.atoms.STRING,
+			self.inner.atoms.TEXT,
+			self.inner.atoms.TEXT_MIME_UNKNOWN,
+		];
+		let result = self.inner.read(&formats)?;
+		if result.format == self.inner.atoms.STRING {
+			// ISO Latin-1
+			// See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
+			Ok(result.bytes.into_iter().map(|c| c as char).collect())
+		} else {
+			String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)
+		}
+	}
+
+	pub fn set_text(&self, message: String) -> Result<()> {
+		let data =
+			ClipboardData { bytes: message.into_bytes(), format: self.inner.atoms.UTF8_STRING };
+		self.inner.write(data)
+	}
+
+	pub fn get_image(&self) -> Result<ImageData> {
+		let formats = [self.inner.atoms.PNG_MIME];
+		let bytes = self.inner.read(&formats)?.bytes;
+
+		let cursor = std::io::Cursor::new(&bytes);
+		let mut reader = image::io::Reader::new(cursor);
+		reader.set_format(image::ImageFormat::Png);
+		let image = match reader.decode() {
+			Ok(img) => img.into_rgba8(),
+			Err(_e) => return Err(Error::ConversionFailure),
+		};
+		let (w, h) = image.dimensions();
+		let image_data =
+			ImageData { width: w as usize, height: h as usize, bytes: image.into_raw().into() };
+		Ok(image_data)
+	}
+
+	pub fn set_image(&self, image: ImageData) -> Result<()> {
+		let encoded = encode_as_png(&image)?;
+		let data = ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME };
+		self.inner.write(data)
+	}
 }
 
 impl Drop for X11ClipboardContext {
 	fn drop(&mut self) {
-		// If there's no other owner than us and the global,
-		// then destruct the manager
-		if Arc::strong_count(&LOCKED_OBJECTS) == 2 {
-			Manager::destruct();
-			let mut locked = LOCKED_OBJECTS.lock().unwrap();
-			*locked = None;
+		// There are always at least 3 owners:
+		// the global, the server thread, and one `Clipboard::inner`
+		const MIN_OWNERS: usize = 3;
+
+		// We start with locking the global guard to prevent race
+		// conditions below.
+		let mut global_cb = CLIPBOARD.lock();
+		if Arc::strong_count(&self.inner) == MIN_OWNERS {
+			// If the are the only owers of the clipboard are ourselves and
+			// the global object, then we should destroy the global object,
+			// and send the data to the clipboard manager
+
+			if let Err(e) = self.inner.ask_clipboard_manager_to_request_our_data() {
+				error!("Could not hand the clipboard data over to the clipboard manager: {}", e);
+			}
+			let global_cb = global_cb.take();
+			if let Err(e) = self.inner.server.conn.destroy_window(self.inner.server.win_id) {
+				error!("Failed to destroy the clipboard window. Error: {}", e);
+				return;
+			}
+			if let Err(e) = self.inner.server.conn.flush() {
+				error!("Failed to flush the clipboard window. Error: {}", e);
+				return;
+			}
+			if let Some(global_cb) = global_cb {
+				if let Err(e) = global_cb.server_handle.join() {
+					// Let's try extracting the error message
+					let message;
+					if let Some(msg) = e.downcast_ref::<&'static str>() {
+						message = Some((*msg).to_string());
+					} else if let Some(msg) = e.downcast_ref::<String>() {
+						message = Some(msg.clone());
+					} else {
+						message = None;
+					}
+					if let Some(message) = message {
+						error!("The clipboard server thread paniced. Panic message: '{}'", message);
+					} else {
+						error!("The clipboard server thread paniced.");
+					}
+				}
+			}
 		}
-	}
-}
-
-impl X11ClipboardContext {
-	pub(crate) fn new() -> Self {
-		X11ClipboardContext { _owned: LOCKED_OBJECTS.clone() }
-	}
-
-	pub(crate) fn get_text(&mut self) -> Result<String, Error> {
-		let locked = ensure_lo_initialized()?;
-		get_text(locked)
-	}
-
-	pub(crate) fn set_text(&mut self, text: String) -> Result<(), Error> {
-		with_locked_objects(|locked| {
-			let manager = &mut locked.manager;
-			let shared = &mut locked.shared;
-			manager.set_text(shared, text.into_bytes())
-		})
-	}
-
-	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
-		let locked = ensure_lo_initialized()?;
-		get_image(locked)
-	}
-
-	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
-		with_locked_objects(|locked| {
-			let manager = &mut locked.manager;
-			let shared = &mut locked.shared;
-			manager.set_image(shared, image)
-		})
 	}
 }

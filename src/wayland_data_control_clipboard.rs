@@ -1,14 +1,14 @@
-use crate::{
-	common::{Error, ImageData},
-	common_linux::encode_as_png,
-};
-
 use std::io::{Cursor, Read};
 
 use wl_clipboard_rs::{
 	copy::{Options, Source},
 	paste::{get_contents, ClipboardType, Error as PasteError, Seat},
 	utils::is_primary_selection_supported,
+};
+
+use crate::{
+	common::{Error, ImageData},
+	common_linux::{encode_as_png, into_unknown},
 };
 
 static MIME_PNG: &str = "image/png";
@@ -94,8 +94,4 @@ impl WaylandDataControlClipboardContext {
 		opts.copy(source, MimeType::Specific(MIME_PNG.into())).map_err(into_unknown)?;
 		Ok(())
 	}
-}
-
-fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
-	Error::Unknown { description: format!("{}", error) }
 }

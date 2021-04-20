@@ -7,6 +7,10 @@ use log::{info, warn};
 
 use crate::{x11_clipboard::X11ClipboardContext, Error, ImageData};
 
+pub fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
+	Error::Unknown { description: format!("{}", error) }
+}
+
 pub fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 	/// This is a workaround for the PNGEncoder not having a `into_inner` like function
 	/// which would allow us to take back our Vec after the encoder finished encoding.
@@ -73,7 +77,7 @@ impl LinuxClipboard {
 				}
 			}
 		}
-		Ok(Self::X11(X11ClipboardContext::new()))
+		Ok(Self::X11(X11ClipboardContext::new()?))
 	}
 
 	/// Fetches utf-8 text from the clipboard and returns it.

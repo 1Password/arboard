@@ -104,6 +104,7 @@ impl Clipboard {
 #[cfg(test)]
 #[test]
 fn all_tests() {
+	let _ = env_logger::builder().is_test(true).try_init();
 	{
 		let mut ctx = Clipboard::new().unwrap();
 		let text = "some string";
@@ -118,7 +119,7 @@ fn all_tests() {
 		// responsibility for the clipboard, in case that happens asynchronously
 		// (it appears that this is the case on X11 plus Mutter 3.34+, see #4)
 		use std::time::Duration;
-		std::thread::sleep(Duration::from_millis(50));
+		std::thread::sleep(Duration::from_millis(100));
 
 		let mut ctx = Clipboard::new().unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
