@@ -1,4 +1,10 @@
 
+## v1.2.0 on 2021-04-06
+
+### Added
+
+- Optional native wayland support through the `wl-clipboard-rs` crate.
+
 ## v1.1.0 on 2020-12-29
 
 ### Changed
