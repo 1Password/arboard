@@ -146,7 +146,7 @@ impl<'a> ImageData<'a> {
 ///
 /// This reflects the list of "mandatory data types" specified by
 /// The W3C Clipboard APIs document.
-/// https://www.w3.org/TR/2021/WD-clipboard-apis-20210203/#mandatory-data-types
+/// <https://www.w3.org/TR/2021/WD-clipboard-apis-20210203/#mandatory-data-types>
 ///
 #[derive(Debug, Clone)]
 pub enum CustomItem {
