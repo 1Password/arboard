@@ -232,7 +232,7 @@ impl OSXClipboardContext {
 				let pixels;
 				match reader.decode() {
 					Ok(img) => {
-						let rgba = img.into_rgba();
+						let rgba = img.into_rgba8();
 						let (w, h) = rgba.dimensions();
 						width = w;
 						height = h;
