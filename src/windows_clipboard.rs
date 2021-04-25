@@ -418,7 +418,10 @@ fn convert_native_cb_data(format: UINT) -> Option<CustomItem<'static>> {
 	}
 }
 
-fn convert_non_system_clipboard_data(format: UINT, format_name: &OsStr) -> Option<CustomItem<'static>> {
+fn convert_non_system_clipboard_data(
+	format: UINT,
+	format_name: &OsStr,
+) -> Option<CustomItem<'static>> {
 	if format_name == "HTML Format" {
 		// This is the official HTML format on Windows
 		// See: https://docs.microsoft.com/en-us/previous-versions/windows/internet-explorer/ie-developer/platform-apis/aa767917(v=vs.85)?redirectedfrom=MSDN

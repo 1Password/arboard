@@ -235,7 +235,10 @@ impl<'main> CustomItem<'main> {
 	}
 
 	/// Return None if the `media_type` is not a supported text format, returns Some otherwise.
-	pub fn from_text_media_type<'a>(data: Cow<'a, str>, media_type: &str) -> Option<CustomItem<'a>> {
+	pub fn from_text_media_type<'a>(
+		data: Cow<'a, str>,
+		media_type: &str,
+	) -> Option<CustomItem<'a>> {
 		match media_type {
 			"text/plain" => Some(CustomItem::TextPlain(data)),
 			"text/uri-list" => Some(CustomItem::TextUriList(data)),
@@ -253,7 +256,10 @@ impl<'main> CustomItem<'main> {
 	}
 
 	/// Return None if the `media_type` is not a supported binary format, returns Some otherwise.
-	pub fn from_octet_media_type<'a>(data: Cow<'a, [u8]>, media_type: &str) -> Option<CustomItem<'a>> {
+	pub fn from_octet_media_type<'a>(
+		data: Cow<'a, [u8]>,
+		media_type: &str,
+	) -> Option<CustomItem<'a>> {
 		match media_type {
 			"image/png" => Some(CustomItem::ImagePng(data)),
 			"image/jpg" => Some(CustomItem::ImageJpg(data)),
