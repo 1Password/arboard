@@ -52,8 +52,8 @@ type PlatformClipboard = osx_clipboard::OSXClipboardContext;
 /// Any number of `Clipboard` instances are allowed to exist at a single point in time. Note however
 /// that all `Clipboard`s must be 'dropped' before the program exits. In most scenarios this happens
 /// automatically but there are frameworks (for example `winit`) that take over the execution
-/// and where the objects don't get dropped when the application exits. In these cases you have to
-/// make sure the object is dropped by taking ownership of it in a confined scope when detecting
+/// and where some objects don't get dropped when the application exits. In these cases you have to
+/// make sure the object is dropped by moving it into a confined scope when detecting
 /// that your application is about to quit.
 ///
 /// It is also valid to have multiple `Clipboards` on separate threads at once but note that

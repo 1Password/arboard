@@ -8,9 +8,17 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use std::borrow::Cow;
-use std::convert::TryInto;
-use std::io::{self, Read, Seek};
+use std::{
+	borrow::Cow,
+	collections::HashSet,
+	convert::TryInto,
+	ffi::{OsStr, OsString},
+	io::{self, Read, Seek},
+	os::windows::ffi::OsStringExt,
+	ptr::{null, null_mut},
+};
+
+use log::{debug, warn};
 
 use clipboard_win::Clipboard as SystemClipboard;
 use image::{
@@ -18,20 +26,35 @@ use image::{
 	ColorType, ImageDecoder,
 };
 use scopeguard::defer;
-use winapi::shared::minwindef::DWORD;
-use winapi::um::{
-	stringapiset::WideCharToMultiByte,
-	winbase::{GlobalLock, GlobalSize, GlobalUnlock},
-	wingdi::{
-		CreateDIBitmap, DeleteObject, BITMAPV4HEADER, BI_BITFIELDS, CBM_INIT, CIEXYZTRIPLE,
-		DIB_RGB_COLORS,
+use winapi::{
+	shared::{
+		minwindef::{DWORD, UINT},
+		ntdef::HANDLE,
 	},
-	winnls::CP_UTF8,
-	winnt::LONG,
-	winuser::{GetClipboardData, GetDC, SetClipboardData, CF_BITMAP, CF_UNICODETEXT},
+	um::{
+		shellapi::{DragQueryFileW, HDROP},
+		stringapiset::WideCharToMultiByte,
+		winbase::{GlobalLock, GlobalSize, GlobalUnlock},
+		wingdi::{
+			CreateDIBitmap, DeleteObject, BITMAPV4HEADER, BI_BITFIELDS, CBM_INIT, CIEXYZTRIPLE,
+			DIB_RGB_COLORS,
+		},
+		winnls::CP_UTF8,
+		winnt::LONG,
+		winuser::{
+			EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW, GetDC,
+			SetClipboardData, CF_BITMAP, CF_DIB, CF_DIBV5, CF_DIF, CF_DSPBITMAP, CF_DSPENHMETAFILE,
+			CF_DSPMETAFILEPICT, CF_DSPTEXT, CF_ENHMETAFILE, CF_GDIOBJFIRST, CF_GDIOBJLAST,
+			CF_HDROP, CF_LOCALE, CF_METAFILEPICT, CF_OEMTEXT, CF_OWNERDISPLAY, CF_PALETTE,
+			CF_PENDATA, CF_PRIVATEFIRST, CF_PRIVATELAST, CF_RIFF, CF_SYLK, CF_TEXT, CF_TIFF,
+			CF_UNICODETEXT, CF_WAVE,
+		},
+	},
 };
 
-use super::common::{Error, ImageData};
+use crate::common::{
+	line_endings_to_crlf, text_from_unknown_encoding, CustomItem, Error, ImageData,
+};
 
 const MAX_OPEN_ATTEMPTS: usize = 5;
 
@@ -98,6 +121,9 @@ impl Read for FakeBitmapFile {
 }
 
 unsafe fn add_cf_bitmap(image: &ImageData) -> Result<(), Error> {
+	// TODO this might be incorrect.
+	// the bV4RedMask, bV4GreenMask, bV4BlueMask
+	// might be dependent on endianness
 	let header = BITMAPV4HEADER {
 		bV4Size: std::mem::size_of::<BITMAPV4HEADER>() as _,
 		bV4Width: image.width as LONG,
@@ -121,7 +147,7 @@ unsafe fn add_cf_bitmap(image: &ImageData) -> Result<(), Error> {
 		bV4GammaBlue: 0,
 	};
 
-	let hdc = GetDC(std::ptr::null_mut());
+	let hdc = GetDC(null_mut());
 	let hbitmap = CreateDIBitmap(
 		hdc,
 		&header as *const BITMAPV4HEADER as *const _,
@@ -139,9 +165,8 @@ unsafe fn add_cf_bitmap(image: &ImageData) -> Result<(), Error> {
 	Ok(())
 }
 
-pub fn get_string(out: &mut Vec<u8>) -> Result<(), Error> {
+pub fn get_string() -> Result<String, Error> {
 	use std::mem;
-	use std::ptr;
 
 	// This pointer must not be free'd.
 	let ptr = unsafe { GetClipboardData(CF_UNICODETEXT) };
@@ -164,42 +189,41 @@ pub fn get_string(out: &mut Vec<u8>) -> Result<(), Error> {
 			0,
 			data_ptr as _,
 			char_count as _,
-			ptr::null_mut(),
+			null_mut(),
 			0,
-			ptr::null(),
-			ptr::null_mut(),
+			null(),
+			null_mut(),
 		);
 		if storage_req_size == 0 {
 			return Err(Error::ConversionFailure);
 		}
 
-		let storage_cursor = out.len();
-		out.reserve(storage_req_size as usize);
-		let storage_ptr = out.as_mut_ptr().add(storage_cursor) as *mut _;
+		let mut utf8: Vec<u8> = Vec::with_capacity(storage_req_size as usize);
 		let output_size = WideCharToMultiByte(
 			CP_UTF8,
 			0,
 			data_ptr as _,
 			char_count as _,
-			storage_ptr,
+			utf8.as_mut_ptr() as *mut i8,
 			storage_req_size,
-			ptr::null(),
-			ptr::null_mut(),
+			null(),
+			null_mut(),
 		);
 		if output_size == 0 {
 			return Err(Error::ConversionFailure);
 		}
-		out.set_len(storage_cursor + storage_req_size as usize);
+		utf8.set_len(storage_req_size as usize);
 
-		//It seems WinAPI always supposed to have at the end null char.
-		//But just to be safe let's check for it and only then remove.
-		if let Some(last_byte) = out.last() {
+		// WideCharToMultiByte appends a terminating null character,
+		// if the original string included one or if the length of the original
+		// was set to -1
+		if let Some(last_byte) = utf8.last() {
 			if *last_byte == 0 {
-				out.set_len(out.len() - 1);
+				utf8.set_len(utf8.len() - 1);
 			}
 		}
+		Ok(String::from_utf8_unchecked(utf8))
 	}
-	Ok(())
 }
 
 pub struct WindowsClipboardContext;
@@ -212,9 +236,7 @@ impl WindowsClipboardContext {
 		// Using this nifty RAII object to open and close the clipboard.
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
 			.map_err(|_| Error::ClipboardOccupied)?;
-		let mut result = String::new();
-		get_string(unsafe { result.as_mut_vec() })?;
-		Ok(result)
+		get_string()
 	}
 	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Error> {
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
@@ -287,4 +309,403 @@ impl WindowsClipboardContext {
 
 		result
 	}
+
+	pub(crate) fn set_custom(&mut self, _items: Vec<CustomItem>) -> Result<(), Error> {
+		todo!()
+	}
+
+	pub(crate) fn get_all(&mut self) -> Result<Vec<CustomItem>, Error> {
+		// Using this to open, and automatically close the clipboard on return
+		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
+			.map_err(|_| Error::ClipboardOccupied)?;
+
+		let mut items = Vec::new();
+		let mut item_mime_types = HashSet::new();
+
+		let mut format = 0;
+		loop {
+			// `EnumClipboardFormats` not only enumerates the forats that the owner placed onto the clipboard,
+			// but it also enumerates all formats that the system can automatically convert to.
+			// (Also known as "synthesized formats")
+			format = unsafe { EnumClipboardFormats(format) };
+			if format == 0 {
+				break;
+			}
+			if let Some(item) = convert_native_cb_data(format) {
+				let mime_type = item.media_type();
+				if !item_mime_types.contains(mime_type) {
+					item_mime_types.insert(mime_type);
+					items.push(item);
+				}
+			}
+		}
+		Ok(items)
+	}
+}
+
+/// This function requires that the clipboard is open when it's called.
+fn convert_native_cb_data(format: UINT) -> Option<CustomItem> {
+	match format {
+		// A bitmap may contain PNG or JPG encoded data
+		// TODO HANDLE THIS LATER
+		CF_BITMAP => None,
+		CF_DIB => None,
+		CF_DIBV5 => None,
+
+		CF_DIF => None,
+		CF_DSPBITMAP => None,
+		CF_DSPENHMETAFILE => None,
+		CF_DSPMETAFILEPICT => None,
+		CF_DSPTEXT => None,
+		CF_ENHMETAFILE => None,
+		CF_GDIOBJFIRST..=CF_GDIOBJLAST => None,
+
+		// A handle to a list of files
+		CF_HDROP => {
+			let hdrop = unsafe { GetClipboardData(format) };
+			convert_clipboard_hdrop(hdrop)
+		}
+
+		CF_LOCALE => None,
+		CF_METAFILEPICT => None,
+		CF_OEMTEXT => None,
+		CF_OWNERDISPLAY => None,
+		CF_PALETTE => None,
+		CF_PENDATA => None,
+		CF_PRIVATEFIRST..=CF_PRIVATELAST => None,
+		CF_RIFF => None,
+		CF_SYLK => None,
+
+		// We don't handle `CF_TEXT` because the system always provides
+		// `CF_UNICODETEXT` if a `CF_TEXT` is on the clipboard
+		CF_TEXT => None,
+
+		CF_TIFF => None,
+		CF_UNICODETEXT => {
+			match get_string() {
+				Ok(string) => {
+					let crlf = line_endings_to_crlf(&string);
+					let string = if let Cow::Borrowed(br_str) = crlf {
+						if (br_str as *const str) == (string.as_ref() as *const str) {
+							string
+						} else {
+							crlf.into_owned()
+						}
+					} else {
+						crlf.into_owned()
+					};
+					Some(CustomItem::TextPlain(string))
+				}
+				Err(e) => {
+					warn!("Failed to get the contents of a CF_UNICODETEXT clipboard item. Error was: {}", e);
+					None
+				}
+			}
+		}
+		CF_WAVE => None,
+
+		_ => {
+			let mut wstr = [0u16; 32];
+			let num_chars =
+				unsafe { GetClipboardFormatNameW(format, wstr.as_mut_ptr(), wstr.len() as i32) };
+			if num_chars == 0 {
+				debug!("Could not get the name of the clipboard format {}", format);
+				return None;
+			} else {
+				let os_str = OsString::from_wide(&wstr[0..num_chars as usize]);
+				debug!("The clipboard format name is {:?}", os_str);
+				convert_non_system_clipboard_data(format, &os_str)
+			}
+		}
+	}
+}
+
+fn convert_non_system_clipboard_data(format: UINT, format_name: &OsStr) -> Option<CustomItem> {
+	if format_name == "HTML Format" {
+		// This is the official HTML format on Windows
+		// See: https://docs.microsoft.com/en-us/previous-versions/windows/internet-explorer/ie-developer/platform-apis/aa767917(v=vs.85)?redirectedfrom=MSDN
+		let handle = unsafe { GetClipboardData(format) };
+		with_clipboard_data(handle, convert_clipboard_html)
+	} else if format_name == "text/html" {
+		let handle = unsafe { GetClipboardData(format) };
+		with_clipboard_data(handle, |data| {
+			convert_clipboard_text(data, "text/html", |s| CustomItem::TextHtml(s))
+		})
+	} else if format_name == "text/csv" {
+		let handle = unsafe { GetClipboardData(format) };
+		with_clipboard_data(handle, |data| {
+			convert_clipboard_text(data, "text/csv", |s| CustomItem::TextCsv(s))
+		})
+	} else if format_name == "text/css" {
+		let handle = unsafe { GetClipboardData(format) };
+		with_clipboard_data(handle, |data| {
+			convert_clipboard_text(data, "text/css", |s| CustomItem::TextCss(s))
+		})
+	} else if format_name == "application/xhtml+xml" {
+		let handle = unsafe { GetClipboardData(format) };
+		with_clipboard_data(handle, |data| {
+			convert_clipboard_app_text(data, "application/xhtml+xml", |s| {
+				CustomItem::ApplicationXhtml(s.into_owned())
+			})
+		})
+	} else if format_name == "application/xml" || format_name == "text/xml" {
+		let handle = unsafe { GetClipboardData(format) };
+		with_clipboard_data(handle, |data| {
+			convert_clipboard_app_text(data, "text/csv", |s| {
+				CustomItem::TextXml(line_endings_to_crlf(s.as_ref()).into_owned())
+			})
+		})
+	} else if format_name == "SVG Image" || format_name == "image/svg+xml" {
+		// "SVG Image" is the name used on windows according to: https://www.iana.org/assignments/media-types/image/svg+xml
+		let handle = unsafe { GetClipboardData(format) };
+		with_clipboard_data(handle, |data| {
+			convert_clipboard_app_text(data, "image/svg+xml", |s| {
+				CustomItem::ImageSvg(s.into_owned())
+			})
+		})
+	} else if format_name == "application/javascript" {
+		// "SVG Image" is the name used on windows according to: https://www.iana.org/assignments/media-types/image/svg+xml
+		let handle = unsafe { GetClipboardData(format) };
+		with_clipboard_data(handle, |data| {
+			convert_clipboard_app_text(data, "application/javascript", |s| {
+				CustomItem::ApplicationJavascript(s.into_owned())
+			})
+		})
+	} else if format_name == "application/json" {
+		// "SVG Image" is the name used on windows according to: https://www.iana.org/assignments/media-types/image/svg+xml
+		let handle = unsafe { GetClipboardData(format) };
+		with_clipboard_data(handle, |data| {
+			convert_clipboard_app_text(data, "application/json", |s| {
+				CustomItem::ApplicationJson(s.into_owned())
+			})
+		})
+	} else if format_name == "application/octet-stream" {
+		// "SVG Image" is the name used on windows according to: https://www.iana.org/assignments/media-types/image/svg+xml
+		let handle = unsafe { GetClipboardData(format) };
+		with_clipboard_data(handle, |data| {
+			let data = match data {
+				Ok(d) => d,
+				Err(e) => {
+					warn!("Failed to get the clipboard data for the format 'application/octet-stream'. Error was: {}", e);
+					return None;
+				}
+			};
+			Some(CustomItem::ApplicationOctetStream(data.into()))
+		})
+	} else {
+		None
+	}
+}
+
+fn with_clipboard_data<F, T>(data_handle: HANDLE, fun: F) -> T
+where
+	F: FnOnce(Result<&[u8], &'static str>) -> T,
+{
+	if data_handle.is_null() {
+		return fun(Err("The clipboard data was NULL"));
+	}
+	let data = unsafe { GlobalLock(data_handle) as *const u8 };
+	if data.is_null() {
+		return fun(Err("`GlobalLock` returned NULL"));
+	}
+	defer!(unsafe {
+		GlobalUnlock(data_handle);
+	});
+	let data_len = unsafe { GlobalSize(data_handle) };
+	let data_slice = unsafe { std::slice::from_raw_parts(data, data_len) };
+	fun(Ok(data_slice))
+}
+
+fn read_html_int_field(line: &str, name_w_colon: &str) -> Option<i32> {
+	if line.starts_with(name_w_colon) {
+		let val_str = &line[name_w_colon.len()..];
+		match val_str.parse::<i32>() {
+			Ok(v) => Some(v),
+			Err(e) => {
+				warn!(
+					"Found CF_HTML field '{}', but failed to parse its value: {}",
+					name_w_colon, e
+				);
+				None
+			}
+		}
+	} else {
+		None
+	}
+}
+// Converts a clipboard item with the format CF_HTML to HTML text
+fn convert_clipboard_html(html_data: Result<&[u8], &str>) -> Option<CustomItem> {
+	let html_data = match html_data {
+		Ok(d) => d,
+		Err(e) => {
+			warn!("Failed to read an HTML clipboard item: {}", e);
+			return None;
+		}
+	};
+	let data_str = match std::str::from_utf8(html_data) {
+		Ok(s) => s,
+		Err(e) => {
+			warn!("Could not get the HTML data as a utf8 text. Error was: {}", e);
+			return None;
+		}
+	};
+
+	// debug!("Got HTML Format data:\n{}", data_str);
+
+	let mut end_fragment = None;
+	let mut start_fragment = None;
+	// Using `split()` instead of `lines()` because `lines()` only
+	// splits at LF or CRLF, but the CF_HTML header may represent line breaks with CR
+	for line in data_str.split(&['\r', '\n'][..]) {
+		if let Some(v) = read_html_int_field(line, "EndFragment:") {
+			end_fragment = Some(v);
+		} else if let Some(v) = read_html_int_field(line, "StartFragment:") {
+			start_fragment = Some(v);
+		}
+		if end_fragment.is_some() && start_fragment.is_some() {
+			// Stop parsing the header if we have the information we need from the header.
+			break;
+		}
+	}
+	if let (Some(start_fragment), Some(end_fragment)) = (start_fragment, end_fragment) {
+		if start_fragment <= 0 {
+			warn!("The StartFragment field in a CF_HTML clipboard item was not positive.");
+			return None;
+		}
+		let start_fragment = start_fragment as usize;
+		if start_fragment >= data_str.len() {
+			warn!("The StartFragment field in a CF_HTML clipboard item had a larger value than the length of the entire clipboard data.");
+		}
+		if end_fragment <= 0 {
+			warn!("The EndFragment field in a CF_HTML clipboard item was not positive.");
+			return None;
+		}
+		let end_fragment = end_fragment as usize;
+		if end_fragment > data_str.len() {
+			warn!("The EndFragment field in a CF_HTML clipboard item had a larger value than the length of the entire clipboard data.");
+			return None;
+		}
+		let html_text = &data_str[start_fragment..end_fragment];
+		Some(CustomItem::TextHtml(line_endings_to_crlf(html_text).into_owned()))
+	} else {
+		warn!("Couldn't find either the `StartHTML` or the `StartFragment` field in the CF_HTML clipboard item");
+		None
+	}
+}
+
+fn convert_clipboard_text<F>(
+	data: Result<&[u8], &str>,
+	data_type: &str,
+	mapper: F,
+) -> Option<CustomItem>
+where
+	F: FnOnce(String) -> CustomItem,
+{
+	let data = match data {
+		Ok(d) => d,
+		Err(e) => {
+			warn!("Failed to read a {} clipboard item: {}", data_type, e);
+			return None;
+		}
+	};
+	match std::str::from_utf8(data) {
+		Ok(s) => Some(mapper(line_endings_to_crlf(s).into_owned())),
+		Err(e) => {
+			warn!("Failed to convert a {} clipboard item to utf8: {}", data_type, e);
+			None
+		}
+	}
+}
+
+/// Converts any text based format that belongs to
+/// the "application/" mime type family. (Instead of "text/")
+fn convert_clipboard_app_text<F>(
+	data: Result<&[u8], &str>,
+	data_type: &str,
+	mapper: F,
+) -> Option<CustomItem>
+where
+	F: FnOnce(Cow<'_, str>) -> CustomItem,
+{
+	let data = match data {
+		Ok(d) => d,
+		Err(e) => {
+			warn!("Failed to read a {} clipboard item: {}", data_type, e);
+			return None;
+		}
+	};
+	let string = match text_from_unknown_encoding(data) {
+		// The wording is not entirely clear but it seems that RFC 3023
+		// recommends to keep line break in whatever format provided,
+		// so we don't convert to CRLF, as we would with "text/" media types.
+		Ok(s) => s,
+		Err(e) => {
+			warn!("Failed to extract text from the data. Error was: {}", e);
+			debug!("Failed to extract text from the data. Error was: '{}' Data was: {:?}", e, data);
+			return None;
+		}
+	};
+	Some(mapper(string))
+}
+
+fn convert_clipboard_hdrop(clipboard_data: HANDLE) -> Option<CustomItem> {
+	if clipboard_data.is_null() {
+		warn!("Failed to convert a CF_HDROP item, because the data was NULL");
+		return None;
+	}
+	let hdrop = unsafe { GlobalLock(clipboard_data) as HDROP };
+	if hdrop.is_null() {
+		warn!("Failed to convert a CF_HDROP item, because `GlobalLock` returned NULL");
+		return None;
+	}
+	defer!(unsafe {
+		GlobalUnlock(clipboard_data);
+	});
+
+	let file_count = unsafe { DragQueryFileW(hdrop, 0xFFFFFFFF, null_mut(), 0) };
+	let last_id = file_count - 1;
+	let mut result = String::new();
+	for i in 0..file_count {
+		let wchar_cnt = unsafe { DragQueryFileW(hdrop, i, null_mut(), 0) };
+		if wchar_cnt == 0 {
+			warn!("The HDROP item at index {} had a size of zero characters.", i);
+			continue;
+		}
+		let mut wstr: Vec<u16> = Vec::new();
+		// Adding one, to allow space for the terminating null
+		// (which we don't need but the DragQueryFileW function cuts off the last character if this is not there)
+		wstr.resize((wchar_cnt + 1) as usize, 0);
+
+		// Ignoring the return value here because the documentation doesn't say
+		// anything about the return value in this case.
+		unsafe { DragQueryFileW(hdrop, i, wstr.as_mut_ptr(), wstr.len() as u32) };
+
+		let os_string = OsString::from_wide(&wstr[0..wchar_cnt as usize]);
+		let string = match os_string.into_string() {
+			Ok(s) => s,
+			Err(s) => {
+				warn!("Failed to convert the OsString to String when constructing a `TextUriList` from an HDROP. String was: {:?}", s);
+				continue;
+			}
+		};
+
+		let string = string.trim();
+		// Remove the "\\?\" prefix if it's present
+		let prefix = "\\\\?\\";
+		let string = if string.starts_with(prefix) { &string[prefix.len()..] } else { string };
+		// Make all slashes forward slashes
+		let string = string.replace("\\", "/");
+		// Prepend the scheme identifier. Ever wondered why does does the file
+		// scheme have three forwards slashes, but all other schemes have only
+		// two? Because the file scheme is defined like this:
+		// file://<host>/<path>
+		// But the host may be empty if the file is on the localhost (this computer).
+		result.push_str("file:///");
+		result.push_str(&string);
+		if last_id != i {
+			// All "text/" media types use CRLF line endings
+			result.push_str("\r\n");
+		}
+	}
+	Some(CustomItem::TextUriList(result))
 }
