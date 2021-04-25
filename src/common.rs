@@ -159,52 +159,52 @@ impl<'a> ImageData<'a> {
 /// text using all of CR, LF, and CRLF. Such an item may also use multiple of
 /// these (mixing them).
 #[derive(Debug, Clone)]
-pub enum CustomItem {
+pub enum CustomItem<'a> {
 	/// "text/plain"
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
-	TextPlain(String),
+	TextPlain(Cow<'a, str>),
 	/// "text/uri-list"
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
-	TextUriList(String),
+	TextUriList(Cow<'a, str>),
 	/// "text/csv"
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
-	TextCsv(String),
+	TextCsv(Cow<'a, str>),
 	/// "text/css"
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
-	TextCss(String),
+	TextCss(Cow<'a, str>),
 	/// "text/html"
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
-	TextHtml(String),
+	TextHtml(Cow<'a, str>),
 	/// "text/xml"
 	///
 	/// Data coming from the clipboard in "application/xml" format,
 	/// is automaticaly converted to this ("text/xml").
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
-	TextXml(String),
+	TextXml(Cow<'a, str>),
 	/// "application/xhtml+xml"
-	ApplicationXhtml(String),
+	ApplicationXhtml(Cow<'a, str>),
 	/// "image/png"
-	ImagePng(Vec<u8>),
+	ImagePng(Cow<'a, [u8]>),
 	/// "image/jpg", "image/jpeg"
-	ImageJpg(Vec<u8>),
+	ImageJpg(Cow<'a, [u8]>),
 	/// "image/gif"
-	ImageGif(Vec<u8>),
+	ImageGif(Cow<'a, [u8]>),
 	/// "image/svg+xml"
-	ImageSvg(String),
+	ImageSvg(Cow<'a, str>),
 	/// "application/javascript"
-	ApplicationJavascript(String),
+	ApplicationJavascript(Cow<'a, str>),
 	/// "application/json"
-	ApplicationJson(String),
+	ApplicationJson(Cow<'a, str>),
 	/// "application/octet-stream"
-	ApplicationOctetStream(Vec<u8>),
+	ApplicationOctetStream(Cow<'a, [u8]>),
 }
-impl CustomItem {
+impl<'main> CustomItem<'main> {
 	/// The MIME type of this item
 	pub fn media_type(&self) -> &'static str {
 		match self {
@@ -226,39 +226,39 @@ impl CustomItem {
 	}
 
 	pub fn is_supported_text_type(media_type: &str) -> bool {
-		Self::from_text_media_type(String::new(), media_type).is_some()
+		Self::from_text_media_type("", media_type).is_some()
 	}
 
 	pub fn is_supported_octet_type(media_type: &str) -> bool {
-		Self::from_octet_media_type(Vec::new(), media_type).is_some()
+		Self::from_octet_media_type(&[], media_type).is_some()
 	}
 
 	/// Return None if the `media_type` is not a supported text format, returns Some otherwise.
-	pub fn from_text_media_type(data: String, media_type: &str) -> Option<CustomItem> {
+	pub fn from_text_media_type<'a>(data: &'a str, media_type: &str) -> Option<CustomItem<'a>> {
 		match media_type {
-			"text/plain" => Some(CustomItem::TextPlain(data)),
-			"text/uri-list" => Some(CustomItem::TextUriList(data)),
-			"text/csv" => Some(CustomItem::TextCsv(data)),
-			"text/css" => Some(CustomItem::TextCss(data)),
-			"text/html" => Some(CustomItem::TextHtml(data)),
-			"text/xml" => Some(CustomItem::TextXml(data)),
-			"application/xml" => Some(CustomItem::TextXml(data)),
-			"application/xhtml+xml" => Some(CustomItem::ApplicationXhtml(data)),
-			"image/svg+xml" => Some(CustomItem::ImageSvg(data)),
-			"application/javascript" => Some(CustomItem::ApplicationJavascript(data)),
-			"application/json" => Some(CustomItem::ApplicationJson(data)),
+			"text/plain" => Some(CustomItem::TextPlain(data.into())),
+			"text/uri-list" => Some(CustomItem::TextUriList(data.into())),
+			"text/csv" => Some(CustomItem::TextCsv(data.into())),
+			"text/css" => Some(CustomItem::TextCss(data.into())),
+			"text/html" => Some(CustomItem::TextHtml(data.into())),
+			"text/xml" => Some(CustomItem::TextXml(data.into())),
+			"application/xml" => Some(CustomItem::TextXml(data.into())),
+			"application/xhtml+xml" => Some(CustomItem::ApplicationXhtml(data.into())),
+			"image/svg+xml" => Some(CustomItem::ImageSvg(data.into())),
+			"application/javascript" => Some(CustomItem::ApplicationJavascript(data.into())),
+			"application/json" => Some(CustomItem::ApplicationJson(data.into())),
 			_ => None,
 		}
 	}
 
 	/// Return None if the `media_type` is not a supported binary format, returns Some otherwise.
-	pub fn from_octet_media_type(data: Vec<u8>, media_type: &str) -> Option<CustomItem> {
+	pub fn from_octet_media_type<'a>(data: &'a [u8], media_type: &str) -> Option<CustomItem<'a>> {
 		match media_type {
-			"image/png" => Some(CustomItem::ImagePng(data)),
-			"image/jpg" => Some(CustomItem::ImageJpg(data)),
-			"image/jpeg" => Some(CustomItem::ImageJpg(data)),
-			"image/gif" => Some(CustomItem::ImageGif(data)),
-			"application/octet-stream" => Some(CustomItem::ApplicationOctetStream(data)),
+			"image/png" => Some(CustomItem::ImagePng(data.into())),
+			"image/jpg" => Some(CustomItem::ImageJpg(data.into())),
+			"image/jpeg" => Some(CustomItem::ImageJpg(data.into())),
+			"image/gif" => Some(CustomItem::ImageGif(data.into())),
+			"application/octet-stream" => Some(CustomItem::ApplicationOctetStream(data.into())),
 			_ => None,
 		}
 	}

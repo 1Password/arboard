@@ -310,7 +310,7 @@ impl WindowsClipboardContext {
 		result
 	}
 
-	pub(crate) fn set_custom(&mut self, _items: Vec<CustomItem>) -> Result<(), Error> {
+	pub(crate) fn set_custom(&mut self, _items: &[CustomItem]) -> Result<(), Error> {
 		todo!()
 	}
 
@@ -344,7 +344,7 @@ impl WindowsClipboardContext {
 }
 
 /// This function requires that the clipboard is open when it's called.
-fn convert_native_cb_data(format: UINT) -> Option<CustomItem> {
+fn convert_native_cb_data(format: UINT) -> Option<CustomItem<'static>> {
 	match format {
 		// A bitmap may contain PNG or JPG encoded data
 		// TODO HANDLE THIS LATER
@@ -385,16 +385,14 @@ fn convert_native_cb_data(format: UINT) -> Option<CustomItem> {
 			match get_string() {
 				Ok(string) => {
 					let crlf = line_endings_to_crlf(&string);
-					let string = if let Cow::Borrowed(br_str) = crlf {
-						if (br_str as *const str) == (string.as_ref() as *const str) {
-							string
-						} else {
-							crlf.into_owned()
-						}
+					let string = if let Cow::Borrowed(_) = crlf {
+						// The only way crlf can be borrowed is if it references
+						// `string`
+						string
 					} else {
 						crlf.into_owned()
 					};
-					Some(CustomItem::TextPlain(string))
+					Some(CustomItem::TextPlain(string.into()))
 				}
 				Err(e) => {
 					warn!("Failed to get the contents of a CF_UNICODETEXT clipboard item. Error was: {}", e);
@@ -420,7 +418,7 @@ fn convert_native_cb_data(format: UINT) -> Option<CustomItem> {
 	}
 }
 
-fn convert_non_system_clipboard_data(format: UINT, format_name: &OsStr) -> Option<CustomItem> {
+fn convert_non_system_clipboard_data(format: UINT, format_name: &OsStr) -> Option<CustomItem<'static>> {
 	if format_name == "HTML Format" {
 		// This is the official HTML format on Windows
 		// See: https://docs.microsoft.com/en-us/previous-versions/windows/internet-explorer/ie-developer/platform-apis/aa767917(v=vs.85)?redirectedfrom=MSDN
@@ -429,30 +427,30 @@ fn convert_non_system_clipboard_data(format: UINT, format_name: &OsStr) -> Optio
 	} else if format_name == "text/html" {
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
-			convert_clipboard_text(data, "text/html", |s| CustomItem::TextHtml(s))
+			convert_clipboard_text(data, "text/html", |s| CustomItem::TextHtml(s.into()))
 		})
 	} else if format_name == "text/csv" {
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
-			convert_clipboard_text(data, "text/csv", |s| CustomItem::TextCsv(s))
+			convert_clipboard_text(data, "text/csv", |s| CustomItem::TextCsv(s.into()))
 		})
 	} else if format_name == "text/css" {
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
-			convert_clipboard_text(data, "text/css", |s| CustomItem::TextCss(s))
+			convert_clipboard_text(data, "text/css", |s| CustomItem::TextCss(s.into()))
 		})
 	} else if format_name == "application/xhtml+xml" {
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
 			convert_clipboard_app_text(data, "application/xhtml+xml", |s| {
-				CustomItem::ApplicationXhtml(s.into_owned())
+				CustomItem::ApplicationXhtml(s.to_string().into())
 			})
 		})
 	} else if format_name == "application/xml" || format_name == "text/xml" {
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
 			convert_clipboard_app_text(data, "text/csv", |s| {
-				CustomItem::TextXml(line_endings_to_crlf(s.as_ref()).into_owned())
+				CustomItem::TextXml(line_endings_to_crlf(s.as_ref()).to_string().into())
 			})
 		})
 	} else if format_name == "SVG Image" || format_name == "image/svg+xml" {
@@ -460,7 +458,7 @@ fn convert_non_system_clipboard_data(format: UINT, format_name: &OsStr) -> Optio
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
 			convert_clipboard_app_text(data, "image/svg+xml", |s| {
-				CustomItem::ImageSvg(s.into_owned())
+				CustomItem::ImageSvg(s.to_string().into())
 			})
 		})
 	} else if format_name == "application/javascript" {
@@ -468,7 +466,7 @@ fn convert_non_system_clipboard_data(format: UINT, format_name: &OsStr) -> Optio
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
 			convert_clipboard_app_text(data, "application/javascript", |s| {
-				CustomItem::ApplicationJavascript(s.into_owned())
+				CustomItem::ApplicationJavascript(s.to_string().into())
 			})
 		})
 	} else if format_name == "application/json" {
@@ -476,7 +474,7 @@ fn convert_non_system_clipboard_data(format: UINT, format_name: &OsStr) -> Optio
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
 			convert_clipboard_app_text(data, "application/json", |s| {
-				CustomItem::ApplicationJson(s.into_owned())
+				CustomItem::ApplicationJson(s.to_string().into())
 			})
 		})
 	} else if format_name == "application/octet-stream" {
@@ -490,7 +488,7 @@ fn convert_non_system_clipboard_data(format: UINT, format_name: &OsStr) -> Optio
 					return None;
 				}
 			};
-			Some(CustomItem::ApplicationOctetStream(data.into()))
+			Some(CustomItem::ApplicationOctetStream(data.to_owned().into()))
 		})
 	} else {
 		None
@@ -534,7 +532,7 @@ fn read_html_int_field(line: &str, name_w_colon: &str) -> Option<i32> {
 	}
 }
 // Converts a clipboard item with the format CF_HTML to HTML text
-fn convert_clipboard_html(html_data: Result<&[u8], &str>) -> Option<CustomItem> {
+fn convert_clipboard_html(html_data: Result<&[u8], &str>) -> Option<CustomItem<'static>> {
 	let html_data = match html_data {
 		Ok(d) => d,
 		Err(e) => {
@@ -586,7 +584,11 @@ fn convert_clipboard_html(html_data: Result<&[u8], &str>) -> Option<CustomItem> 
 			return None;
 		}
 		let html_text = &data_str[start_fragment..end_fragment];
-		Some(CustomItem::TextHtml(line_endings_to_crlf(html_text).into_owned()))
+
+		// For some reason the compiler is only happy if there's this immediate step
+		// where the object is a String
+		let owned_text: String = line_endings_to_crlf(html_text).into_owned();
+		Some(CustomItem::TextHtml(owned_text.into()))
 	} else {
 		warn!("Couldn't find either the `StartHTML` or the `StartFragment` field in the CF_HTML clipboard item");
 		None
@@ -597,9 +599,9 @@ fn convert_clipboard_text<F>(
 	data: Result<&[u8], &str>,
 	data_type: &str,
 	mapper: F,
-) -> Option<CustomItem>
+) -> Option<CustomItem<'static>>
 where
-	F: FnOnce(String) -> CustomItem,
+	F: FnOnce(String) -> CustomItem<'static>,
 {
 	let data = match data {
 		Ok(d) => d,
@@ -623,9 +625,9 @@ fn convert_clipboard_app_text<F>(
 	data: Result<&[u8], &str>,
 	data_type: &str,
 	mapper: F,
-) -> Option<CustomItem>
+) -> Option<CustomItem<'static>>
 where
-	F: FnOnce(Cow<'_, str>) -> CustomItem,
+	F: FnOnce(Cow<'_, str>) -> CustomItem<'static>,
 {
 	let data = match data {
 		Ok(d) => d,
@@ -648,7 +650,7 @@ where
 	Some(mapper(string))
 }
 
-fn convert_clipboard_hdrop(clipboard_data: HANDLE) -> Option<CustomItem> {
+fn convert_clipboard_hdrop(clipboard_data: HANDLE) -> Option<CustomItem<'static>> {
 	if clipboard_data.is_null() {
 		warn!("Failed to convert a CF_HDROP item, because the data was NULL");
 		return None;
@@ -707,5 +709,5 @@ fn convert_clipboard_hdrop(clipboard_data: HANDLE) -> Option<CustomItem> {
 			result.push_str("\r\n");
 		}
 	}
-	Some(CustomItem::TextUriList(result))
+	Some(CustomItem::TextUriList(result.into()))
 }
