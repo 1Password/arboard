@@ -9,16 +9,10 @@ use objc::{
 };
 
 use core_graphics::base::CGFloat;
-use core_services::{kUTTagClassMIMEType, CFStringRef};
 
 use crate::CustomItem;
 
 use super::{NSPasteboardTypeHTML, NSPasteboardTypePNG, NSPasteboardTypeString};
-
-#[link(name = "CoreServices", kind = "framework")]
-extern "C" {
-	fn UTTypeCopyPreferredTagWithClass(inUTI: CFStringRef, inTagClass: CFStringRef) -> CFStringRef;
-}
 
 /// As defined in:
 /// https://developer.apple.com/documentation/foundation/1497293-string_encodings/nsutf8stringencoding
@@ -60,6 +54,10 @@ pub static TEXT_HTML_PBT: Lazy<ConstObject> = Lazy::new(|| {
 	let uti = mime_to_pasteboard("text/html");
 	ConstObject(uti)
 });
+pub static TEXT_XML_PBT: Lazy<ConstObject> = Lazy::new(|| {
+	let uti = mime_to_pasteboard("text/xml");
+	ConstObject(uti)
+});
 pub static APPLICATION_XHTML_PBT: Lazy<ConstObject> = Lazy::new(|| {
 	let uti = mime_to_pasteboard("application/xhtml+xml");
 	ConstObject(uti)
@@ -79,10 +77,6 @@ pub static IMAGE_GIF_PBT: Lazy<ConstObject> = Lazy::new(|| {
 });
 pub static IMAGE_SVG_PBT: Lazy<ConstObject> = Lazy::new(|| {
 	let uti = mime_to_pasteboard("image/svg+xml");
-	ConstObject(uti)
-});
-pub static APPLICATION_XML_PBT: Lazy<ConstObject> = Lazy::new(|| {
-	let uti = mime_to_pasteboard("application/xml");
 	ConstObject(uti)
 });
 pub static APPLICATION_JAVASCRIPT_PBT: Lazy<ConstObject> = Lazy::new(|| {
@@ -115,21 +109,11 @@ pub unsafe fn pasteboard_type_to_mime(pb_type: *const Object) -> String {
 	if is_png == YES {
 		return "image/png".into();
 	}
-	let cf_media = {
-		// NSString and CFString have the same memory layout
-		UTTypeCopyPreferredTagWithClass(pb_type as *const _, kUTTagClassMIMEType)
-	};
-	let ns_media = cf_media as *const Object;
-	let mime_len: usize = msg_send![ns_media, length];
-	if mime_len == 0 {
-		// it could be that the raw pasteboard type string was itself
-		// a MIME type string (instead of a UTI string), in which case
-		// the conversion returns an empty string.
-		// In this case we should just report the raw pasteboard type
-		// as the mime type.
-		return ns_string_to_rust(pb_type);
-	}
-	ns_string_to_rust(ns_media)
+	// This function used to use `UTTypeCopyPreferredTagWithClass`, but that is deprecated and it
+	// isn't clear whether the returned string should be released. In my experience the mime type
+	// is simply specified as the pasteboard type itself for non-system-native formats so there
+	// shouldn't be a need to use `UTTypeCopyPreferredTagWithClass` anyways.
+	ns_string_to_rust(pb_type)
 }
 
 /// Converts the format specified by the custom item into a
@@ -142,12 +126,12 @@ pub fn item_to_pasteboard_type(item: &CustomItem) -> *const Object {
 			CustomItem::TextCsv(_) => TEXT_CSV_PBT.0,
 			CustomItem::TextCss(_) => TEXT_CSS_PBT.0,
 			CustomItem::TextHtml(_) => NSPasteboardTypeHTML,
+			CustomItem::TextXml(_) => TEXT_XML_PBT.0,
 			CustomItem::ApplicationXhtml(_) => APPLICATION_XHTML_PBT.0,
 			CustomItem::ImagePng(_) => NSPasteboardTypePNG,
 			CustomItem::ImageJpg(_) => IMAGE_JPG_PBT.0,
 			CustomItem::ImageGif(_) => IMAGE_GIF_PBT.0,
 			CustomItem::ImageSvg(_) => IMAGE_SVG_PBT.0,
-			CustomItem::ApplicationXml(_) => APPLICATION_XML_PBT.0,
 			CustomItem::ApplicationJavascript(_) => APPLICATION_JAVASCRIPT_PBT.0,
 			CustomItem::ApplicationJson(_) => APPLICATION_JSON_PBT.0,
 			CustomItem::ApplicationOctetStream(_) => APPLICATION_OCTET_STREAM_PBT.0,
@@ -176,6 +160,7 @@ pub fn ns_string_from_rust(string: &str) -> *mut Object {
 	}
 }
 
+/// Safety: `string` is assumed to be a pointer to an `NSString`
 pub unsafe fn ns_string_to_rust(string: *const Object) -> String {
 	let data: *mut Object = msg_send![string, dataUsingEncoding: NSUTF8StringEncoding];
 	let len: usize = msg_send![data, length];

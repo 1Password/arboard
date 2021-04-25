@@ -42,7 +42,6 @@ objc_id = "0.1"
 objc-foundation = "0.1"
 core-graphics = "0.22"
 core-foundation = "0.9"
-core-services = "0.2"
 #cocoa = "0.24"
 image = { version = "0.23", default-features = false, features = ["tiff"] }
 

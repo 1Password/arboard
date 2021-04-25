@@ -101,7 +101,7 @@ impl Clipboard {
 	/// Places a list of representations of the same object onto the clipboard.
 	///
 	/// Each `CustomItem` is one representation of the object.
-	pub fn set_custom(&mut self, items: Vec<CustomItem>) -> Result<(), Error> {
+	pub fn set_custom(&mut self, items: &[CustomItem]) -> Result<(), Error> {
 		self.platform.set_custom(items)
 	}
 

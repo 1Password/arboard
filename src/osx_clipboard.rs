@@ -8,14 +8,14 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use std::{ffi::c_void, io::Cursor, mem::transmute, slice};
-
+use log::debug;
 use objc::{
 	class, msg_send,
 	runtime::{Class, Object, BOOL, NO, YES},
 	sel, sel_impl,
 };
 use objc_id::{Id, Owned};
+use std::{borrow::Cow, collections::HashSet, ffi::c_void, io::Cursor, mem::transmute, slice};
 
 use objc_foundation::{INSArray, INSObject, INSString, NSArray, NSDictionary, NSObject, NSString};
 
@@ -28,6 +28,8 @@ use core_graphics::{
 use util::{nil, ns_string_to_rust};
 
 //use cocoa::appkit::NSPasteboardItem;
+
+use crate::common::line_endings_to_crlf;
 
 use super::common::{CustomItem, Error, ImageData};
 
@@ -271,7 +273,7 @@ impl OSXClipboardContext {
 		Ok(())
 	}
 
-	pub(crate) fn set_custom(&mut self, items: Vec<CustomItem>) -> Result<(), Error> {
+	pub(crate) fn set_custom(&mut self, items: &[CustomItem]) -> Result<(), Error> {
 		// let item_iter = items.into_iter();
 
 		//let arr_cls = class!(NSArray);
@@ -303,17 +305,24 @@ impl OSXClipboardContext {
 		// `NSArray` of `NSPasteboardType`s (aka `NSString`)
 		let types: *const Object = unsafe { msg_send![self.pasteboard, types] };
 		let type_count: usize = unsafe { msg_send![types, count] };
+		// This is just in case multiple pasteboard types map to the same media type
+		// for example "text/xml" and "application/xml"
+		let mut media_types = HashSet::<&'static str>::new();
 		let mut result = Vec::with_capacity(type_count);
 		for i in 0..type_count {
 			let pb_type: *const Object = unsafe { msg_send![types, objectAtIndex: i] };
-			println!("Raw type: '{}'", unsafe { ns_string_to_rust(pb_type) });
+			debug!("Pasteboard type: '{}'", unsafe { ns_string_to_rust(pb_type) });
 			let mime = unsafe { pasteboard_type_to_mime(pb_type) };
-			//println!("clb data: '{}'", mime);
+			if media_types.contains(mime.as_str()) {
+				continue;
+			}
 			if CustomItem::is_supported_text_type(&mime) {
 				let text: *const Object =
 					unsafe { msg_send![self.pasteboard, stringForType: pb_type] };
 				let data = unsafe { ns_string_to_rust(text) };
+				let data = line_endings_to_crlf(&data).into_owned();
 				if let Some(item) = CustomItem::from_text_media_type(data, &mime) {
+					media_types.insert(item.media_type());
 					result.push(item);
 				}
 			} else if CustomItem::is_supported_octet_type(&mime) {
@@ -323,6 +332,7 @@ impl OSXClipboardContext {
 				let bytes: *const c_void = unsafe { msg_send![ns_data, bytes] };
 				let slice = unsafe { slice::from_raw_parts(bytes as *const u8, len) };
 				if let Some(item) = CustomItem::from_octet_media_type(slice.to_vec(), &mime) {
+					media_types.insert(item.media_type());
 					result.push(item);
 				}
 			}
@@ -330,22 +340,36 @@ impl OSXClipboardContext {
 		Ok(result)
 	}
 
-	fn set_item_for_format(&self, item: CustomItem) -> Result<(), Error> {
-		match &item {
-			CustomItem::TextPlain(text) => self.set_string_for_custom_format(&item, text),
-			CustomItem::TextUriList(text) => self.set_string_for_custom_format(&item, text),
-			CustomItem::TextCsv(text) => self.set_string_for_custom_format(&item, text),
-			CustomItem::TextHtml(text) => self.set_string_for_custom_format(&item, text),
-			CustomItem::ImageSvg(text) => self.set_string_for_custom_format(&item, text),
-			CustomItem::ApplicationXml(text) => self.set_string_for_custom_format(&item, text),
-			CustomItem::ApplicationJson(text) => self.set_string_for_custom_format(&item, text),
+	fn set_item_for_format(&self, item: &CustomItem) -> Result<(), Error> {
+		match item {
+			CustomItem::TextPlain(text) => {
+				// There's a native format for this (NSPasteboardTypeString), so we convert line
+				// endings to platform-native
+				let as_lf = line_endings_to_lf(text);
+				self.set_string_as_raw(item, as_lf.as_ref())
+			}
+			CustomItem::TextUriList(text) => self.set_string_as_crlf(item, text),
+			CustomItem::TextCsv(text) => self.set_string_as_crlf(item, text),
+			CustomItem::TextHtml(text) => {
+				// There's a native format for this (NSPasteboardTypeHTML), so we convert line
+				// endings to platform-native
+				let as_lf = line_endings_to_lf(text);
+				self.set_string_as_raw(item, as_lf.as_ref())
+			}
+			CustomItem::TextXml(text) => self.set_string_as_crlf(item, text),
+			CustomItem::ImageSvg(text) => self.set_string_as_raw(item, text),
+			CustomItem::ApplicationJson(text) => self.set_string_as_raw(item, text),
 			_ => Err(Error::ConversionFailure),
 		}
 	}
 
-	fn set_string_for_custom_format(&self, item: &CustomItem, string: &str) -> Result<(), Error> {
+	fn set_string_as_crlf(&self, item: &CustomItem, string: &str) -> Result<(), Error> {
+		let string = line_endings_to_crlf(string);
+		self.set_string_as_raw(item, string.as_ref())
+	}
+	fn set_string_as_raw(&self, item: &CustomItem, string: &str) -> Result<(), Error> {
 		let uti = util::item_to_pasteboard_type(item);
-		println!("Setting string for UTI: '{}'", unsafe { ns_string_to_rust(uti) });
+		debug!("Setting string for UTI: '{}'", unsafe { ns_string_to_rust(uti) });
 		let ns_str = NSString::from_str(&string);
 		let success: BOOL = unsafe { msg_send![self.pasteboard, setString:ns_str forType: uti] };
 		if success == YES {
@@ -357,6 +381,13 @@ impl OSXClipboardContext {
 			})
 		}
 	}
+}
+
+fn line_endings_to_lf<'a>(text: &'a str) -> Cow<'a, str> {
+	// TODO a custom implementation, similar to that of `line_endings_to_crlf` would be more
+	// efficient and require less memory
+	let as_crlf = line_endings_to_crlf(text);
+	as_crlf.replace("\r\n", "\n").into()
 }
 
 // this is a convenience function that both cocoa-rs and

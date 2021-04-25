@@ -14,6 +14,6 @@ fn main() {
     ";
 	//let custom_item = CustomItem::ImageSvg(data.into());
 	let custom_item = CustomItem::ImageSvg(data.into());
-	ctx.set_custom(vec![custom_item]).unwrap();
+	ctx.set_custom(&[custom_item]).unwrap();
 	println!("Succesfully set custom data!");
 }
