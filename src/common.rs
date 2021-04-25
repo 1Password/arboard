@@ -226,39 +226,40 @@ impl<'main> CustomItem<'main> {
 	}
 
 	pub fn is_supported_text_type(media_type: &str) -> bool {
-		Self::from_text_media_type("", media_type).is_some()
+		Self::from_text_media_type("".into(), media_type).is_some()
 	}
 
 	pub fn is_supported_octet_type(media_type: &str) -> bool {
-		Self::from_octet_media_type(&[], media_type).is_some()
+		let empty: &[u8] = &[];
+		Self::from_octet_media_type(empty.into(), media_type).is_some()
 	}
 
 	/// Return None if the `media_type` is not a supported text format, returns Some otherwise.
-	pub fn from_text_media_type<'a>(data: &'a str, media_type: &str) -> Option<CustomItem<'a>> {
+	pub fn from_text_media_type<'a>(data: Cow<'a, str>, media_type: &str) -> Option<CustomItem<'a>> {
 		match media_type {
-			"text/plain" => Some(CustomItem::TextPlain(data.into())),
-			"text/uri-list" => Some(CustomItem::TextUriList(data.into())),
-			"text/csv" => Some(CustomItem::TextCsv(data.into())),
-			"text/css" => Some(CustomItem::TextCss(data.into())),
-			"text/html" => Some(CustomItem::TextHtml(data.into())),
-			"text/xml" => Some(CustomItem::TextXml(data.into())),
-			"application/xml" => Some(CustomItem::TextXml(data.into())),
-			"application/xhtml+xml" => Some(CustomItem::ApplicationXhtml(data.into())),
-			"image/svg+xml" => Some(CustomItem::ImageSvg(data.into())),
-			"application/javascript" => Some(CustomItem::ApplicationJavascript(data.into())),
-			"application/json" => Some(CustomItem::ApplicationJson(data.into())),
+			"text/plain" => Some(CustomItem::TextPlain(data)),
+			"text/uri-list" => Some(CustomItem::TextUriList(data)),
+			"text/csv" => Some(CustomItem::TextCsv(data)),
+			"text/css" => Some(CustomItem::TextCss(data)),
+			"text/html" => Some(CustomItem::TextHtml(data)),
+			"text/xml" => Some(CustomItem::TextXml(data)),
+			"application/xml" => Some(CustomItem::TextXml(data)),
+			"application/xhtml+xml" => Some(CustomItem::ApplicationXhtml(data)),
+			"image/svg+xml" => Some(CustomItem::ImageSvg(data)),
+			"application/javascript" => Some(CustomItem::ApplicationJavascript(data)),
+			"application/json" => Some(CustomItem::ApplicationJson(data)),
 			_ => None,
 		}
 	}
 
 	/// Return None if the `media_type` is not a supported binary format, returns Some otherwise.
-	pub fn from_octet_media_type<'a>(data: &'a [u8], media_type: &str) -> Option<CustomItem<'a>> {
+	pub fn from_octet_media_type<'a>(data: Cow<'a, [u8]>, media_type: &str) -> Option<CustomItem<'a>> {
 		match media_type {
-			"image/png" => Some(CustomItem::ImagePng(data.into())),
-			"image/jpg" => Some(CustomItem::ImageJpg(data.into())),
-			"image/jpeg" => Some(CustomItem::ImageJpg(data.into())),
-			"image/gif" => Some(CustomItem::ImageGif(data.into())),
-			"application/octet-stream" => Some(CustomItem::ApplicationOctetStream(data.into())),
+			"image/png" => Some(CustomItem::ImagePng(data)),
+			"image/jpg" => Some(CustomItem::ImageJpg(data)),
+			"image/jpeg" => Some(CustomItem::ImageJpg(data)),
+			"image/gif" => Some(CustomItem::ImageGif(data)),
+			"application/octet-stream" => Some(CustomItem::ApplicationOctetStream(data)),
 			_ => None,
 		}
 	}

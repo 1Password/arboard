@@ -301,7 +301,7 @@ impl OSXClipboardContext {
 		Ok(())
 	}
 
-	pub fn get_all(&mut self) -> Result<Vec<CustomItem>, Error> {
+	pub fn get_all(&mut self) -> Result<Vec<CustomItem<'static>>, Error> {
 		// `NSArray` of `NSPasteboardType`s (aka `NSString`)
 		let types: *const Object = unsafe { msg_send![self.pasteboard, types] };
 		let type_count: usize = unsafe { msg_send![types, count] };
@@ -320,7 +320,7 @@ impl OSXClipboardContext {
 				let text: *const Object =
 					unsafe { msg_send![self.pasteboard, stringForType: pb_type] };
 				let data = unsafe { ns_string_to_rust(text) };
-				let data = line_endings_to_crlf(&data).into_owned();
+				let data: Cow<'static, _> = line_endings_to_crlf(&data).to_string().into();
 				if let Some(item) = CustomItem::from_text_media_type(data, &mime) {
 					media_types.insert(item.media_type());
 					result.push(item);
@@ -331,7 +331,8 @@ impl OSXClipboardContext {
 				let len: usize = unsafe { msg_send![ns_data, length] };
 				let bytes: *const c_void = unsafe { msg_send![ns_data, bytes] };
 				let slice = unsafe { slice::from_raw_parts(bytes as *const u8, len) };
-				if let Some(item) = CustomItem::from_octet_media_type(slice.to_vec(), &mime) {
+				let data: Cow<'static, _> = slice.to_vec().into();
+				if let Some(item) = CustomItem::from_octet_media_type(data, &mime) {
 					media_types.insert(item.media_type());
 					result.push(item);
 				}
