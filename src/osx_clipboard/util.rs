@@ -121,7 +121,7 @@ pub unsafe fn pasteboard_type_to_mime(pb_type: *const Object) -> String {
 pub fn item_to_pasteboard_type(item: &CustomItem) -> *const Object {
 	unsafe {
 		match item {
-			CustomItem::TextPlain(_) => NSPasteboardTypeString,
+			CustomItem::Text(_) => NSPasteboardTypeString,
 			CustomItem::TextUriList(_) => TEXT_URI_LIST_PBT.0,
 			CustomItem::TextCsv(_) => TEXT_CSV_PBT.0,
 			CustomItem::TextCss(_) => TEXT_CSS_PBT.0,

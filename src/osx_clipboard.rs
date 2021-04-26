@@ -343,11 +343,10 @@ impl OSXClipboardContext {
 
 	fn set_item_for_format(&self, item: &CustomItem) -> Result<(), Error> {
 		match item {
-			CustomItem::TextPlain(text) => {
+			CustomItem::Text(text) => {
 				// There's a native format for this (NSPasteboardTypeString), so we convert line
 				// endings to platform-native
-				let as_lf = line_endings_to_lf(text);
-				self.set_string_as_raw(item, as_lf.as_ref())
+				self.set_string_as_raw(item, text.as_ref())
 			}
 			CustomItem::TextUriList(text) => self.set_string_as_crlf(item, text),
 			CustomItem::TextCsv(text) => self.set_string_as_crlf(item, text),
