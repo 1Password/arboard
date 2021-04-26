@@ -150,9 +150,15 @@ impl<'a> ImageData<'a> {
 /// Clipboard APIs document.
 /// <https://www.w3.org/TR/2021/WD-clipboard-apis-20210203/#mandatory-data-types>
 ///
+/// Whenever possible, an item is mapped to/from the platform native format
+/// which represents the item's format. For example, on Windows the
+/// [`TextUriList`](Self::TextUriList) variant is converted to/from the
+/// `CF_HDROP` format.
+///
 /// ### Line breaks
 /// When receiving data from the clipboard all "text/" media types terminate
-/// lines with CRLF (`"\r\n"`) as per RFC 2046.
+/// lines with CRLF (`"\r\n"`) as per RFC 2046. The [`Text`](CustomItem::Text)
+/// variant is an exception to this.
 ///
 /// When setting the clipboard contents, all line endings in "text/" formats are
 /// converted to CRLF (or the system native format), so it's valid to provide
@@ -160,55 +166,59 @@ impl<'a> ImageData<'a> {
 /// these (mixing them).
 #[derive(Debug, Clone)]
 pub enum CustomItem<'a> {
-	/// "text/plain"
+	/// Represents generic text.
 	///
-	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
-	TextPlain(Cow<'a, str>),
-	/// "text/uri-list"
+	/// Note that this does *not* conform to the "text/plain" media type,
+	/// because this type allows any kind of line break.
+	Text(Cow<'a, str>),
+	/// Represents "text/uri-list"
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
 	TextUriList(Cow<'a, str>),
-	/// "text/csv"
+	/// Represents "text/csv"
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
 	TextCsv(Cow<'a, str>),
-	/// "text/css"
+	/// Represents "text/css"
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
 	TextCss(Cow<'a, str>),
-	/// "text/html"
+	/// Represents "text/html"
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
 	TextHtml(Cow<'a, str>),
-	/// "text/xml"
+	/// Represents "text/xml"
 	///
 	/// Data coming from the clipboard in "application/xml" format,
 	/// is automaticaly converted to this ("text/xml").
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
 	TextXml(Cow<'a, str>),
-	/// "application/xhtml+xml"
+	/// Represents "application/xhtml+xml"
 	ApplicationXhtml(Cow<'a, str>),
-	/// "image/png"
+	/// Represents "image/png"
 	ImagePng(Cow<'a, [u8]>),
-	/// "image/jpg", "image/jpeg"
+	/// Represents "image/jpg" and "image/jpeg"
 	ImageJpg(Cow<'a, [u8]>),
-	/// "image/gif"
+	/// Represents "image/gif"
 	ImageGif(Cow<'a, [u8]>),
-	/// "image/svg+xml"
+	/// Represents "image/svg+xml"
 	ImageSvg(Cow<'a, str>),
-	/// "application/javascript"
+	/// Represents "application/javascript"
 	ApplicationJavascript(Cow<'a, str>),
-	/// "application/json"
+	/// Represents "application/json"
 	ApplicationJson(Cow<'a, str>),
-	/// "application/octet-stream"
+	/// Represents "application/octet-stream"
 	ApplicationOctetStream(Cow<'a, [u8]>),
 }
 impl<'main> CustomItem<'main> {
-	/// The MIME type of this item
+	/// A string identifier for the item.
+	///
+	/// For most items this is the MIME type, but there's one exception, the
+	/// [`Text`](Self::Text) variant, for which this returns "arboard-text".
 	pub fn media_type(&self) -> &'static str {
 		match self {
-			CustomItem::TextPlain(_) => "text/plain",
+			CustomItem::Text(_) => "arboard-text",
 			CustomItem::TextUriList(_) => "text/uri-list",
 			CustomItem::TextCsv(_) => "text/csv",
 			CustomItem::TextCss(_) => "text/css",
@@ -234,19 +244,22 @@ impl<'main> CustomItem<'main> {
 		Self::from_octet_media_type(empty.into(), media_type).is_some()
 	}
 
-	/// Return None if the `media_type` is not a supported text format, returns Some otherwise.
+	/// Returns None if the `media_type` is not a supported text format, returns
+	/// Some otherwise.
+	///
+	/// This will return [`Text`](Self::Text) if either of `"text/plain"` or
+	/// `"arboard-text"` is specified.
 	pub fn from_text_media_type<'a>(
 		data: Cow<'a, str>,
 		media_type: &str,
 	) -> Option<CustomItem<'a>> {
 		match media_type {
-			"text/plain" => Some(CustomItem::TextPlain(data)),
+			"text/plain" | "arboard-text" => Some(CustomItem::Text(data)),
 			"text/uri-list" => Some(CustomItem::TextUriList(data)),
 			"text/csv" => Some(CustomItem::TextCsv(data)),
 			"text/css" => Some(CustomItem::TextCss(data)),
 			"text/html" => Some(CustomItem::TextHtml(data)),
-			"text/xml" => Some(CustomItem::TextXml(data)),
-			"application/xml" => Some(CustomItem::TextXml(data)),
+			"text/xml" | "application/xml" => Some(CustomItem::TextXml(data)),
 			"application/xhtml+xml" => Some(CustomItem::ApplicationXhtml(data)),
 			"image/svg+xml" => Some(CustomItem::ImageSvg(data)),
 			"application/javascript" => Some(CustomItem::ApplicationJavascript(data)),

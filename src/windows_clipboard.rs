@@ -383,17 +383,7 @@ fn convert_native_cb_data(format: UINT) -> Option<CustomItem<'static>> {
 		CF_TIFF => None,
 		CF_UNICODETEXT => {
 			match get_string() {
-				Ok(string) => {
-					let crlf = line_endings_to_crlf(&string);
-					let string = if let Cow::Borrowed(_) = crlf {
-						// The only way crlf can be borrowed is if it references
-						// `string`
-						string
-					} else {
-						crlf.into_owned()
-					};
-					Some(CustomItem::TextPlain(string.into()))
-				}
+				Ok(string) => Some(CustomItem::Text(string.into())),
 				Err(e) => {
 					warn!("Failed to get the contents of a CF_UNICODETEXT clipboard item. Error was: {}", e);
 					None
