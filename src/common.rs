@@ -179,7 +179,7 @@ pub enum CustomItem<'a> {
 	/// this format. This avoids the extra step of encoding the image into PNG
 	/// or JPG when that's not needed.
 	///
-	/// Note that this does not correspond to any mime type.
+	/// Note that this does *not* correspond to any mime type.
 	RawImage(ImageData<'a>),
 	/// Represents "text/uri-list"
 	///

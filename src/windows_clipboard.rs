@@ -253,36 +253,7 @@ impl WindowsClipboardContext {
 	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
 			.map_err(|_| Error::ClipboardOccupied)?;
-		let format = clipboard_win::formats::CF_DIB;
-		let size;
-		match clipboard_win::raw::size(format) {
-			Some(s) => size = s,
-			None => return Err(Error::ContentNotAvailable),
-		}
-		let mut data = vec![0u8; size.into()];
-		clipboard_win::raw::get(format, &mut data).map_err(|_| Error::Unknown {
-			description: "failed to get image data from the clipboard".into(),
-		})?;
-		let info_header_size = u32::from_le_bytes(data[..4].try_into().unwrap());
-		let mut fake_bitmap_file =
-			FakeBitmapFile { bitmap: data, file_header: [0; BITMAP_FILE_HEADER_SIZE], curr_pos: 0 };
-		fake_bitmap_file.file_header[0] = b'B';
-		fake_bitmap_file.file_header[1] = b'M';
-
-		let file_size =
-			u32::to_le_bytes((fake_bitmap_file.bitmap.len() + BITMAP_FILE_HEADER_SIZE) as u32);
-		fake_bitmap_file.file_header[2..6].copy_from_slice(&file_size);
-
-		let data_offset = u32::to_le_bytes(info_header_size + BITMAP_FILE_HEADER_SIZE as u32);
-		fake_bitmap_file.file_header[10..14].copy_from_slice(&data_offset);
-
-		let bmp_decoder = BmpDecoder::new(fake_bitmap_file).unwrap();
-		let (w, h) = bmp_decoder.dimensions();
-		let width = w as usize;
-		let height = h as usize;
-		let image =
-			image::DynamicImage::from_decoder(bmp_decoder).map_err(|_| Error::ConversionFailure)?;
-		Ok(ImageData { width, height, bytes: Cow::from(image.into_rgba8().into_raw()) })
+		get_image_from_dib()
 	}
 	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		//let clipboard = SystemClipboard::new()?;
@@ -320,13 +291,19 @@ impl WindowsClipboardContext {
 	}
 
 	pub(crate) fn get_all(&mut self) -> Result<Vec<CustomItem>, Error> {
+		let raw_img_mime = CustomItem::RawImage(ImageData{
+			width: 0,
+			height: 0,
+			bytes: (&[] as &[u8]).into()
+		}).media_type();
+
 		// Using this to open, and automatically close the clipboard on return
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
 			.map_err(|_| Error::ClipboardOccupied)?;
 
 		let mut items = Vec::new();
 		let mut item_mime_types = HashSet::new();
-
+		let mut has_raw_image = false;
 		let mut format = 0;
 		loop {
 			// `EnumClipboardFormats` not only enumerates the forats that the owner placed onto the clipboard,
@@ -337,11 +314,15 @@ impl WindowsClipboardContext {
 				break;
 			}
 			trace!("Clipboard format: {}", format);
-			if let Some(item) = convert_native_cb_data(format) {
+			let allow_raw_image = !has_raw_image;
+			if let Some(item) = convert_native_cb_data(format, allow_raw_image) {
 				let mime_type = item.media_type();
 				if !item_mime_types.contains(mime_type) {
 					item_mime_types.insert(mime_type);
 					items.push(item);
+					if mime_type == raw_img_mime {
+						has_raw_image = true;
+					}
 				}
 			}
 		}
@@ -350,15 +331,31 @@ impl WindowsClipboardContext {
 }
 
 /// This function requires that the clipboard is open when it's called.
-fn convert_native_cb_data(format: UINT) -> Option<CustomItem<'static>> {
+fn convert_native_cb_data(format: UINT, allow_raw_image: bool) -> Option<CustomItem<'static>> {
 	match format {
 		// A bitmap may contain PNG or JPG encoded data
 		// TODO HANDLE THIS LATER
 		CF_BITMAP => {
-			let hbitmap = unsafe { GetClipboardData(format) };
-			convert_clipboard_bitmap(hbitmap as HBITMAP)
+			if allow_raw_image {
+				let hbitmap = unsafe { GetClipboardData(format) };
+				convert_clipboard_bitmap(hbitmap as HBITMAP)
+			} else {
+				None
+			}
 		}
-		CF_DIB => None,
+		CF_DIB => {
+			if allow_raw_image {
+				match get_image_from_dib() {
+					Ok(img) => Some(CustomItem::RawImage(img)),
+					Err(e) => {
+						warn!("Failed to process CF_DIB image: {}", e);
+						None
+					}
+				}
+			} else {
+				None
+			}
+		},
 		CF_DIBV5 => None,
 
 		CF_DIF => None,
@@ -716,6 +713,40 @@ fn create_bitmap_info_struct(hbmp: HBITMAP) -> Result<*mut BITMAPINFO, &'static 
 	}
 }
 
+/// Assumes that the clipboard is open.
+fn get_image_from_dib() -> Result<ImageData<'static>, Error> {
+	let format = clipboard_win::formats::CF_DIB;
+	let size;
+	match clipboard_win::raw::size(format) {
+		Some(s) => size = s,
+		None => return Err(Error::ContentNotAvailable),
+	}
+	let mut data = vec![0u8; size.into()];
+	clipboard_win::raw::get(format, &mut data).map_err(|_| Error::Unknown {
+		description: "failed to get image data from the clipboard".into(),
+	})?;
+	let info_header_size = u32::from_le_bytes(data[..4].try_into().unwrap());
+	let mut fake_bitmap_file =
+		FakeBitmapFile { bitmap: data, file_header: [0; BITMAP_FILE_HEADER_SIZE], curr_pos: 0 };
+	fake_bitmap_file.file_header[0] = b'B';
+	fake_bitmap_file.file_header[1] = b'M';
+
+	let file_size =
+		u32::to_le_bytes((fake_bitmap_file.bitmap.len() + BITMAP_FILE_HEADER_SIZE) as u32);
+	fake_bitmap_file.file_header[2..6].copy_from_slice(&file_size);
+
+	let data_offset = u32::to_le_bytes(info_header_size + BITMAP_FILE_HEADER_SIZE as u32);
+	fake_bitmap_file.file_header[10..14].copy_from_slice(&data_offset);
+
+	let bmp_decoder = BmpDecoder::new(fake_bitmap_file).unwrap();
+	let (w, h) = bmp_decoder.dimensions();
+	let width = w as usize;
+	let height = h as usize;
+	let image =
+		image::DynamicImage::from_decoder(bmp_decoder).map_err(|_| Error::ConversionFailure)?;
+	Ok(ImageData { width, height, bytes: Cow::from(image.into_rgba8().into_raw()) })
+}
+
 /// Converts from CF_BITMAP
 fn convert_clipboard_bitmap(data: HBITMAP) -> Option<CustomItem<'static>> {
 	// According to MSDN, in the GetDIBits function:
@@ -760,24 +791,6 @@ fn convert_clipboard_bitmap(data: HBITMAP) -> Option<CustomItem<'static>> {
 	}
 	debug!("Reported img size after info query {:#?}", info.bmiHeader.biSizeImage);
 
-	// // Let's do a size query
-	// // We want the rows (scanlines) in a top-down order.
-	// info.bmiHeader.biHeight = -info.bmiHeader.biHeight.abs();
-	// info.bmiHeader.biPlanes = 1;
-	// info.bmiHeader.biBitCount = 32;
-	// info.bmiHeader.biCompression = BI_RGB; // This also applies to rgba
-	// info.bmiHeader.biClrUsed = 0;
-	// info.bmiHeader.biClrImportant = 0;
-	// let res = unsafe {
-	// 	GetDIBits(dc, data as HBITMAP, 0, info.bmiHeader.biHeight as u32, null_mut(), &mut info as *mut _, DIB_RGB_COLORS)
-	// };
-	// if res == 0 {
-	// 	let err = unsafe { GetLastError() };
-	// 	warn!("Size querying `GetDIBits` returned zero - GetLastError returned: {}", err);
-	// 	return None;
-	// }
-	// debug!("Reported img size after size query {:#?}", info.bmiHeader.biSizeImage);
-
 	info.bmiHeader.biHeight = -info.bmiHeader.biHeight.abs();
 	info.bmiHeader.biPlanes = 1;
 	info.bmiHeader.biBitCount = 32;
@@ -803,65 +816,40 @@ fn convert_clipboard_bitmap(data: HBITMAP) -> Option<CustomItem<'static>> {
 	}
 	unsafe { img_bytes.set_len(info.bmiHeader.biSizeImage as usize) };
 
+	// Now convert the Windows-provided BGRA into RGBA
+	for pixel in img_bytes.chunks_mut(4) {
+		// Just swap red and blue
+		let b = pixel[0];
+		let r = pixel[2];
+		pixel[0] = r;
+		pixel[2] = b;
+	}
 	let result_img = ImageData {
 		width: info.bmiHeader.biWidth as usize,
 		height: info.bmiHeader.biHeight.abs() as usize,
 		bytes: img_bytes.into(),
 	};
 	return Some(CustomItem::RawImage(result_img));
-	// return Some(CustomItem::RawImage(img_bytes.into()));
 
-	// let bmp_info_ptr = match create_bitmap_info_struct(data) {
-	// 	Ok(i) => i,
-	// 	Err(e) => {
-	// 		let err = unsafe { GetLastError() };
-	// 		warn!("{} - GetLastError returned: {}", e, err);
-	// 		return None;
-	// 	}
-	// };
-	// defer!(unsafe {
-	// 	LocalFree(bmp_info_ptr as *mut _);
-	// });
-	// let header = unsafe { &mut (*bmp_info_ptr).bmiHeader };
-
-	// let dc = unsafe { GetDC(null_mut()) };
-	// let res = unsafe {
-	// 	GetDIBits(
-	// 		dc,
-	// 		data as HBITMAP,
-	// 		0,
-	// 		header.biHeight as u32,
-	// 		img_bytes.as_mut_ptr(),
-	// 		bmp_info_ptr,
-	// 		DIB_RGB_COLORS,
-	// 	)
-	// };
-
-	// let src_bytes_per_pixel = bitmap.bmBitsPixel / 8;
-	// // let w = bitmap.bmWidth as usize;
-	// // let h = bitmap.bmHeight as usize;
-	// let pixel_count = bitmap.bmWidth as usize * bitmap.bmHeight as usize;
-	// for pix_id in 0..pixel_count {
-	// 	// let mut dst_bytes_remaining = 4 - src_bytes_per_pixel;
-	// 	for offset in src_bytes_per_pixel..3 {
-	// 		// fill out the remaining rgb bytes with zeroes
-	// 	}
-	// 	// fill out the alpha with 255
-	// }
-
-	// let mut meh = Vec::new();
-	// let mut enc = image::png::PngEncoder::new_with_quality(
-	// 	&mut meh,
+	// let mut png_bytes = Vec::new();
+	// let enc = image::png::PngEncoder::new_with_quality(
+	// 	&mut png_bytes,
 	// 	image::png::CompressionType::Fast,
 	// 	image::png::FilterType::NoFilter,
 	// );
-
-	// let result_img = ImageData {
-	// 	width: bitmap.bmWidth as usize,
-	// 	height: bitmap.bmHeight as usize,
-	// 	bytes: img_bytes.into(),
-	// };
-	// Some(CustomItem::RawImage(result_img))
+	// let start = std::time::Instant::now();
+	// let res = enc.encode(
+	// 	&img_bytes,
+	// 	info.bmiHeader.biWidth as u32,
+	// 	info.bmiHeader.biHeight.abs() as u32,
+	// 	ColorType::Rgba8,
+	// );
+	// if let Err(e) = res {
+	// 	warn!("Failed to encode the clipboard image as a png, error was: {}", e);
+	// 	return None;
+	// }
+	// debug!("Encoded into png in {}s", start.elapsed().as_secs_f32());
+	// Some(CustomItem::ImagePng(png_bytes.into()))
 }
 
 fn convert_clipboard_hdrop(clipboard_data: HANDLE) -> Option<CustomItem<'static>> {

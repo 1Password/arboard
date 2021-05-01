@@ -23,11 +23,12 @@ fn main() {
 			}
 			CustomItem::ImagePng(img) => {
 				continue;
-				// let name = "clipboard.png";
-				// std::fs::write(name, img.as_ref()).unwrap();
-				// println!("PNG written to {}", name);
+				let name = "clipboard.png";
+				std::fs::write(name, img.as_ref()).unwrap();
+				println!("PNG written to {}", name);
 			}
 			CustomItem::RawImage(img) => {
+				// continue;
 				let name = "clipboard.png";
 				image::save_buffer_with_format(
 					name,
