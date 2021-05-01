@@ -14,11 +14,12 @@ use std::{
 	convert::TryInto,
 	ffi::{OsStr, OsString},
 	io::{self, Read, Seek},
+	mem::{size_of, MaybeUninit},
 	os::windows::ffi::OsStringExt,
 	ptr::{null, null_mut},
 };
 
-use log::{debug, warn};
+use log::{debug, trace, warn};
 
 use clipboard_win::Clipboard as SystemClipboard;
 use image::{
@@ -28,21 +29,25 @@ use image::{
 use scopeguard::defer;
 use winapi::{
 	shared::{
-		minwindef::{DWORD, UINT},
+		minwindef::{DWORD, UINT, WORD},
 		ntdef::HANDLE,
+		windef::HBITMAP,
 	},
 	um::{
+		errhandlingapi::GetLastError,
+		minwinbase::LPTR,
 		shellapi::{DragQueryFileW, HDROP},
 		stringapiset::WideCharToMultiByte,
-		winbase::{GlobalLock, GlobalSize, GlobalUnlock},
+		winbase::{GlobalLock, GlobalSize, GlobalUnlock, LocalAlloc, LocalFree},
 		wingdi::{
-			CreateDIBitmap, DeleteObject, BITMAPV4HEADER, BI_BITFIELDS, CBM_INIT, CIEXYZTRIPLE,
-			DIB_RGB_COLORS,
+			CreateDIBitmap, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
+			BITMAPINFOHEADER, BITMAPV4HEADER, BI_BITFIELDS, BI_PNG, BI_RGB, CBM_INIT, CIEXYZTRIPLE,
+			DIB_RGB_COLORS, PBITMAPINFO, RGBQUAD,
 		},
 		winnls::CP_UTF8,
 		winnt::LONG,
 		winuser::{
-			EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW, GetDC,
+			EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW, GetDC, ReleaseDC,
 			SetClipboardData, CF_BITMAP, CF_DIB, CF_DIBV5, CF_DIF, CF_DSPBITMAP, CF_DSPENHMETAFILE,
 			CF_DSPMETAFILEPICT, CF_DSPTEXT, CF_ENHMETAFILE, CF_GDIOBJFIRST, CF_GDIOBJLAST,
 			CF_HDROP, CF_LOCALE, CF_METAFILEPICT, CF_OEMTEXT, CF_OWNERDISPLAY, CF_PALETTE,
@@ -331,6 +336,7 @@ impl WindowsClipboardContext {
 			if format == 0 {
 				break;
 			}
+			trace!("Clipboard format: {}", format);
 			if let Some(item) = convert_native_cb_data(format) {
 				let mime_type = item.media_type();
 				if !item_mime_types.contains(mime_type) {
@@ -348,7 +354,10 @@ fn convert_native_cb_data(format: UINT) -> Option<CustomItem<'static>> {
 	match format {
 		// A bitmap may contain PNG or JPG encoded data
 		// TODO HANDLE THIS LATER
-		CF_BITMAP => None,
+		CF_BITMAP => {
+			let hbitmap = unsafe { GetClipboardData(format) };
+			convert_clipboard_bitmap(hbitmap as HBITMAP)
+		}
 		CF_DIB => None,
 		CF_DIBV5 => None,
 
@@ -455,7 +464,6 @@ fn convert_non_system_clipboard_data(
 			})
 		})
 	} else if format_name == "application/javascript" {
-		// "SVG Image" is the name used on windows according to: https://www.iana.org/assignments/media-types/image/svg+xml
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
 			convert_clipboard_app_text(data, "application/javascript", |s| {
@@ -463,7 +471,6 @@ fn convert_non_system_clipboard_data(
 			})
 		})
 	} else if format_name == "application/json" {
-		// "SVG Image" is the name used on windows according to: https://www.iana.org/assignments/media-types/image/svg+xml
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
 			convert_clipboard_app_text(data, "application/json", |s| {
@@ -471,7 +478,6 @@ fn convert_non_system_clipboard_data(
 			})
 		})
 	} else if format_name == "application/octet-stream" {
-		// "SVG Image" is the name used on windows according to: https://www.iana.org/assignments/media-types/image/svg+xml
 		let handle = unsafe { GetClipboardData(format) };
 		with_clipboard_data(handle, |data| {
 			let data = match data {
@@ -641,6 +647,221 @@ where
 		}
 	};
 	Some(mapper(string))
+}
+
+/// It's the caller's responsibility to free the returned pointer, using `LocalFree`
+///
+/// Source: https://docs.microsoft.com/en-us/windows/win32/gdi/storing-an-image
+fn create_bitmap_info_struct(hbmp: HBITMAP) -> Result<*mut BITMAPINFO, &'static str> {
+	unsafe {
+		// Retrieve the bitmap color format, width, and height.
+		let mut bmp = MaybeUninit::<BITMAP>::uninit();
+		if 0 == GetObjectW(hbmp as *mut _, size_of::<BITMAP>() as i32, bmp.as_mut_ptr() as *mut _) {
+			return Err("GetObjectW returned 0");
+		}
+		let bmp = bmp.assume_init();
+		// Convert the color format to a count of bits.
+		let mut clr_bits = (bmp.bmPlanes * bmp.bmBitsPixel) as WORD;
+
+		// PBITMAPINFO pbmi;
+		if clr_bits == 1 {
+			clr_bits = 1;
+		} else if clr_bits <= 4 {
+			clr_bits = 4;
+		} else if clr_bits <= 8 {
+			clr_bits = 8;
+		} else if clr_bits <= 16 {
+			clr_bits = 16;
+		} else if clr_bits <= 24 {
+			clr_bits = 24;
+		} else {
+			clr_bits = 32;
+		}
+
+		// Allocate memory for the BITMAPINFO structure. (This structure
+		// contains a BITMAPINFOHEADER structure and an array of RGBQUAD
+		// data structures.)
+		let pbmi = if clr_bits < 24 {
+			LocalAlloc(LPTR, size_of::<BITMAPINFOHEADER>() + size_of::<RGBQUAD>() * (1 << clr_bits))
+				as PBITMAPINFO
+		} else {
+			// There is no RGBQUAD array for these formats: 24-bit-per-pixel or 32-bit-per-pixel
+			LocalAlloc(LPTR, size_of::<BITMAPINFOHEADER>()) as PBITMAPINFO
+		};
+
+		// Initialize the fields in the BITMAPINFO structure.
+		(*pbmi).bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
+		(*pbmi).bmiHeader.biWidth = bmp.bmWidth;
+		(*pbmi).bmiHeader.biHeight = bmp.bmHeight;
+		(*pbmi).bmiHeader.biPlanes = bmp.bmPlanes;
+		(*pbmi).bmiHeader.biBitCount = bmp.bmBitsPixel;
+		if clr_bits < 24 {
+			(*pbmi).bmiHeader.biClrUsed = 1 << clr_bits;
+		}
+
+		// If the bitmap is not compressed, set the BI_RGB flag.
+		(*pbmi).bmiHeader.biCompression = BI_RGB;
+
+		// Compute the number of bytes in the array of color
+		// indices and store the result in biSizeImage.
+		// The width must be DWORD aligned unless the bitmap is RLE
+		// compressed.
+		let bytes_per_scanline = (((*pbmi).bmiHeader.biWidth * clr_bits as i32 + 31) & !31) / 8;
+		(*pbmi).bmiHeader.biSizeImage =
+			bytes_per_scanline as u32 * (*pbmi).bmiHeader.biHeight as u32;
+		// Set biClrImportant to 0, indicating that all of the
+		// device colors are important.
+		(*pbmi).bmiHeader.biClrImportant = 0;
+		Ok(pbmi)
+	}
+}
+
+/// Converts from CF_BITMAP
+fn convert_clipboard_bitmap(data: HBITMAP) -> Option<CustomItem<'static>> {
+	// According to MSDN, in the GetDIBits function:
+	//
+	// If lpvBits is NULL and the bit count member of BITMAPINFO is initialized
+	// to zero, GetDIBits fills in a BITMAPINFOHEADER structure or
+	// BITMAPCOREHEADER without the color table. This technique can be used to
+	// query bitmap attributes.
+	//
+	// Source: https://docs.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-getdibits
+	let mut info = BITMAPINFO {
+		bmiColors: [RGBQUAD { rgbRed: 0, rgbGreen: 0, rgbBlue: 0, rgbReserved: 0 }],
+		bmiHeader: BITMAPINFOHEADER {
+			biSize: size_of::<BITMAPINFOHEADER>() as u32,
+			biBitCount: 0,
+			biSizeImage: 0,
+			biWidth: 0,
+			biHeight: 0,
+			biClrImportant: 0,
+			biClrUsed: 0,
+			biCompression: BI_RGB,
+			biPlanes: 0,
+			biXPelsPerMeter: 0,
+			biYPelsPerMeter: 0,
+		},
+	};
+	let dc = unsafe { GetDC(null_mut()) };
+	if dc.is_null() {
+		warn!("`GetDC` returned NULL");
+		return None;
+	}
+	defer!(unsafe {
+		ReleaseDC(null_mut(), dc);
+	});
+	let res = unsafe {
+		GetDIBits(dc, data as HBITMAP, 0, 0, null_mut(), &mut info as *mut _, DIB_RGB_COLORS)
+	};
+	if res == 0 {
+		let err = unsafe { GetLastError() };
+		warn!("Info querying `GetDIBits` returned zero - GetLastError returned: {}", err);
+		return None;
+	}
+	debug!("Reported img size after info query {:#?}", info.bmiHeader.biSizeImage);
+
+	// // Let's do a size query
+	// // We want the rows (scanlines) in a top-down order.
+	// info.bmiHeader.biHeight = -info.bmiHeader.biHeight.abs();
+	// info.bmiHeader.biPlanes = 1;
+	// info.bmiHeader.biBitCount = 32;
+	// info.bmiHeader.biCompression = BI_RGB; // This also applies to rgba
+	// info.bmiHeader.biClrUsed = 0;
+	// info.bmiHeader.biClrImportant = 0;
+	// let res = unsafe {
+	// 	GetDIBits(dc, data as HBITMAP, 0, info.bmiHeader.biHeight as u32, null_mut(), &mut info as *mut _, DIB_RGB_COLORS)
+	// };
+	// if res == 0 {
+	// 	let err = unsafe { GetLastError() };
+	// 	warn!("Size querying `GetDIBits` returned zero - GetLastError returned: {}", err);
+	// 	return None;
+	// }
+	// debug!("Reported img size after size query {:#?}", info.bmiHeader.biSizeImage);
+
+	info.bmiHeader.biHeight = -info.bmiHeader.biHeight.abs();
+	info.bmiHeader.biPlanes = 1;
+	info.bmiHeader.biBitCount = 32;
+	info.bmiHeader.biCompression = BI_RGB; // This also applies to rgba
+	info.bmiHeader.biClrUsed = 0;
+	info.bmiHeader.biClrImportant = 0;
+	let mut img_bytes = Vec::<u8>::with_capacity(info.bmiHeader.biSizeImage as usize);
+	let res = unsafe {
+		GetDIBits(
+			dc,
+			data as HBITMAP,
+			0,
+			info.bmiHeader.biHeight as u32,
+			img_bytes.as_mut_ptr() as *mut _,
+			&mut info as *mut _,
+			DIB_RGB_COLORS,
+		)
+	};
+	if res == 0 {
+		let err = unsafe { GetLastError() };
+		warn!("Data querying `GetDIBits` returned zero - GetLastError returned: {}", err);
+		return None;
+	}
+	unsafe { img_bytes.set_len(info.bmiHeader.biSizeImage as usize) };
+
+	let result_img = ImageData {
+		width: info.bmiHeader.biWidth as usize,
+		height: info.bmiHeader.biHeight.abs() as usize,
+		bytes: img_bytes.into(),
+	};
+	return Some(CustomItem::RawImage(result_img));
+	// return Some(CustomItem::RawImage(img_bytes.into()));
+
+	// let bmp_info_ptr = match create_bitmap_info_struct(data) {
+	// 	Ok(i) => i,
+	// 	Err(e) => {
+	// 		let err = unsafe { GetLastError() };
+	// 		warn!("{} - GetLastError returned: {}", e, err);
+	// 		return None;
+	// 	}
+	// };
+	// defer!(unsafe {
+	// 	LocalFree(bmp_info_ptr as *mut _);
+	// });
+	// let header = unsafe { &mut (*bmp_info_ptr).bmiHeader };
+
+	// let dc = unsafe { GetDC(null_mut()) };
+	// let res = unsafe {
+	// 	GetDIBits(
+	// 		dc,
+	// 		data as HBITMAP,
+	// 		0,
+	// 		header.biHeight as u32,
+	// 		img_bytes.as_mut_ptr(),
+	// 		bmp_info_ptr,
+	// 		DIB_RGB_COLORS,
+	// 	)
+	// };
+
+	// let src_bytes_per_pixel = bitmap.bmBitsPixel / 8;
+	// // let w = bitmap.bmWidth as usize;
+	// // let h = bitmap.bmHeight as usize;
+	// let pixel_count = bitmap.bmWidth as usize * bitmap.bmHeight as usize;
+	// for pix_id in 0..pixel_count {
+	// 	// let mut dst_bytes_remaining = 4 - src_bytes_per_pixel;
+	// 	for offset in src_bytes_per_pixel..3 {
+	// 		// fill out the remaining rgb bytes with zeroes
+	// 	}
+	// 	// fill out the alpha with 255
+	// }
+
+	// let mut meh = Vec::new();
+	// let mut enc = image::png::PngEncoder::new_with_quality(
+	// 	&mut meh,
+	// 	image::png::CompressionType::Fast,
+	// 	image::png::FilterType::NoFilter,
+	// );
+
+	// let result_img = ImageData {
+	// 	width: bitmap.bmWidth as usize,
+	// 	height: bitmap.bmHeight as usize,
+	// 	bytes: img_bytes.into(),
+	// };
+	// Some(CustomItem::RawImage(result_img))
 }
 
 fn convert_clipboard_hdrop(clipboard_data: HANDLE) -> Option<CustomItem<'static>> {

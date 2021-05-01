@@ -171,6 +171,16 @@ pub enum CustomItem<'a> {
 	/// Note that this does *not* conform to the "text/plain" media type,
 	/// because this type allows any kind of line break.
 	Text(Cow<'a, str>),
+
+	/// Represents a pixel buffer.
+	///
+	/// An image may be on the clipboard in a format other than PNG, GIF, or
+	/// JPG. In these cases, the `get_all` function might return the data in
+	/// this format. This avoids the extra step of encoding the image into PNG
+	/// or JPG when that's not needed.
+	///
+	/// Note that this does not correspond to any mime type.
+	RawImage(ImageData<'a>),
 	/// Represents "text/uri-list"
 	///
 	/// WARNING: Line breaks are CRLF. See the documentation of [`CustomItem`].
@@ -214,11 +224,15 @@ pub enum CustomItem<'a> {
 impl<'main> CustomItem<'main> {
 	/// A string identifier for the item.
 	///
-	/// For most items this is the MIME type, but there's one exception, the
-	/// [`Text`](Self::Text) variant, for which this returns "arboard-text".
+	/// For most items this is the MIME type, but there are exceptions:
+	/// - The [`Text`](Self::Text) variant, for which this returns
+	///   "arboard-text".
+	/// - The [`RawImage`](Self::RawImage) variant, for which this returns
+	///   "arboard-image".
 	pub fn media_type(&self) -> &'static str {
 		match self {
 			CustomItem::Text(_) => "arboard-text",
+			CustomItem::RawImage(_) => "arboard-image",
 			CustomItem::TextUriList(_) => "text/uri-list",
 			CustomItem::TextCsv(_) => "text/csv",
 			CustomItem::TextCss(_) => "text/css",

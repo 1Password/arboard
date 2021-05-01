@@ -24,6 +24,8 @@ env_logger = "0.8.3"
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = [
     "basetsd",
+    "errhandlingapi",
+    "minwinbase",
     "minwindef",
     "shellapi",
     "stringapiset",
@@ -34,7 +36,7 @@ winapi = { version = "0.3.9", features = [
 ]}
 scopeguard = "1.1.0"
 clipboard-win = "4.0"
-image = { version = "0.23.14", default-features = false, features = ["bmp"] }
+image = { version = "0.23.14", default-features = false, features = ["bmp", "png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
