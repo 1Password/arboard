@@ -11,28 +11,39 @@ and conditions of the chosen license apply to this file.
 use std::{
 	borrow::Cow,
 	collections::HashSet,
-	ffi::{OsStr, OsString},
-	os::windows::ffi::OsStringExt,
+	ffi::{c_void, OsStr, OsString},
+	mem::size_of,
+	os::windows::ffi::{OsStrExt, OsStringExt},
+	ptr::copy_nonoverlapping,
 	ptr::{null, null_mut},
 };
 
 use log::{debug, trace, warn};
 
-use clipboard_win::Clipboard as SystemClipboard;
+use clipboard_win::{raw::set_string, Clipboard as SystemClipboard};
 use scopeguard::defer;
 use winapi::{
-	shared::{minwindef::UINT, ntdef::HANDLE, windef::HBITMAP},
+	shared::{
+		minwindef::{BOOL, DWORD, FALSE, HGLOBAL, UINT},
+		ntdef::HANDLE,
+		windef::{HBITMAP, HENHMETAFILE, POINT},
+		wtypes::HMETAFILEPICT,
+		wtypesbase::LPOLESTR,
+	},
 	um::{
+		errhandlingapi::GetLastError,
+		objidl::TYMED_HGLOBAL,
 		shellapi::{DragQueryFileW, HDROP},
 		stringapiset::WideCharToMultiByte,
-		winbase::{GlobalLock, GlobalSize, GlobalUnlock},
+		winbase::{GlobalAlloc, GlobalFree, GlobalLock, GlobalSize, GlobalUnlock, GHND},
 		winnls::CP_UTF8,
 		winuser::{
-			EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW, CF_BITMAP, CF_DIB,
-			CF_DIBV5, CF_DIF, CF_DSPBITMAP, CF_DSPENHMETAFILE, CF_DSPMETAFILEPICT, CF_DSPTEXT,
-			CF_ENHMETAFILE, CF_GDIOBJFIRST, CF_GDIOBJLAST, CF_HDROP, CF_LOCALE, CF_METAFILEPICT,
-			CF_OEMTEXT, CF_OWNERDISPLAY, CF_PALETTE, CF_PENDATA, CF_PRIVATEFIRST, CF_PRIVATELAST,
-			CF_RIFF, CF_SYLK, CF_TEXT, CF_TIFF, CF_UNICODETEXT, CF_WAVE,
+			EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardFormatNameW,
+			RegisterClipboardFormatW, SetClipboardData, CF_BITMAP, CF_DIB, CF_DIBV5, CF_DIF,
+			CF_DSPBITMAP, CF_DSPENHMETAFILE, CF_DSPMETAFILEPICT, CF_DSPTEXT, CF_ENHMETAFILE,
+			CF_GDIOBJFIRST, CF_GDIOBJLAST, CF_HDROP, CF_LOCALE, CF_METAFILEPICT, CF_OEMTEXT,
+			CF_OWNERDISPLAY, CF_PALETTE, CF_PENDATA, CF_PRIVATEFIRST, CF_PRIVATELAST, CF_RIFF,
+			CF_SYLK, CF_TEXT, CF_TIFF, CF_UNICODETEXT, CF_WAVE,
 		},
 	},
 };
@@ -43,6 +54,36 @@ use crate::common::{
 
 mod bitmap;
 use bitmap::{add_cf_bitmap, convert_clipboard_bitmap, get_image_from_dib, image_to_dib};
+
+// This is not defined by winapi-rs
+#[allow(non_snake_case)]
+#[repr(C)]
+struct DROPFILES {
+	pFiles: DWORD,
+	pt: POINT,
+	fNC: BOOL,
+	fWide: BOOL,
+}
+
+// STG medium seems to be incorrectly defined in winapi
+#[allow(non_snake_case)]
+#[repr(C)]
+union STGMEDIUM_u {
+	hBitmap: HBITMAP,
+	hMetaFilePict: HMETAFILEPICT,
+	hEnhMetaFile: HENHMETAFILE,
+	hGlobal: HGLOBAL,
+	lpszFileName: LPOLESTR,
+	pstm: *mut c_void,
+	pstg: *mut c_void,
+}
+#[allow(non_snake_case)]
+#[repr(C)]
+struct STGMEDIUM {
+	tymed: DWORD,
+	u: STGMEDIUM_u,
+	pUnkForRelease: *mut c_void,
+}
 
 const MAX_OPEN_ATTEMPTS: usize = 5;
 
@@ -137,6 +178,12 @@ impl WindowsClipboardContext {
 		let mut result: Result<(), Error> = Ok(());
 		//let mut success = false;
 		clipboard_win::with_clipboard(|| {
+			if let Err(e) =  clipboard_win::raw::empty() {
+				result = Err(Error::Unknown {
+					description: format!("Couldn't empty the clipboard. Error was: {:?}", e)
+				});
+				return;
+			}
 			let success = clipboard_win::raw::set(dib.format(), dib.dib_bytes()).is_ok();
 			let bitmap_result = unsafe { add_cf_bitmap(&image) };
 			if bitmap_result.is_err() && !success {
@@ -150,8 +197,84 @@ impl WindowsClipboardContext {
 		result
 	}
 
-	pub(crate) fn set_custom(&mut self, _items: &[CustomItem]) -> Result<(), Error> {
-		todo!()
+	pub(crate) fn set_custom(&mut self, items: &[CustomItem]) -> Result<(), Error> {
+		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
+			.map_err(|_| Error::ClipboardOccupied)?;
+		if 0 == unsafe { EmptyClipboard() } {
+			return Err(Error::Unknown { description: "EmptyClipboard returned 0".into() });
+		}
+		for item in items {
+			match item {
+				CustomItem::Text(text) => {
+					if let Err(e) = set_string(text.as_ref()) {
+						warn!("Failed to put text onto the clipboard, error was: {:?}", e);
+					}
+				}
+				CustomItem::TextUriList(text) => {
+					let h_mem = match urilist_to_hdrop(text) {
+						Ok(handle) => handle,
+						Err(e) => {
+							warn!("Failed to put a uri list onto the clipboard: {}", e);
+							continue;
+						}
+					};
+					let res = unsafe { SetClipboardData(CF_HDROP, h_mem) };
+					if res.is_null() {
+						let err = unsafe { GetLastError() };
+						warn!("Failed to put a uri list onto the clipboard. SetClipboardData returned null. GetLastError returned: {}", err);
+					}
+				}
+				CustomItem::TextCsv(text) => {
+					let text = line_endings_to_crlf(text);
+					let format_name = item.media_type();
+					if let Err(e) = place_utf8_onto_clipboard(format_name, text.as_ref()) {
+						warn!("Failed to put a {} onto the clipboard. {}", format_name, e);
+					}
+				}
+				CustomItem::TextHtml(html) => {
+					if let Err(e) = place_html_onto_clipboard(html) {
+						warn!("Failed to put an HTML item onto the clipboard. {}", e);
+					}
+				}
+				CustomItem::ImageSvg(data) => {
+					let format_name = item.media_type();
+					if let Err(e) = place_utf8_onto_clipboard(format_name, data.as_ref()) {
+						warn!("Failed to put an {} item onto the clipboard. {}", format_name, e);
+					}
+				}
+				CustomItem::TextXml(data) => {
+					let data = line_endings_to_crlf(data);
+					let format_name = item.media_type();
+					if let Err(e) = place_utf8_onto_clipboard(format_name, data.as_ref()) {
+						warn!("Failed to put an {} item onto the clipboard. {}", format_name, e);
+					}
+				}
+				CustomItem::ApplicationJson(data) => {
+					// Not ensuring CRLF line endings because this is not a "text/" media type
+					let format_name = item.media_type();
+					if let Err(e) = place_utf8_onto_clipboard(format_name, data.as_ref()) {
+						warn!("Failed to put an {} item onto the clipboard. {}", format_name, e);
+					}
+				}
+				CustomItem::RawImage(image) => {
+					match image_to_dib(image) {
+						Ok(dib) => {
+							if let Err(e) = clipboard_win::raw::set(dib.format(), dib.dib_bytes()) {
+								warn!("Failed to set the image as a DIB. {}", e);
+							}
+						}
+						Err(e) => {
+							warn!("Failed to convert the image to DIB. {}", e);
+						}
+					}
+					if let Err(e) = unsafe { add_cf_bitmap(image) } {
+						warn!("Failed to set the image a CF_BITMAP. {}", e);
+					}
+				}
+				_ => warn!("The Clipboard item with media type '{}' is not supported to be placed onto the clipboard", item.media_type()),
+			}
+		}
+		Ok(())
 	}
 
 	pub(crate) fn get_all(&mut self) -> Result<Vec<CustomItem>, Error> {
@@ -190,6 +313,181 @@ impl WindowsClipboardContext {
 		}
 		Ok(items)
 	}
+}
+
+fn place_html_onto_clipboard(data: &str) -> Result<(), String> {
+	// See: https://docs.microsoft.com/en-us/previous-versions/windows/internet-explorer/ie-developer/platform-apis/aa767917(v=vs.85)?redirectedfrom=MSDN
+
+	// In the CF_HTML format, there's a header encoded in utf8 text (just like
+	// the rest of the HTML) which provides some information about the HTML that
+	// follows the header. The header contains fields which specify an offset in
+	// bytes, for where the actualy HTML content begins, counting from the
+	// beggining of the header. This is tricky because adding this value to the
+	// header might change the length of the header and thereby change the
+	// offset to the begginig of the content.
+	//
+	// We solve this by specifying a maximum header length, and just always
+	// assume the data starts after that maximum length. If the header is shorter
+	// than this maximum, we just pad the remaining bytes with whitespace, in
+	// order to reach the maximum.
+	let maximal_header = "Version:0.9\nStartHTML:-1\nEndHTML:-1\nStartFragment:123456789123\nEndFragment:123456789123\n";
+	let max_header_len = maximal_header.len();
+
+	let mut cf_html = String::with_capacity(max_header_len + data.len());
+	cf_html.push_str("Version:0.9\n");
+	cf_html.push_str("StartHTML:-1\n");
+	cf_html.push_str("EndHTML:-1\n");
+	cf_html.push_str(format!("StartFragment:{}\n", max_header_len).as_str());
+	cf_html.push_str(format!("EndFragment:{}\n", max_header_len + data.len()).as_str());
+
+	let actual_header_len = cf_html.len();
+	if actual_header_len > max_header_len {
+		return Err("HTML too large, the HTML text must be less than a 100 GBs".into());
+	}
+	let padding = max_header_len as i64 - actual_header_len as i64;
+	let space_padding = padding - 1;
+	for _ in 0..space_padding {
+		cf_html.push(' ');
+	}
+	if padding > 0 {
+		// We left one character from the padding so that we can close the padding with a line break
+		cf_html.push('\n');
+	}
+	cf_html.push_str(data);
+	place_utf8_onto_clipboard("HTML Format", &cf_html)
+}
+
+fn place_utf8_onto_clipboard(format_name: &str, data: &str) -> Result<(), String> {
+	let os_str = OsString::from(format_name);
+	let format_wstr: Vec<u16> = os_str.encode_wide().chain(std::iter::once(0)).collect();
+	let format = unsafe { RegisterClipboardFormatW(format_wstr.as_ptr()) };
+	if format == 0 {
+		let err = unsafe { GetLastError() };
+		return Err(format!("RegisterClipboardFormatW returned 0. GetLastError returned: {}", err));
+	}
+
+	// Let's include a terminating zero at the end of the string because we
+	// are nice to other programs, written in C :)
+	let len_with_zero = data.len() + 1;
+	let h_mem = unsafe { GlobalAlloc(GHND, len_with_zero) };
+	if h_mem.is_null() {
+		return Err("GlobalAlloc returned NULL.".into());
+	}
+
+	// We use use this scope to force unlocking the memory before we call the
+	// SetClipboardData
+	let h_mem = {
+		let dst_ptr = unsafe { GlobalLock(h_mem) as *mut u8 };
+		if dst_ptr.is_null() {
+			unsafe {
+				GlobalFree(h_mem);
+			}
+			return Err("GlobalLock returned NULL.".into());
+		}
+		defer!(unsafe {
+			GlobalUnlock(h_mem as *mut _);
+		});
+		unsafe {
+			copy_nonoverlapping(data.as_ptr(), dst_ptr, data.len());
+			// Add terminating zero
+			*dst_ptr.offset(data.len() as isize) = 0;
+		}
+		h_mem
+	};
+	let res = unsafe { SetClipboardData(format, h_mem) };
+	if res.is_null() {
+		let err = unsafe { GetLastError() };
+		return Err(format!("SetClipboardData returned NULL. GetLastError returned: {}", err));
+	}
+	Ok(())
+}
+
+const fn slice_bytes<T>(s: &[T]) -> usize {
+	s.len() * size_of::<T>()
+}
+
+/// Returns the handle to the global memory memory. When calling GlobalLock
+/// on this handle, GlobalLock returns an HDROP
+fn urilist_to_hdrop(text: &str) -> Result<HANDLE, &'static str> {
+	let file_scheme = "file://";
+	let mut wstr_files = Vec::<u16>::with_capacity(text.len());
+	for line in text.lines() {
+		trace!("Processing line in urilist_to_hdrop: '{}'", line);
+		if line.starts_with("#") {
+			trace!("Line started with a hashmark, it's a comment, skipping.");
+			continue;
+		}
+		if !line.starts_with(file_scheme) {
+			trace!("Line didn't start with a file scheme, skipping.");
+			continue;
+		}
+		let no_scheme = line.trim_start_matches(file_scheme);
+		// Let's skip the authority field
+		let path_start = match no_scheme.find("/") {
+			Some(i) => i,
+			None => {
+				warn!("The following was not a valid file URI. It's missing the starting '/' from the path. '{}'", line);
+				continue;
+			}
+		};
+		let win_path_start = path_start + 1; // Skip the '/' at the beginning
+		if win_path_start >= no_scheme.len() {
+			warn!("The path only seems to contain the '/' character after the authority field. Skipping");
+			continue;
+		}
+		let win_path = &no_scheme[win_path_start..];
+		let os_str = OsString::from(win_path);
+		let wide_str = os_str.encode_wide();
+		for ch in wide_str {
+			if ch == 0 {
+				break;
+			}
+			wstr_files.push(ch);
+		}
+		wstr_files.push(0);
+	}
+	wstr_files.push(0); // the list has to be double-null terminated.
+					// If there are elements in the uri list, then we already have at least one
+					// terminating zero at the end (the one that marks the end of the last item)
+					// However if there is no item in the list, then at this point there's only
+					// one "terminating zero" and so we have to append another make sure that
+					// there's always at least two.
+	wstr_files.push(0);
+
+	// The HDROP format is a peculiar creature. It starts with a DROPFILES
+	// struct which is then followed by a list of strings, each describing an
+	// absolute path to an item.
+	let drop_data_len = size_of::<DROPFILES>() + slice_bytes(&wstr_files);
+	let h_dropfiles = unsafe { GlobalAlloc(GHND, drop_data_len) };
+	if h_dropfiles.is_null() {
+		return Err(
+			"GlobalAlloc returned NULL from urilist_to_hdrop while allocation the DROPFILES",
+		);
+	}
+	let dropfiles = unsafe { GlobalLock(h_dropfiles) as *mut DROPFILES };
+	if dropfiles.is_null() {
+		unsafe {
+			GlobalFree(h_dropfiles);
+		}
+		return Err("GlobalLock returned NULL from urilist_to_hdrop while locking h_dropfiles");
+	}
+	defer!(unsafe {
+		GlobalUnlock(h_dropfiles as *mut _);
+	});
+	unsafe {
+		(*dropfiles).pFiles = size_of::<DROPFILES>() as u32;
+		(*dropfiles).pt.x = 0;
+		(*dropfiles).pt.y = 0;
+		(*dropfiles).fNC = FALSE; // Coordinates are relative to the receiver window's client area
+		(*dropfiles).fWide = 1; // The file urls are encoded as a wide character string
+		copy_nonoverlapping(
+			wstr_files.as_ptr(),
+			// Note that the offset is in units of DROPFILES
+			dropfiles.offset(1) as *mut u16,
+			wstr_files.len(),
+		);
+	}
+	Ok(h_dropfiles)
 }
 
 /// This function requires that the clipboard is open when it's called.
@@ -398,6 +696,9 @@ fn convert_clipboard_html(html_data: Result<&[u8], &str>) -> Option<CustomItem<'
 			return None;
 		}
 	};
+	// From MSDN: https://docs.microsoft.com/en-us/windows/win32/dataxchg/html-clipboard-format
+	//
+	// CF_HTML is entirely text format [...] and uses UTF-8
 	let data_str = match std::str::from_utf8(html_data) {
 		Ok(s) => s,
 		Err(e) => {
@@ -523,6 +824,9 @@ fn convert_clipboard_hdrop(clipboard_data: HANDLE) -> Option<CustomItem<'static>
 	});
 
 	let file_count = unsafe { DragQueryFileW(hdrop, 0xFFFFFFFF, null_mut(), 0) };
+	if file_count == 0 {
+		return Some(CustomItem::TextUriList("".into()));
+	}
 	let last_id = file_count - 1;
 	let mut result = String::new();
 	for i in 0..file_count {

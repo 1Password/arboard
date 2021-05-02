@@ -21,25 +21,23 @@ fn main() {
 			CustomItem::TextUriList(t) => {
 				println!("Uri List:\n-----\n{}\n------", t);
 			}
-			CustomItem::ImagePng(img) => {
-				continue;
-				let name = "clipboard.png";
-				std::fs::write(name, img.as_ref()).unwrap();
-				println!("PNG written to {}", name);
+			CustomItem::ImagePng(_img) => {
+				// let name = "clipboard.png";
+				// std::fs::write(name, img.as_ref()).unwrap();
+				// println!("PNG written to {}", name);
 			}
-			CustomItem::RawImage(img) => {
-				// continue;
-				let name = "clipboard.png";
-				image::save_buffer_with_format(
-					name,
-					img.bytes.as_ref(),
-					img.width as u32,
-					img.height as u32,
-					image::ColorType::Rgba8,
-					image::ImageFormat::Png,
-				)
-				.unwrap();
-				println!("PNG written to {}", name);
+			CustomItem::RawImage(_img) => {
+				// let name = "clipboard.png";
+				// image::save_buffer_with_format(
+				// 	name,
+				// 	img.bytes.as_ref(),
+				// 	img.width as u32,
+				// 	img.height as u32,
+				// 	image::ColorType::Rgba8,
+				// 	image::ImageFormat::Png,
+				// )
+				// .unwrap();
+				// println!("PNG written to {}", name);
 			}
 			_ => (),
 		}

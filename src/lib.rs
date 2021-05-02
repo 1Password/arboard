@@ -111,13 +111,19 @@ impl Clipboard {
 	}
 }
 
-/// All tests grouped in one because the windows clipboard cannot be open on
-/// multiple threads at once.
+/// All tests grouped in one because we want the tests to run on a single
+/// thread.
+///
+/// Reason: The clipboard is a global resource and we don't even expect that our
+/// opreations complete successfully if they all try to manipulate the clipboard
+/// at once.
 #[cfg(test)]
 #[test]
 fn all_tests() {
 	let _ = env_logger::builder().is_test(true).try_init();
 	{
+		// Setting and getting text, and persisting after closing.
+
 		let mut ctx = Clipboard::new().unwrap();
 		let text = "some string";
 		ctx.set_text(text.to_owned()).unwrap();
@@ -137,12 +143,16 @@ fn all_tests() {
 		assert_eq!(ctx.get_text().unwrap(), text);
 	}
 	{
+		// Setting and getting non-ascii text.
+
 		let mut ctx = Clipboard::new().unwrap();
 		let text = "Some utf8: 🤓 ∑φ(n)<ε 🐔";
 		ctx.set_text(text.to_owned()).unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
 	}
 	{
+		// Setting and getting an image.
+
 		let mut ctx = Clipboard::new().unwrap();
 		#[rustfmt::skip]
 		let bytes = [
@@ -155,5 +165,46 @@ fn all_tests() {
 		ctx.set_image(img_data.clone()).unwrap();
 		let got = ctx.get_image().unwrap();
 		assert_eq!(img_data.bytes, got.bytes);
+
+		ctx.set_text("just overriding the clipboard".into()).unwrap();
+
+		// Now set an image as a custom type
+		ctx.set_custom(&[CustomItem::RawImage(img_data.clone())]).unwrap();
+		let items = ctx.get_all().unwrap();
+		match items.get(0).unwrap() {
+			CustomItem::RawImage(got) => {
+				assert_eq!(img_data.bytes, got.bytes);
+			}
+			_ => unreachable!(),
+		}
+	}
+	{
+		// Setting and getting uri list
+		let uri_list_w_comment = "#comment\r\nfile:///C:/my file.txt\r\nfile:///C:/a folder/";
+		let uri_list_no_comment = "file:///C:/my file.txt\r\nfile:///C:/a folder/";
+
+		let mut ctx = Clipboard::new().unwrap();
+		ctx.set_custom(&[CustomItem::TextUriList(uri_list_w_comment.into())]).unwrap();
+		let items = ctx.get_all().unwrap();
+		match items.get(0).unwrap() {
+			CustomItem::TextUriList(l) => {
+				assert_eq!(l.as_ref(), uri_list_no_comment);
+			}
+			_ => unreachable!(),
+		}
+	}
+	{
+		// Setting and getting HTML
+		let html = "<p style='text-align:center'>Hello <b>World</b>!</p>\r\n<p>Another line</p>";
+
+		let mut ctx = Clipboard::new().unwrap();
+		ctx.set_custom(&[CustomItem::TextHtml(html.into())]).unwrap();
+		let items = ctx.get_all().unwrap();
+		match items.get(0).unwrap() {
+			CustomItem::TextHtml(t) => {
+				assert_eq!(t.as_ref(), html);
+			}
+			_ => unreachable!(),
+		}
 	}
 }
