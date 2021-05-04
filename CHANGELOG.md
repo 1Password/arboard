@@ -1,4 +1,9 @@
 
+## v1.2.1 on 2021-05-04
+
+### Changed
+- Fixed a bug that caused the `set_image` function on Windows to distort the image colors.
+
 ## v1.2.0 on 2021-04-06
 
 ### Added
