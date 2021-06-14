@@ -47,6 +47,12 @@ type PlatformClipboard = windows_clipboard::WindowsClipboardContext;
 #[cfg(target_os = "macos")]
 type PlatformClipboard = osx_clipboard::OSXClipboardContext;
 
+#[cfg(all(
+	unix,
+	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+))]
+pub use common_linux::{ClipboardExtLinux, LinuxClipboardKind};
+
 /// The OS independent struct for accessing the clipboard.
 ///
 /// Any number of `Clipboard` instances are allowed to exist at a single point in time. Note however
@@ -59,7 +65,7 @@ type PlatformClipboard = osx_clipboard::OSXClipboardContext;
 /// It is also valid to have multiple `Clipboards` on separate threads at once but note that
 /// executing multiple clipboard operations in paralell might fail with a `ClipboardOccupied` error.
 pub struct Clipboard {
-	platform: PlatformClipboard,
+	pub(crate) platform: PlatformClipboard,
 }
 
 impl Clipboard {
@@ -143,5 +149,37 @@ fn all_tests() {
 		ctx.set_image(img_data.clone()).unwrap();
 		let got = ctx.get_image().unwrap();
 		assert_eq!(img_data.bytes, got.bytes);
+	}
+	#[cfg(all(
+		unix,
+		not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+	))]
+	{
+		use crate::{ClipboardExtLinux, LinuxClipboardKind};
+		let mut ctx = Clipboard::new().unwrap();
+
+		const TEXT1: &str = "I'm a little teapot,";
+		const TEXT2: &str = "short and stout,";
+		const TEXT3: &str = "here is my handle";
+
+		ctx.set_text_with_clipboard(TEXT1.to_string(), LinuxClipboardKind::Clipboard).unwrap();
+
+		ctx.set_text_with_clipboard(TEXT2.to_string(), LinuxClipboardKind::Primary).unwrap();
+
+		// The secondary clipboard is not available under wayland
+		if !cfg!(feature = "wayland-data-control") || std::env::var_os("WAYLAND_DISPLAY").is_none()
+		{
+			ctx.set_text_with_clipboard(TEXT3.to_string(), LinuxClipboardKind::Secondary).unwrap();
+		}
+
+		assert_eq!(TEXT1, &ctx.get_text_with_clipboard(LinuxClipboardKind::Clipboard).unwrap());
+
+		assert_eq!(TEXT2, &ctx.get_text_with_clipboard(LinuxClipboardKind::Primary).unwrap());
+
+		// The secondary clipboard is not available under wayland
+		if !cfg!(feature = "wayland-data-control") || std::env::var_os("WAYLAND_DISPLAY").is_none()
+		{
+			assert_eq!(TEXT3, &ctx.get_text_with_clipboard(LinuxClipboardKind::Secondary).unwrap());
+		}
 	}
 }
