@@ -8,52 +8,57 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use super::common::{Error, ImageData};
-use core_graphics::color_space::CGColorSpace;
-use core_graphics::image::CGImage;
+use super::common::Error;
+#[cfg(feature = "image-data")]
+use super::common::ImageData;
+#[cfg(feature = "image-data")]
 use core_graphics::{
 	base::{kCGBitmapByteOrderDefault, kCGImageAlphaLast, kCGRenderingIntentDefault, CGFloat},
+	color_space::CGColorSpace,
 	data_provider::{CGDataProvider, CustomData},
+	image::CGImage,
 };
-use objc::runtime::{Class, Object, BOOL, NO};
+use objc::runtime::{Class, Object};
+#[cfg(feature = "image-data")]
+use objc::runtime::{BOOL, NO};
 use objc::{msg_send, sel, sel_impl};
 use objc_foundation::{INSArray, INSObject, INSString};
 use objc_foundation::{NSArray, NSDictionary, NSObject, NSString};
 use objc_id::{Id, Owned};
-use std::io::Cursor;
 use std::mem::transmute;
 
 // required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
 extern "C" {}
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct NSSize {
-	pub width: CGFloat,
-	pub height: CGFloat,
-}
-
-#[derive(Debug, Clone)]
-struct PixelArray {
-	data: Vec<u8>,
-}
-
-impl CustomData for PixelArray {
-	unsafe fn ptr(&self) -> *const u8 {
-		self.data.as_ptr()
-	}
-	unsafe fn len(&self) -> usize {
-		self.data.len()
-	}
-}
-
 /// Returns an NSImage object on success.
+#[cfg(feature = "image-data")]
 fn image_from_pixels(
 	pixels: Vec<u8>,
 	width: usize,
 	height: usize,
 ) -> Result<Id<NSObject>, Box<dyn std::error::Error>> {
+	#[repr(C)]
+	#[derive(Copy, Clone)]
+	pub struct NSSize {
+		pub width: CGFloat,
+		pub height: CGFloat,
+	}
+
+	#[derive(Debug, Clone)]
+	struct PixelArray {
+		data: Vec<u8>,
+	}
+
+	impl CustomData for PixelArray {
+		unsafe fn ptr(&self) -> *const u8 {
+			self.data.as_ptr()
+		}
+		unsafe fn len(&self) -> usize {
+			self.data.len()
+		}
+	}
+
 	let colorspace = CGColorSpace::create_device_rgb();
 	let bitmap_info: u32 = kCGBitmapByteOrderDefault | kCGImageAlphaLast;
 	let pixel_data: Box<Box<dyn CustomData>> = Box::new(Box::new(PixelArray { data: pixels }));
@@ -177,7 +182,10 @@ impl OSXClipboardContext {
 	// 		}
 	// 	}
 	// }
+	#[cfg(feature = "image-data")]
 	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
+		use std::io::Cursor;
+
 		let image_class: Id<NSObject> = {
 			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
 			unsafe { transmute(cls) }
@@ -210,7 +218,7 @@ impl OSXClipboardContext {
 				let pixels;
 				match reader.decode() {
 					Ok(img) => {
-						let rgba = img.into_rgba();
+						let rgba = img.into_rgba8();
 						let (w, h) = rgba.dimensions();
 						width = w;
 						height = h;
@@ -232,6 +240,8 @@ impl OSXClipboardContext {
 		}
 		result
 	}
+
+	#[cfg(feature = "image-data")]
 	pub(crate) fn set_image(&mut self, data: ImageData) -> Result<(), Error> {
 		let pixels = data.bytes.into();
 		let image = image_from_pixels(pixels, data.width, data.height)

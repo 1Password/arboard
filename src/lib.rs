@@ -13,13 +13,10 @@ and conditions of the chosen license apply to this file.
 #![crate_type = "dylib"]
 #![crate_type = "rlib"]
 
-#[cfg(windows)]
-extern crate clipboard_win;
-#[cfg(windows)]
-extern crate image;
-
 mod common;
-pub use common::{Error, ImageData};
+pub use common::Error;
+#[cfg(feature = "image-data")]
+pub use common::ImageData;
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),))]
 pub(crate) mod common_linux;
@@ -83,6 +80,7 @@ impl Clipboard {
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
 	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
 	/// other application will be of a supported format.
+	#[cfg(feature = "image-data")]
 	pub fn get_image(&mut self) -> Result<ImageData, Error> {
 		self.platform.get_image()
 	}
@@ -94,6 +92,7 @@ impl Clipboard {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
+	#[cfg(feature = "image-data")]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		self.platform.set_image(image)
 	}
@@ -130,6 +129,7 @@ fn all_tests() {
 		ctx.set_text(text.to_owned()).unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
 	}
+	#[cfg(feature = "image-data")]
 	{
 		let mut ctx = Clipboard::new().unwrap();
 		#[rustfmt::skip]

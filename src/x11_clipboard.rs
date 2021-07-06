@@ -43,10 +43,9 @@ use x11rb::{
 	COPY_DEPTH_FROM_PARENT, COPY_FROM_PARENT, NONE,
 };
 
-use crate::{
-	common_linux::{encode_as_png, into_unknown},
-	Error, ImageData,
-};
+#[cfg(feature = "image-data")]
+use crate::{common_linux::encode_as_png, ImageData};
+use crate::{common_linux::into_unknown, Error};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -793,6 +792,7 @@ impl X11ClipboardContext {
 		self.inner.write(data)
 	}
 
+	#[cfg(feature = "image-data")]
 	pub fn get_image(&self) -> Result<ImageData> {
 		let formats = [self.inner.atoms.PNG_MIME];
 		let bytes = self.inner.read(&formats)?.bytes;
@@ -810,6 +810,7 @@ impl X11ClipboardContext {
 		Ok(image_data)
 	}
 
+	#[cfg(feature = "image-data")]
 	pub fn set_image(&self, image: ImageData) -> Result<()> {
 		let encoded = encode_as_png(&image)?;
 		let data = ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME };

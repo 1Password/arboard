@@ -1,4 +1,4 @@
-use std::io::{Cursor, Read};
+use std::io::Read;
 
 use wl_clipboard_rs::{
 	copy::{Options, Source},
@@ -6,12 +6,12 @@ use wl_clipboard_rs::{
 	utils::is_primary_selection_supported,
 };
 
-use crate::{
-	common::{Error, ImageData},
-	common_linux::{encode_as_png, into_unknown},
-};
+use crate::{common::Error, common_linux::into_unknown};
+#[cfg(feature = "image-data")]
+use crate::{common::ImageData, common_linux::encode_as_png};
 
-static MIME_PNG: &str = "image/png";
+#[cfg(feature = "image-data")]
+const MIME_PNG: &str = "image/png";
 
 pub struct WaylandDataControlClipboardContext {}
 
@@ -51,7 +51,10 @@ impl WaylandDataControlClipboardContext {
 		Ok(())
 	}
 
+	#[cfg(feature = "image-data")]
 	pub fn get_image(&mut self) -> Result<ImageData, Error> {
+		use std::io::Cursor;
+
 		use wl_clipboard_rs::paste::MimeType;
 		let result =
 			get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Specific(MIME_PNG));
@@ -85,6 +88,7 @@ impl WaylandDataControlClipboardContext {
 		}
 	}
 
+	#[cfg(feature = "image-data")]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		use wl_clipboard_rs::copy::MimeType;
 

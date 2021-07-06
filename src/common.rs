@@ -8,6 +8,7 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
+#[cfg(feature = "image-data")]
 use std::borrow::Cow;
 use thiserror::Error;
 
@@ -97,6 +98,7 @@ impl std::fmt::Debug for Error {
 ///     bytes: Cow::from(bytes.as_ref())
 /// };
 /// ```
+#[cfg(feature = "image-data")]
 #[derive(Debug, Clone)]
 pub struct ImageData<'a> {
 	pub width: usize,
@@ -104,10 +106,11 @@ pub struct ImageData<'a> {
 	pub bytes: Cow<'a, [u8]>,
 }
 
+#[cfg(feature = "image-data")]
 impl<'a> ImageData<'a> {
 	/// Returns a the bytes field in a way that it's guaranteed to be owned.
 	/// It moves the bytes if they are already owned and clones them if they are borrowed.
-	pub fn into_owned_bytes(self) -> std::borrow::Cow<'static, [u8]> {
+	pub fn into_owned_bytes(self) -> Cow<'static, [u8]> {
 		self.bytes.into_owned().into()
 	}
 
