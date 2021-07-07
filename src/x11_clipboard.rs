@@ -835,9 +835,7 @@ impl X11ClipboardContext {
 	}
 
 	pub fn set_text(&self, message: String) -> Result<()> {
-		let data =
-			ClipboardData { bytes: message.into_bytes(), format: self.inner.atoms.UTF8_STRING };
-		self.inner.write(data, LinuxClipboardKind::Clipboard)
+		self.set_text_with_clipboard(message, LinuxClipboardKind::Clipboard)
 	}
 
 	pub(crate) fn set_text_with_clipboard(
