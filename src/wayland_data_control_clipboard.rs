@@ -4,7 +4,7 @@ use std::{
 };
 
 use wl_clipboard_rs::{
-	copy::{self, Options, Source},
+	copy::{self, Error as CopyError, Options, Source},
 	paste::{self, get_contents, Error as PasteError, Seat},
 	utils::is_primary_selection_supported,
 };
@@ -26,7 +26,7 @@ impl TryInto<copy::ClipboardType> for LinuxClipboardKind {
 			LinuxClipboardKind::Clipboard => Ok(copy::ClipboardType::Regular),
 			LinuxClipboardKind::Primary => Ok(copy::ClipboardType::Primary),
 			LinuxClipboardKind::Secondary => {
-				return Err(Error::ContentNotAvailable);
+				return Err(Error::ClipboardNotSupported);
 			}
 		}
 	}
@@ -40,7 +40,7 @@ impl TryInto<paste::ClipboardType> for LinuxClipboardKind {
 			LinuxClipboardKind::Clipboard => Ok(paste::ClipboardType::Regular),
 			LinuxClipboardKind::Primary => Ok(paste::ClipboardType::Primary),
 			LinuxClipboardKind::Secondary => {
-				return Err(Error::ContentNotAvailable);
+				return Err(Error::ClipboardNotSupported);
 			}
 		}
 	}
@@ -74,9 +74,11 @@ impl WaylandDataControlClipboardContext {
 				String::from_utf8(contents).map_err(|_| Error::ConversionFailure)
 			}
 
-			Err(PasteError::ClipboardEmpty)
-			| Err(PasteError::NoMimeType)
-			| Err(PasteError::PrimarySelectionUnsupported) => Err(Error::ContentNotAvailable),
+			Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
+				Err(Error::ContentNotAvailable)
+			}
+
+			Err(PasteError::PrimarySelectionUnsupported) => Err(Error::ClipboardNotSupported),
 
 			Err(err) => return Err(Error::Unknown { description: format!("{}", err) }),
 		}
@@ -95,7 +97,10 @@ impl WaylandDataControlClipboardContext {
 		let mut opts = Options::new();
 		opts.clipboard(selection.try_into()?);
 		let source = Source::Bytes(text.as_bytes().into());
-		opts.copy(source, MimeType::Text).map_err(into_unknown)?;
+		opts.copy(source, MimeType::Text).map_err(|e| match e {
+			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
+			other => into_unknown(other),
+		})?;
 		Ok(())
 	}
 

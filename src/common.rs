@@ -24,6 +24,14 @@ pub enum Error {
 	#[error("The clipboard contents were not available in the requested format or the clipboard is empty.")]
 	ContentNotAvailable,
 
+	/// The selected clipboard is not supported by the current configuration (system and/or environment).
+	///
+	/// This can be caused by a few conditions:
+	/// - Using the Primary clipboard with an older Wayland compositor (that doesn't support version 2)
+	/// - Using the Secondary clipboard on Wayland
+	#[error("The selected clipboard is not supported with the current system configuration.")]
+	ClipboardNotSupported,
+
 	/// The native clipboard is not accessible due to being held by an other party.
 	///
 	/// This "other party" could be a different process or it could be within
@@ -64,8 +72,13 @@ impl std::fmt::Debug for Error {
 				}
 			}
 		}
-		let name =
-			kind_to_str!(ContentNotAvailable, ClipboardOccupied, ConversionFailure, Unknown { .. });
+		let name = kind_to_str!(
+			ContentNotAvailable,
+			ClipboardNotSupported,
+			ClipboardOccupied,
+			ConversionFailure,
+			Unknown { .. }
+		);
 		f.write_fmt(format_args!("{} - \"{}\"", name, self))
 	}
 }
