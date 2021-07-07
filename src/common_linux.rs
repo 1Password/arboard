@@ -55,7 +55,7 @@ pub fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 /// Clipboard selection
 #[derive(Copy, Clone, Debug)]
 pub enum LinuxClipboardKind {
-	/// Typically used selection for explicit cut/copy/past actions (ie. windows/macos like
+	/// Typically used selection for explicit cut/copy/paste actions (ie. windows/macos like
 	/// clipboard behavior)
 	Clipboard,
 
