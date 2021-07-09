@@ -45,7 +45,7 @@ use x11rb::{
 
 #[cfg(feature = "image-data")]
 use crate::{common_linux::encode_as_png, ImageData};
-use crate::{common_linux::into_unknown, Error};
+use crate::{common_linux::into_unknown, Error, LinuxClipboardKind};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -54,6 +54,9 @@ static CLIPBOARD: Lazy<Mutex<Option<GlobalClipboard>>> = Lazy::new(|| Mutex::new
 x11rb::atom_manager! {
 	pub Atoms: AtomCookies {
 		CLIPBOARD,
+		PRIMARY,
+		SECONDARY,
+
 		CLIPBOARD_MANAGER,
 		SAVE_TARGETS,
 		TARGETS,
@@ -112,7 +115,10 @@ struct ClipboardContext {
 	/// requests coming to us.
 	server: XContext,
 	atoms: Atoms,
-	data: RwLock<Option<ClipboardData>>,
+	clipboard_data: RwLock<Option<ClipboardData>>,
+	primary_data: RwLock<Option<ClipboardData>>,
+	secondary_data: RwLock<Option<ClipboardData>>,
+
 	handover_state: Mutex<ManagerHandoverState>,
 	handover_cv: Condvar,
 
@@ -183,33 +189,35 @@ impl ClipboardContext {
 		Ok(Self {
 			server,
 			atoms,
-			data: RwLock::default(),
+			clipboard_data: RwLock::default(),
+			primary_data: RwLock::default(),
+			secondary_data: RwLock::default(),
 			handover_state: Mutex::new(ManagerHandoverState::Idle),
 			handover_cv: Condvar::new(),
 			serve_stopped: AtomicBool::new(false),
 		})
 	}
 
-	fn write(&self, data: ClipboardData) -> Result<()> {
+	fn write(&self, data: ClipboardData, selection: LinuxClipboardKind) -> Result<()> {
 		if self.serve_stopped.load(Ordering::Relaxed) {
 			return Err(Error::Unknown {
                 description: "The clipboard handler thread seems to have stopped. Logging messages may reveal the cause. (See the `log` crate.)".into()
             });
 		}
+
 		// only if the current owner isn't us, we try to become it
-		if !self.is_owner()? {
-			let selection = self.atoms.CLIPBOARD;
+		if !self.is_owner(selection)? {
 			let server_win = self.server.win_id;
 
 			self.server
 				.conn
-				.set_selection_owner(server_win, selection, Time::CURRENT_TIME)
+				.set_selection_owner(server_win, self.atom_of(selection), Time::CURRENT_TIME)
 				.map_err(|_| Error::ClipboardOccupied)?;
 			self.server.conn.flush().map_err(into_unknown)?;
 		}
 
 		// Just setting the data, and the `serve_requests` will take care of the rest.
-		*self.data.write() = Some(data);
+		*self.data_of(selection).write() = Some(data);
 
 		Ok(())
 	}
@@ -217,10 +225,10 @@ impl ClipboardContext {
 	/// `formats` must be a slice of atoms, where each atom represents a target format.
 	/// The first format from `formats`, which the clipboard owner supports will be the
 	/// format of the return value.
-	fn read(&self, formats: &[Atom]) -> Result<ClipboardData> {
+	fn read(&self, formats: &[Atom], selection: LinuxClipboardKind) -> Result<ClipboardData> {
 		// if we are the current owner, we can get the current clipboard ourselves
-		if self.is_owner()? {
-			let data = self.data.read();
+		if self.is_owner(selection)? {
+			let data = self.data_of(selection).read();
 			if let Some(data) = &*data {
 				for format in formats {
 					if *format == data.format {
@@ -237,7 +245,7 @@ impl ClipboardContext {
 
 		trace!("Trying to get the clipboard data.");
 		for format in formats {
-			match self.read_single(&reader, *format) {
+			match self.read_single(&reader, selection, *format) {
 				Ok(bytes) => {
 					return Ok(ClipboardData { bytes, format: *format });
 				}
@@ -250,7 +258,12 @@ impl ClipboardContext {
 		Err(Error::ContentNotAvailable)
 	}
 
-	fn read_single(&self, reader: &XContext, target_format: Atom) -> Result<Vec<u8>> {
+	fn read_single(
+		&self,
+		reader: &XContext,
+		selection: LinuxClipboardKind,
+		target_format: Atom,
+	) -> Result<Vec<u8>> {
 		// Delete the property so that we can detect (using property notify)
 		// when the selection owner receives our request.
 		reader
@@ -263,7 +276,7 @@ impl ClipboardContext {
 			.conn
 			.convert_selection(
 				reader.win_id,
-				self.atoms.CLIPBOARD,
+				self.atom_of(selection),
 				target_format,
 				self.atoms.ARBOARD_CLIPBOARD,
 				Time::CURRENT_TIME,
@@ -332,11 +345,36 @@ impl ClipboardContext {
 		Err(Error::ContentNotAvailable)
 	}
 
-	fn is_owner(&self) -> Result<bool> {
+	fn atom_of(&self, selection: LinuxClipboardKind) -> Atom {
+		match selection {
+			LinuxClipboardKind::Clipboard => self.atoms.CLIPBOARD,
+			LinuxClipboardKind::Primary => self.atoms.PRIMARY,
+			LinuxClipboardKind::Secondary => self.atoms.SECONDARY,
+		}
+	}
+
+	fn data_of(&self, selection: LinuxClipboardKind) -> &RwLock<Option<ClipboardData>> {
+		match selection {
+			LinuxClipboardKind::Clipboard => &self.clipboard_data,
+			LinuxClipboardKind::Primary => &self.primary_data,
+			LinuxClipboardKind::Secondary => &self.secondary_data,
+		}
+	}
+
+	fn kind_of(&self, atom: Atom) -> Option<LinuxClipboardKind> {
+		match atom {
+			a if a == self.atoms.CLIPBOARD => Some(LinuxClipboardKind::Clipboard),
+			a if a == self.atoms.PRIMARY => Some(LinuxClipboardKind::Primary),
+			a if a == self.atoms.SECONDARY => Some(LinuxClipboardKind::Secondary),
+			_ => None,
+		}
+	}
+
+	fn is_owner(&self, selection: LinuxClipboardKind) -> Result<bool> {
 		let current = self
 			.server
 			.conn
-			.get_selection_owner(self.atoms.CLIPBOARD)
+			.get_selection_owner(self.atom_of(selection))
 			.map_err(into_unknown)?
 			.reply()
 			.map_err(into_unknown)?
@@ -390,8 +428,8 @@ impl ClipboardContext {
 		if event.property == NONE || event.target != target_format {
 			return Err(Error::ContentNotAvailable);
 		}
-		if event.selection != self.atoms.CLIPBOARD {
-			log::info!("Received a SelectionNotify for a selection other than the `CLIPBOARD`. This is unexpected.");
+		if self.kind_of(event.selection).is_none() {
+			log::info!("Received a SelectionNotify for a selection other than CLIPBOARD, PRIMARY or SECONDARY. This is unexpected.");
 			return Ok(ReadSelNotifyResult::EventNotRecognized);
 		}
 		if *using_incr {
@@ -484,11 +522,14 @@ impl ClipboardContext {
 	}
 
 	fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<()> {
-		if event.selection != self.atoms.CLIPBOARD {
-			// We don't do anything here, this means that the
-			warn!("Received a selection request to a selection other than the CLIPBOARD. This is unexpected.");
-			return Ok(());
-		}
+		let selection = match self.kind_of(event.selection) {
+			Some(kind) => kind,
+			None => {
+				warn!("Received a selection request to a selection other than the CLIPBOARD, PRIMARY or SECONDARY. This is unexpected.");
+				return Ok(());
+			}
+		};
+
 		let success;
 		// we are asked for a list of supported conversion targets
 		if event.target == self.atoms.TARGETS {
@@ -496,7 +537,7 @@ impl ClipboardContext {
 			let mut targets = Vec::with_capacity(10);
 			targets.push(self.atoms.TARGETS);
 			targets.push(self.atoms.SAVE_TARGETS);
-			let data = self.data.read();
+			let data = self.data_of(selection).read();
 			if let Some(data) = &*data {
 				targets.push(data.format);
 				if data.format == self.atoms.UTF8_STRING {
@@ -521,7 +562,7 @@ impl ClipboardContext {
 			success = true;
 		} else {
 			trace!("Handling request for (probably) the clipboard contents.");
-			let data = self.data.read();
+			let data = self.data_of(selection).read();
 			if let Some(data) = &*data {
 				if data.format == event.target {
 					self.server
@@ -576,11 +617,12 @@ impl ClipboardContext {
 			error!("The server's window id was 0. This is unexpected");
 			return Ok(());
 		}
-		if !self.is_owner()? {
+
+		if !self.is_owner(LinuxClipboardKind::Clipboard)? {
 			// We are not owning the clipboard, nothing to do.
 			return Ok(());
 		}
-		if self.data.read().is_none() {
+		if self.data_of(LinuxClipboardKind::Clipboard).read().is_none() {
 			// If we don't have any data, there's nothing to do.
 			return Ok(());
 		}
@@ -675,9 +717,10 @@ fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::e
 				// Someone else has new content in the clipboard, so it is
 				// notifying us that we should delete our data now.
 				trace!("Somebody else owns the clipboard now");
-				if event.selection == clipboard.atoms.CLIPBOARD {
-					let mut data = clipboard.data.write();
-					*data = None;
+
+				if let Some(selection) = clipboard.kind_of(event.selection) {
+					let mut data = clipboard.data_of(selection).write();
+					*data = None
 				}
 			}
 			Event::SelectionRequest(event) => {
@@ -768,6 +811,10 @@ impl X11ClipboardContext {
 	}
 
 	pub fn get_text(&self) -> Result<String> {
+		self.get_text_with_clipboard(LinuxClipboardKind::Clipboard)
+	}
+
+	pub(crate) fn get_text_with_clipboard(&self, selection: LinuxClipboardKind) -> Result<String> {
 		let formats = [
 			self.inner.atoms.UTF8_STRING,
 			self.inner.atoms.UTF8_MIME_0,
@@ -776,7 +823,7 @@ impl X11ClipboardContext {
 			self.inner.atoms.TEXT,
 			self.inner.atoms.TEXT_MIME_UNKNOWN,
 		];
-		let result = self.inner.read(&formats)?;
+		let result = self.inner.read(&formats, selection)?;
 		if result.format == self.inner.atoms.STRING {
 			// ISO Latin-1
 			// See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
@@ -787,15 +834,23 @@ impl X11ClipboardContext {
 	}
 
 	pub fn set_text(&self, message: String) -> Result<()> {
+		self.set_text_with_clipboard(message, LinuxClipboardKind::Clipboard)
+	}
+
+	pub(crate) fn set_text_with_clipboard(
+		&self,
+		message: String,
+		selection: LinuxClipboardKind,
+	) -> Result<()> {
 		let data =
 			ClipboardData { bytes: message.into_bytes(), format: self.inner.atoms.UTF8_STRING };
-		self.inner.write(data)
+		self.inner.write(data, selection)
 	}
 
 	#[cfg(feature = "image-data")]
 	pub fn get_image(&self) -> Result<ImageData> {
 		let formats = [self.inner.atoms.PNG_MIME];
-		let bytes = self.inner.read(&formats)?.bytes;
+		let bytes = self.inner.read(&formats, LinuxClipboardKind::Clipboard)?.bytes;
 
 		let cursor = std::io::Cursor::new(&bytes);
 		let mut reader = image::io::Reader::new(cursor);
@@ -814,7 +869,7 @@ impl X11ClipboardContext {
 	pub fn set_image(&self, image: ImageData) -> Result<()> {
 		let encoded = encode_as_png(&image)?;
 		let data = ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME };
-		self.inner.write(data)
+		self.inner.write(data, LinuxClipboardKind::Clipboard)
 	}
 }
 
