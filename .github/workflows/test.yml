@@ -39,17 +39,17 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose
+          args: --verbose --no-default-features
       - name: Run `cargo clippy` with `image-data` feature
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose --features image-data
+          args: --verbose --no-default-features --features image-data
       - name: Run `cargo clippy` with `wayland-data-control` feature
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose --features wayland-data-control
+          args: --verbose --no-default-features --features wayland-data-control
       - name: Run `cargo clippy` with all features
         uses: actions-rs/cargo@v1
         with:
@@ -74,15 +74,19 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: test
+          args: --no-default-features
       - name: Run tests with `image-data` feature
         uses: actions-rs/cargo@v1
         with:
-          command: test --features image-data
+          command: test
+          args: --no-default-features --features image-data
       - name: Run tests with `wayland-data-control` feature
         uses: actions-rs/cargo@v1
         with:
-          command: test --features wayland-data-control
+          command: test
+          args: --no-default-features --features wayland-data-control
       - name: Run tests with all features
         uses: actions-rs/cargo@v1
         with:
-          command: test --all-features
+          command: test
+          args: --all-features

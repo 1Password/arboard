@@ -10,6 +10,7 @@ keywords = ["clipboard", "image"]
 edition = "2018"
 
 [features]
+default = ["image-data"]
 image-data = ["core-graphics", "image", "winapi/minwindef", "winapi/wingdi", "winapi/winnt"]
 wayland-data-control = ["wl-clipboard-rs"]
 
