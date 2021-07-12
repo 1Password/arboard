@@ -8,37 +8,48 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use std::borrow::Cow;
-use std::convert::TryInto;
+#[cfg(feature = "image-data")]
 use std::io::{self, Read, Seek};
 
 use clipboard_win::Clipboard as SystemClipboard;
+#[cfg(feature = "image-data")]
 use image::{
 	bmp::{BmpDecoder, BmpEncoder},
 	ColorType, ImageDecoder,
 };
 use scopeguard::defer;
-use winapi::shared::minwindef::DWORD;
 use winapi::um::{
 	stringapiset::WideCharToMultiByte,
 	winbase::{GlobalLock, GlobalSize, GlobalUnlock},
-	wingdi::{
-		CreateDIBitmap, DeleteObject, BITMAPV4HEADER, BI_BITFIELDS, CBM_INIT, CIEXYZTRIPLE,
-		DIB_RGB_COLORS,
-	},
 	winnls::CP_UTF8,
-	winnt::LONG,
-	winuser::{GetClipboardData, GetDC, SetClipboardData, CF_BITMAP, CF_UNICODETEXT},
+	winuser::{GetClipboardData, CF_UNICODETEXT},
+};
+#[cfg(feature = "image-data")]
+use winapi::{
+	shared::minwindef::DWORD,
+	um::{
+		wingdi::{
+			CreateDIBitmap, DeleteObject, BITMAPV4HEADER, BI_BITFIELDS, CBM_INIT, CIEXYZTRIPLE,
+			DIB_RGB_COLORS,
+		},
+		winnt::LONG,
+		winuser::{GetDC, SetClipboardData, CF_BITMAP},
+	},
 };
 
-use super::common::{Error, ImageData};
+use super::common::Error;
+#[cfg(feature = "image-data")]
+use super::common::ImageData;
 
 const MAX_OPEN_ATTEMPTS: usize = 5;
 
+#[cfg(feature = "image-data")]
 const BITMAP_FILE_HEADER_SIZE: usize = 14;
 //const BITMAP_INFO_HEADER_SIZE: usize = 40;
+#[cfg(feature = "image-data")]
 const BITMAP_V4_INFO_HEADER_SIZE: u32 = 108;
 
+#[cfg(feature = "image-data")]
 struct FakeBitmapFile {
 	file_header: [u8; BITMAP_FILE_HEADER_SIZE],
 	bitmap: Vec<u8>,
@@ -46,12 +57,14 @@ struct FakeBitmapFile {
 	curr_pos: usize,
 }
 
+#[cfg(feature = "image-data")]
 impl FakeBitmapFile {
 	fn len(&self) -> usize {
 		self.file_header.len() + self.bitmap.len()
 	}
 }
 
+#[cfg(feature = "image-data")]
 impl Seek for FakeBitmapFile {
 	fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
 		match pos {
@@ -63,6 +76,7 @@ impl Seek for FakeBitmapFile {
 	}
 }
 
+#[cfg(feature = "image-data")]
 impl Read for FakeBitmapFile {
 	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
 		let remaining = self.len() - self.curr_pos;
@@ -97,6 +111,7 @@ impl Read for FakeBitmapFile {
 	}
 }
 
+#[cfg(feature = "image-data")]
 unsafe fn add_cf_bitmap(image: &ImageData) -> Result<(), Error> {
 	let header = BITMAPV4HEADER {
 		bV4Size: std::mem::size_of::<BITMAPV4HEADER>() as _,
@@ -224,7 +239,12 @@ impl WindowsClipboardContext {
 			description: "Could not place the specified text to the clipboard".into(),
 		})
 	}
+
+	#[cfg(feature = "image-data")]
 	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
+		use std::borrow::Cow;
+		use std::convert::TryInto;
+
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
 			.map_err(|_| Error::ClipboardOccupied)?;
 		let format = clipboard_win::formats::CF_DIB;
@@ -258,7 +278,11 @@ impl WindowsClipboardContext {
 			image::DynamicImage::from_decoder(bmp_decoder).map_err(|_| Error::ConversionFailure)?;
 		Ok(ImageData { width, height, bytes: Cow::from(image.into_rgba8().into_raw()) })
 	}
+
+	#[cfg(feature = "image-data")]
 	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
+		use std::convert::TryInto;
+
 		//let clipboard = SystemClipboard::new()?;
 		let mut bmp_data = Vec::with_capacity(image.bytes.len());
 		let mut cursor = std::io::Cursor::new(&mut bmp_data);

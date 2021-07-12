@@ -1,7 +1,5 @@
-use std::{
-	convert::TryInto,
-	io::{Cursor, Read},
-};
+use std::convert::TryInto;
+use std::io::Read;
 
 use wl_clipboard_rs::{
 	copy::{self, Error as CopyError, Options, Source},
@@ -10,11 +8,14 @@ use wl_clipboard_rs::{
 };
 
 use crate::{
-	common::{Error, ImageData},
-	common_linux::{encode_as_png, into_unknown, LinuxClipboardKind},
+	common::Error,
+	common_linux::{into_unknown, LinuxClipboardKind},
 };
+#[cfg(feature = "image-data")]
+use crate::{common::ImageData, common_linux::encode_as_png};
 
-static MIME_PNG: &str = "image/png";
+#[cfg(feature = "image-data")]
+const MIME_PNG: &str = "image/png";
 
 pub struct WaylandDataControlClipboardContext {}
 
@@ -104,11 +105,16 @@ impl WaylandDataControlClipboardContext {
 		Ok(())
 	}
 
+	#[cfg(feature = "image-data")]
 	pub fn get_image(&mut self) -> Result<ImageData, Error> {
-		use paste::ClipboardType;
+		use std::io::Cursor;
 		use wl_clipboard_rs::paste::MimeType;
-		let result =
-			get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Specific(MIME_PNG));
+
+		let result = get_contents(
+			paste::ClipboardType::Regular,
+			Seat::Unspecified,
+			MimeType::Specific(MIME_PNG),
+		);
 		match result {
 			Ok((mut pipe, _mime_type)) => {
 				let mut buffer = vec![];
@@ -139,6 +145,7 @@ impl WaylandDataControlClipboardContext {
 		}
 	}
 
+	#[cfg(feature = "image-data")]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		use wl_clipboard_rs::copy::MimeType;
 

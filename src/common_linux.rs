@@ -1,3 +1,4 @@
+#[cfg(feature = "image-data")]
 use std::{cell::RefCell, rc::Rc};
 
 #[cfg(feature = "wayland-data-control")]
@@ -5,12 +6,15 @@ use crate::wayland_data_control_clipboard::WaylandDataControlClipboardContext;
 #[cfg(feature = "wayland-data-control")]
 use log::{info, warn};
 
-use crate::{x11_clipboard::X11ClipboardContext, Error, ImageData};
+#[cfg(feature = "image-data")]
+use crate::ImageData;
+use crate::{x11_clipboard::X11ClipboardContext, Error};
 
 pub fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
 	Error::Unknown { description: format!("{}", error) }
 }
 
+#[cfg(feature = "image-data")]
 pub fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 	/// This is a workaround for the PNGEncoder not having a `into_inner` like function
 	/// which would allow us to take back our Vec after the encoder finished encoding.
@@ -188,6 +192,7 @@ impl LinuxClipboard {
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
 	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
 	/// other application will be of a supported format.
+	#[cfg(feature = "image-data")]
 	pub fn get_image(&mut self) -> Result<ImageData, Error> {
 		match self {
 			Self::X11(cb) => cb.get_image(),
@@ -204,6 +209,7 @@ impl LinuxClipboard {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
+	#[cfg(feature = "image-data")]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		match self {
 			Self::X11(cb) => cb.set_image(image),

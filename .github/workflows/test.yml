@@ -24,7 +24,10 @@ jobs:
 
   clippy:
     needs: rustfmt
-    runs-on: ubuntu-20.04
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
     steps:
       - uses: actions-rs/toolchain@v1
         with:
@@ -32,7 +35,22 @@ jobs:
           override: true
           components: clippy
       - uses: actions/checkout@v2
-      - name: Run `cargo clippy`
+      - name: Run `cargo clippy` with no features
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --verbose --no-default-features
+      - name: Run `cargo clippy` with `image-data` feature
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --verbose --no-default-features --features image-data
+      - name: Run `cargo clippy` with `wayland-data-control` feature
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --verbose --no-default-features --features wayland-data-control
+      - name: Run `cargo clippy` with all features
         uses: actions-rs/cargo@v1
         with:
           command: clippy
@@ -52,8 +70,23 @@ jobs:
           override: true
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Run tests
+      - name: Run tests with no features
         uses: actions-rs/cargo@v1
         with:
           command: test
-
+          args: --no-default-features
+      - name: Run tests with `image-data` feature
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features image-data
+      - name: Run tests with `wayland-data-control` feature
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features wayland-data-control
+      - name: Run tests with all features
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features
