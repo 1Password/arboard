@@ -29,14 +29,14 @@ winapi = { version = "0.3.9", features = [
     "winbase",
 ]}
 scopeguard = "1.1.0"
-clipboard-win = "4.0"
+clipboard-win = "4.2"
 image = { version = "0.23.12", optional = true, default-features = false, features = ["bmp"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
 objc_id = "0.1"
 objc-foundation = "0.1"
-core-graphics = { version = "0.21", optional = true }
+core-graphics = { version = "0.22", optional = true }
 image = { version = "0.23", optional = true, default-features = false, features = ["tiff"] }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
