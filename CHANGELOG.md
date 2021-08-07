@@ -1,3 +1,11 @@
+## v2.0.0 on 2021-08-07
+
+### Changed
+- Update dependency on yanked crate versions
+- Make the image operations an optional feature
+
+### Added
+- Support selecting which linux clipboard is used
 
 ## v1.2.1 on 2021-05-04
 
