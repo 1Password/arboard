@@ -7,16 +7,14 @@ The project to which this file belongs is licensed under either of
 the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
+extern crate byteorder;
 
 #[cfg(feature = "image-data")]
 use std::io::{self, Read, Seek};
 
 use clipboard_win::Clipboard as SystemClipboard;
 #[cfg(feature = "image-data")]
-use image::{
-	bmp::{BmpDecoder, BmpEncoder},
-	ColorType, ImageDecoder,
-};
+use image::{bmp::BmpDecoder, ImageDecoder};
 use scopeguard::defer;
 use winapi::um::{
 	stringapiset::WideCharToMultiByte,
@@ -47,8 +45,7 @@ const MAX_OPEN_ATTEMPTS: usize = 5;
 const BITMAP_FILE_HEADER_SIZE: usize = 14;
 //const BITMAP_INFO_HEADER_SIZE: usize = 40;
 #[cfg(feature = "image-data")]
-const BITMAP_V4_INFO_HEADER_SIZE: u32 = 108;
-
+// const BITMAP_V4_INFO_HEADER_SIZE: u32 = 108;
 #[cfg(feature = "image-data")]
 struct FakeBitmapFile {
 	file_header: [u8; BITMAP_FILE_HEADER_SIZE],
@@ -267,7 +264,7 @@ impl WindowsClipboardContext {
 			u32::to_le_bytes((fake_bitmap_file.bitmap.len() + BITMAP_FILE_HEADER_SIZE) as u32);
 		fake_bitmap_file.file_header[2..6].copy_from_slice(&file_size);
 
-		let data_offset = u32::to_le_bytes(info_header_size + BITMAP_FILE_HEADER_SIZE as u32);
+		let data_offset = u32::to_le_bytes(info_header_size + BITMAP_FILE_HEADER_SIZE as u32 + 12);
 		fake_bitmap_file.file_header[10..14].copy_from_slice(&data_offset);
 
 		let bmp_decoder = BmpDecoder::new(fake_bitmap_file).unwrap();
@@ -281,26 +278,63 @@ impl WindowsClipboardContext {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
-		use std::convert::TryInto;
+		use byteorder::{LittleEndian, WriteBytesExt};
+		use std::io::{Cursor, Write};
 
-		//let clipboard = SystemClipboard::new()?;
-		let mut bmp_data = Vec::with_capacity(image.bytes.len());
-		let mut cursor = std::io::Cursor::new(&mut bmp_data);
-		let mut encoder = BmpEncoder::new(&mut cursor);
-		encoder
-			.encode(&image.bytes, image.width as u32, image.height as u32, ColorType::Rgba8)
-			.map_err(|_| Error::ConversionFailure)?;
-		let data_without_file_header = &bmp_data[BITMAP_FILE_HEADER_SIZE..];
-		let header_size = u32::from_le_bytes(data_without_file_header[..4].try_into().unwrap());
-		let format = if header_size > BITMAP_V4_INFO_HEADER_SIZE {
-			clipboard_win::formats::CF_DIBV5
-		} else {
-			clipboard_win::formats::CF_DIB
-		};
+		let mut cursor: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+		let header_size: u32 = 124;
+		let data_size: u32 = image.width as u32 * image.height as u32 * 4;
+
+		// dib header
+		cursor.write_u32::<LittleEndian>(header_size).unwrap(); // header size
+		cursor.write_u32::<LittleEndian>(image.width as u32).unwrap(); // width
+		cursor.write_u32::<LittleEndian>(image.height as u32).unwrap(); // height
+		cursor.write_u16::<LittleEndian>(1).unwrap(); // planes
+		cursor.write_u16::<LittleEndian>(32).unwrap(); // bits per pixel
+		cursor.write_u32::<LittleEndian>(3).unwrap(); // compression method: BI_RGB (none)
+		cursor.write_u32::<LittleEndian>(data_size).unwrap(); // image size
+		cursor.write_u32::<LittleEndian>(3780).unwrap(); // horizontal resolution pixel per meter
+		cursor.write_u32::<LittleEndian>(3780).unwrap(); // vertical resolution pixel per meter
+		cursor.write_u32::<LittleEndian>(0).unwrap(); // colors in color palette
+		cursor.write_u32::<LittleEndian>(0).unwrap(); // important colors, generally ignored
+		cursor.write_u32::<LittleEndian>(0x00ff0000).unwrap(); // mask
+		cursor.write_u32::<LittleEndian>(0x0000ff00).unwrap(); // mask
+		cursor.write_u32::<LittleEndian>(0x000000ff).unwrap(); // mask
+		cursor.write_u32::<LittleEndian>(0xff000000).unwrap(); // mask
+		cursor.write(&[0x42, 0x47, 0x52, 0x73]).unwrap(); // magic "BGRs"
+		cursor
+			.write(&[
+				// 64 bytes unknown :(
+				0x80, 0xC2, 0xF5, 0x28, 0x60, 0xB8, 0x1E, 0x15, 0x20, 0x85, 0xEB, 0x01, 0x40, 0x33,
+				0x33, 0x13, 0x80, 0x66, 0x66, 0x26, 0x40, 0x66, 0x66, 0x06, 0xA0, 0x99, 0x99, 0x09,
+				0x3C, 0x0A, 0xD7, 0x03, 0x24, 0x5C, 0x8F, 0x32, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			])
+			.unwrap();
+
+		// image data
+		for y in 0..image.height {
+			for x in 0..image.width {
+				let i = image.width * 4 * (image.height - y - 1) + x * 4;
+				cursor
+					.write(&[
+						image.bytes[i + 2],
+						image.bytes[i + 1],
+						image.bytes[i],
+						image.bytes[i + 3],
+					])
+					.unwrap();
+			}
+		}
 		let mut result: Result<(), Error> = Ok(());
-		//let mut success = false;
 		clipboard_win::with_clipboard(|| {
-			let success = clipboard_win::raw::set(format, data_without_file_header).is_ok();
+			let success = clipboard_win::raw::set(
+				clipboard_win::formats::CF_DIBV5,
+				cursor.get_ref().as_ref(),
+			)
+			.is_ok();
 			let bitmap_result = unsafe { add_cf_bitmap(&image) };
 			if bitmap_result.is_err() && !success {
 				result = Err(Error::Unknown {

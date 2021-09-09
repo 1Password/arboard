@@ -16,6 +16,7 @@ wayland-data-control = ["wl-clipboard-rs"]
 
 [dependencies]
 thiserror = "1.0"
+byteorder = "1.4.3"
 
 [dev-dependencies]
 simple_logger = "1.11"
