@@ -10,17 +10,17 @@ and conditions of the chosen license apply to this file.
 
 #[cfg(feature = "image-data")]
 use std::io::{self, Read, Seek};
+use std::mem::size_of;
 
 use clipboard_win::Clipboard as SystemClipboard;
-#[cfg(feature = "image-data")]
-use image::{
-	bmp::{BmpDecoder, BmpEncoder},
-	ColorType, ImageDecoder,
-};
+
 use scopeguard::defer;
 use winapi::um::{
 	stringapiset::WideCharToMultiByte,
 	winbase::{GlobalLock, GlobalSize, GlobalUnlock},
+	wingdi::{
+		GetDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, PROFILE_EMBEDDED, PROFILE_LINKED, RGBQUAD,
+	},
 	winnls::CP_UTF8,
 	winuser::{GetClipboardData, CF_UNICODETEXT},
 };
@@ -29,8 +29,8 @@ use winapi::{
 	shared::minwindef::DWORD,
 	um::{
 		wingdi::{
-			CreateDIBitmap, DeleteObject, BITMAPV4HEADER, BI_BITFIELDS, CBM_INIT, CIEXYZTRIPLE,
-			DIB_RGB_COLORS,
+			CreateDIBitmap, DeleteObject, LCS_sRGB, BITMAPV4HEADER, BITMAPV5HEADER, BI_BITFIELDS,
+			CBM_INIT, CIEXYZTRIPLE, DIB_RGB_COLORS, LCS_GM_IMAGES,
 		},
 		winnt::LONG,
 		winuser::{GetDC, SetClipboardData, CF_BITMAP},
@@ -46,8 +46,6 @@ const MAX_OPEN_ATTEMPTS: usize = 5;
 #[cfg(feature = "image-data")]
 const BITMAP_FILE_HEADER_SIZE: usize = 14;
 //const BITMAP_INFO_HEADER_SIZE: usize = 40;
-#[cfg(feature = "image-data")]
-const BITMAP_V4_INFO_HEADER_SIZE: u32 = 108;
 
 #[cfg(feature = "image-data")]
 struct FakeBitmapFile {
@@ -111,6 +109,278 @@ impl Read for FakeBitmapFile {
 	}
 }
 
+// #[cfg(feature = "image-data")]
+// unsafe fn add_cf_dibv5(image: &ImageData) -> Result<(), Error> {
+//     use std::io::{Cursor, Write};
+// 	use byteorder::{LittleEndian, WriteBytesExt};
+
+// 	let mut cursor: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+
+// 	let header_size: u32 = 124;
+// 	let data_size: u32 = image.width as u32 * image.height as u32 * 4;
+
+// 	// dib header
+// 	cursor.write_u32::<LittleEndian>(header_size).unwrap(); // header size
+// 	cursor
+// 		.write_u32::<LittleEndian>(image.width as u32)
+// 		.unwrap(); // width
+// 	cursor
+// 		.write_u32::<LittleEndian>(image.height as u32)
+// 		.unwrap(); // height
+// 	cursor.write_u16::<LittleEndian>(1).unwrap(); // planes
+// 	cursor.write_u16::<LittleEndian>(32).unwrap(); // bits per pixel
+// 	cursor.write_u32::<LittleEndian>(3).unwrap(); // compression method: BI_RGB (none)
+// 	cursor.write_u32::<LittleEndian>(data_size).unwrap(); // image size
+// 	cursor.write_u32::<LittleEndian>(3780).unwrap(); // horizontal resolution pixel per meter
+// 	cursor.write_u32::<LittleEndian>(3780).unwrap(); // vertical resolution pixel per meter
+// 	cursor.write_u32::<LittleEndian>(0).unwrap(); // colors in color palette
+// 	cursor.write_u32::<LittleEndian>(0).unwrap(); // important colors, generally ignored
+// 	cursor.write_u32::<LittleEndian>(0x00ff0000).unwrap(); // mask
+// 	cursor.write_u32::<LittleEndian>(0x0000ff00).unwrap(); // mask
+// 	cursor.write_u32::<LittleEndian>(0x000000ff).unwrap(); // mask
+// 	cursor.write_u32::<LittleEndian>(0xff000000).unwrap(); // mask
+// 	cursor.write(&[0x42, 0x47, 0x52, 0x73]).unwrap(); // magic "BGRs"
+// 	cursor
+// 		.write(&[
+// 			// 64 bytes unknown :(
+// 			0x80, 0xC2, 0xF5, 0x28, 0x60, 0xB8, 0x1E, 0x15, 0x20, 0x85, 0xEB, 0x01, 0x40, 0x33,
+// 			0x33, 0x13, 0x80, 0x66, 0x66, 0x26, 0x40, 0x66, 0x66, 0x06, 0xA0, 0x99, 0x99, 0x09,
+// 			0x3C, 0x0A, 0xD7, 0x03, 0x24, 0x5C, 0x8F, 0x32, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+// 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+// 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+// 		])
+// 		.unwrap();
+
+// 	// image data
+// 	for y in 0..image.height {
+// 		for x in 0..image.width {
+// 			let i = image.width * 4 * (image.height - y - 1) + x * 4;
+// 			cursor
+// 				.write(&[
+// 					image.bytes[i + 2],
+// 					image.bytes[i + 1],
+// 					image.bytes[i],
+// 					image.bytes[i + 3],
+// 				])
+// 				.unwrap();
+// 		}
+// 	}
+
+// 	clipboard_win::raw::set(
+// 		clipboard_win::formats::CF_DIBV5,
+// 		cursor.get_ref().as_ref(),
+// 	).map_err(|e|
+// 		Error::Unknown {
+// 			description: format!("Failed setting the clipboard data, error was {}", e)
+// 		}
+// 	)
+// }
+
+#[cfg(feature = "image-data")]
+unsafe fn add_cf_dibv5(image: &ImageData) -> Result<(), Error> {
+	use std::intrinsics::copy_nonoverlapping;
+	use winapi::um::{
+		winbase::{GlobalAlloc, GHND},
+		winuser::CF_DIBV5,
+	};
+
+	let header_size = std::mem::size_of::<BITMAPV5HEADER>();
+	let header = BITMAPV5HEADER {
+		bV5Size: header_size as u32,
+		bV5Width: image.width as LONG,
+		bV5Height: -(image.height as LONG),
+		bV5Planes: 1,
+		bV5BitCount: 32,
+		bV5Compression: BI_RGB,
+		bV5SizeImage: (4 * image.width * image.height) as DWORD,
+		bV5XPelsPerMeter: 3000,
+		bV5YPelsPerMeter: 3000,
+		bV5ClrUsed: 0,
+		bV5ClrImportant: 0,
+		bV5RedMask: 0x00ff0000,
+		bV5GreenMask: 0x0000ff00,
+		bV5BlueMask: 0x000000ff,
+		bV5AlphaMask: 0xff000000,
+		bV5CSType: LCS_sRGB as u32,
+		bV5Endpoints: std::mem::MaybeUninit::<CIEXYZTRIPLE>::zeroed().assume_init(),
+		bV5GammaRed: 0,
+		bV5GammaGreen: 0,
+		bV5GammaBlue: 0,
+		bV5Intent: LCS_GM_IMAGES as u32, // I'm not sure about this.
+		bV5ProfileData: 0,
+		bV5ProfileSize: 0,
+		bV5Reserved: 0,
+	};
+
+	let data_size = header_size + image.bytes.len();
+	let hdata = GlobalAlloc(GHND, data_size);
+	if hdata.is_null() {
+		return Err(Error::Unknown {
+			description: format!(
+				"Could not allocate global memory object. GlobalAlloc returned null at line {}.",
+				line!()
+			),
+		});
+	}
+	{
+		let data_ptr = GlobalLock(hdata);
+		if data_ptr.is_null() {
+			return Err(Error::Unknown {
+				description: format!("Could not lock the global memory object at line {}", line!()),
+			});
+		}
+		defer!(GlobalUnlock(hdata););
+		copy_nonoverlapping(&header as *const _ as *const _, data_ptr, header_size);
+
+		let pixels_dst = data_ptr.offset(header_size as isize);
+		copy_nonoverlapping(image.bytes.as_ptr() as *const _, pixels_dst, image.bytes.len());
+
+		let dst_pixels_slice =
+			std::slice::from_raw_parts_mut(pixels_dst as *mut u8, image.bytes.len());
+		rgba_to_win(dst_pixels_slice);
+	}
+
+	if SetClipboardData(CF_DIBV5, hdata as _).is_null() {
+		DeleteObject(hdata as _);
+		return Err(Error::Unknown {
+			description: format!("Call to `SetClipboardData` returned NULL at line {}", line!()),
+		});
+	}
+	Ok(())
+}
+
+fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
+	// The DIBV5 format is a BITMAPV5HEADER followed by the pixel data according to
+	// https://docs.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats
+
+	// so first let's get a pointer to the header
+	let header_size = size_of::<BITMAPV5HEADER>();
+	if dibv5.len() < header_size {
+		return Err(Error::Unknown {
+			description: "When reading the DIBV5 data, it contained fewer bytes than the BITMAPV5HEADER size. This is invalid.".into()
+		});
+	}
+	let header = unsafe { &*(dibv5.as_ptr() as *const BITMAPV5HEADER) };
+
+	// println!("real header size {}, expected header size {}", header.bV5Size, header_size);
+
+	let has_profile =
+		header.bV5CSType as i32 == PROFILE_LINKED || header.bV5CSType as i32 == PROFILE_EMBEDDED;
+	let pixel_data_start;
+	if has_profile {
+		pixel_data_start = header.bV5ProfileData as isize + header.bV5ProfileSize as isize;
+	} else {
+		pixel_data_start = header_size as isize;
+	}
+	// println!("Pixel data start {}", pixel_data_start);
+	unsafe {
+		let image_bytes = dibv5.as_ptr().offset(pixel_data_start) as *const _;
+		let hdc = GetDC(std::ptr::null_mut());
+		let hbitmap = CreateDIBitmap(
+			hdc,
+			header as *const BITMAPV5HEADER as *const _,
+			CBM_INIT,
+			image_bytes,
+			header as *const BITMAPV5HEADER as *const _,
+			DIB_RGB_COLORS,
+		);
+		if hbitmap.is_null() {
+			return Err(Error::Unknown {
+				description:
+					"Failed to create the HBITMAP while reading DIBV5. CreateDIBitmap returned null"
+						.into(),
+			});
+		}
+		// Now extract the pixels in a desired format
+		let w = header.bV5Width;
+		let h = header.bV5Height.abs();
+		// println!("w, h: {}, {}", w, h);
+		let result_size = w as usize * h as usize * 4;
+
+		let mut result_bytes = Vec::<u8>::with_capacity(result_size);
+
+		let mut output_header = BITMAPINFO {
+			bmiColors: [RGBQUAD { rgbRed: 0, rgbGreen: 0, rgbBlue: 0, rgbReserved: 0 }],
+			bmiHeader: BITMAPINFOHEADER {
+				biSize: size_of::<BITMAPINFOHEADER>() as u32,
+				biWidth: w,
+				biHeight: -h,
+				biBitCount: 32,
+				biPlanes: 1,
+				biCompression: BI_RGB,
+				biSizeImage: 0,
+				biXPelsPerMeter: 0,
+				biYPelsPerMeter: 0,
+				biClrUsed: 0,
+				biClrImportant: 0,
+			},
+		};
+
+		let result = GetDIBits(
+			hdc,
+			hbitmap,
+			0,
+			h as u32,
+			result_bytes.as_mut_ptr() as *mut _,
+			&mut output_header as *mut _,
+			DIB_RGB_COLORS,
+		);
+		if result == 0 {
+			return Err(Error::Unknown {
+				description: "Could not get the bitmap bits, GetDIBits returned 0".into(),
+			});
+		}
+		// println!("GetDIBits returned {}", result);
+		let read_len = result as usize * w as usize * 4;
+		if read_len > result_bytes.capacity() {
+			panic!("Segmentation fault. Read more bytes than allocated to pixel buffer");
+		}
+		result_bytes.set_len(read_len);
+
+		win_to_rgba(&mut result_bytes);
+
+		let result =
+			ImageData { bytes: result_bytes.into(), width: w as usize, height: h as usize };
+		Ok(result)
+	}
+}
+
+/// Converts the RGBA (u8) pixel data into the bitmap-native ARGB (u32) format in-place
+///
+/// Safety: the `bytes` slice must have a length that's a multiple of 4
+unsafe fn rgba_to_win(bytes: &mut [u8]) {
+	let u32pixels = std::slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut u32, bytes.len() / 4);
+
+	for p in u32pixels {
+		let tmp = *p;
+		let rgba = std::slice::from_raw_parts((&tmp) as *const u32 as *const u8, 4);
+		let a = (rgba[3] as u32) << (3 * 8);
+		let r = (rgba[0] as u32) << (2 * 8);
+		let g = (rgba[1] as u32) << (1 * 8);
+		let b = (rgba[2] as u32) << (0 * 8);
+
+		*p = a | r | g | b;
+	}
+}
+
+/// Converts the ARGB (u32) pixel data into the RGBA (u8) format in-place
+///
+/// Safety: the `bytes` slice must have a length that's a multiple of 4
+#[cfg(feature = "image-data")]
+unsafe fn win_to_rgba(bytes: &mut [u8]) {
+	let u32pixels = std::slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut u32, bytes.len() / 4);
+
+	for p in u32pixels {
+		let mut tmp = *p;
+		let bytes = std::slice::from_raw_parts_mut((&mut tmp) as *mut u32 as *mut u8, 4);
+		bytes[0] = (*p >> (2 * 8)) as u8;
+		bytes[1] = (*p >> (1 * 8)) as u8;
+		bytes[2] = (*p >> (0 * 8)) as u8;
+		bytes[3] = (*p >> (3 * 8)) as u8;
+		*p = tmp;
+	}
+}
+
 #[cfg(feature = "image-data")]
 unsafe fn add_cf_bitmap(image: &ImageData) -> Result<(), Error> {
 	let header = BITMAPV4HEADER {
@@ -126,10 +396,10 @@ unsafe fn add_cf_bitmap(image: &ImageData) -> Result<(), Error> {
 		bV4ClrUsed: 0,
 		bV4ClrImportant: 0,
 		// I'm not sure if the nedianness conversion is good to do
-		bV4RedMask: u32::from_le(0x0000ff),
-		bV4GreenMask: u32::from_le(0x00ff00),
-		bV4BlueMask: u32::from_le(0xff0000),
-		bV4AlphaMask: u32::from_le(0x00000000),
+		bV4RedMask: u32::from_le(0x000000ff),
+		bV4GreenMask: u32::from_le(0x0000ff00),
+		bV4BlueMask: u32::from_le(0x00ff0000),
+		bV4AlphaMask: u32::from_le(0xff000000),
 		bV4CSType: 0,
 		bV4Endpoints: std::mem::MaybeUninit::<CIEXYZTRIPLE>::zeroed().assume_init(),
 		bV4GammaRed: 0,
@@ -242,69 +512,40 @@ impl WindowsClipboardContext {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
-		use std::borrow::Cow;
-		use std::convert::TryInto;
+		use winapi::um::winuser::CF_DIBV5;
 
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
 			.map_err(|_| Error::ClipboardOccupied)?;
-		let format = clipboard_win::formats::CF_DIB;
-		let size;
-		match clipboard_win::raw::size(format) {
-			Some(s) => size = s,
-			None => return Err(Error::ContentNotAvailable),
+
+		let data_handle = unsafe { GetClipboardData(CF_DIBV5) as *mut winapi::ctypes::c_void };
+		if data_handle.is_null() {
+			return Err(Error::Unknown { description: "GetClipboardData returned null".into() });
 		}
-		let mut data = vec![0u8; size.into()];
-		clipboard_win::raw::get(format, &mut data).map_err(|_| Error::Unknown {
-			description: "failed to get image data from the clipboard".into(),
-		})?;
-		let info_header_size = u32::from_le_bytes(data[..4].try_into().unwrap());
-		let mut fake_bitmap_file =
-			FakeBitmapFile { bitmap: data, file_header: [0; BITMAP_FILE_HEADER_SIZE], curr_pos: 0 };
-		fake_bitmap_file.file_header[0] = b'B';
-		fake_bitmap_file.file_header[1] = b'M';
-
-		let file_size =
-			u32::to_le_bytes((fake_bitmap_file.bitmap.len() + BITMAP_FILE_HEADER_SIZE) as u32);
-		fake_bitmap_file.file_header[2..6].copy_from_slice(&file_size);
-
-		let data_offset = u32::to_le_bytes(info_header_size + BITMAP_FILE_HEADER_SIZE as u32);
-		fake_bitmap_file.file_header[10..14].copy_from_slice(&data_offset);
-
-		let bmp_decoder = BmpDecoder::new(fake_bitmap_file).unwrap();
-		let (w, h) = bmp_decoder.dimensions();
-		let width = w as usize;
-		let height = h as usize;
-		let image =
-			image::DynamicImage::from_decoder(bmp_decoder).map_err(|_| Error::ConversionFailure)?;
-		Ok(ImageData { width, height, bytes: Cow::from(image.into_rgba8().into_raw()) })
+		unsafe {
+			let ptr = GlobalLock(data_handle);
+			if ptr.is_null() {
+				return Err(Error::Unknown { description: "GlobalLock returned null".into() });
+			}
+			defer!( GlobalUnlock(data_handle); );
+			let data_size = GlobalSize(data_handle);
+			// println!("Data size: {}", data_size);
+			let data_slice = std::slice::from_raw_parts(ptr as *const u8, data_size);
+			read_cf_dibv5(data_slice)
+		}
 	}
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
-		use std::convert::TryInto;
-
-		//let clipboard = SystemClipboard::new()?;
-		let mut bmp_data = Vec::with_capacity(image.bytes.len());
-		let mut cursor = std::io::Cursor::new(&mut bmp_data);
-		let mut encoder = BmpEncoder::new(&mut cursor);
-		encoder
-			.encode(&image.bytes, image.width as u32, image.height as u32, ColorType::Rgba8)
-			.map_err(|_| Error::ConversionFailure)?;
-		let data_without_file_header = &bmp_data[BITMAP_FILE_HEADER_SIZE..];
-		let header_size = u32::from_le_bytes(data_without_file_header[..4].try_into().unwrap());
-		let format = if header_size > BITMAP_V4_INFO_HEADER_SIZE {
-			clipboard_win::formats::CF_DIBV5
-		} else {
-			clipboard_win::formats::CF_DIB
-		};
 		let mut result: Result<(), Error> = Ok(());
 		//let mut success = false;
 		clipboard_win::with_clipboard(|| {
-			let success = clipboard_win::raw::set(format, data_without_file_header).is_ok();
+			// let dib_result: Result<(), String> = Ok(());
+			let dib_result = unsafe { add_cf_dibv5(&image) };
+			// let bitmap_result: Result<(), String> = Ok(());
 			let bitmap_result = unsafe { add_cf_bitmap(&image) };
-			if bitmap_result.is_err() && !success {
+			if let (Err(dib_err), Err(bitmap_err)) = (dib_result, bitmap_result) {
 				result = Err(Error::Unknown {
-					description: "Could not set the image for the clipboard in neither of `CF_DIB` and `CG_BITMAP` formats.".into(),
+					description: format!("Could not set the image for the clipboard in neither of `CF_DIBV5` and `CF_BITMAP` formats. The errors were:\n`CF_DIBV5`: {}\n`CF_BITMAP`: {}", dib_err, bitmap_err),
 				});
 			}
 		})
