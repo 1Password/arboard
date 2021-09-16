@@ -87,7 +87,7 @@ impl Clipboard {
 	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
 	/// other application will be of a supported format.
 	#[cfg(feature = "image-data")]
-	pub fn get_image(&mut self) -> Result<ImageData, Error> {
+	pub fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
 		self.platform.get_image()
 	}
 

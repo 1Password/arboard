@@ -375,7 +375,7 @@ impl WindowsClipboardContext {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
+	pub(crate) fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
 		use winapi::um::winuser::CF_DIBV5;
 
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
@@ -383,7 +383,7 @@ impl WindowsClipboardContext {
 
 		let data_handle = unsafe { GetClipboardData(CF_DIBV5) as *mut winapi::ctypes::c_void };
 		if data_handle.is_null() {
-			return Err(Error::Unknown { description: "GetClipboardData returned null".into() });
+			return Err(Error::ContentNotAvailable);
 		}
 		unsafe {
 			let ptr = GlobalLock(data_handle);
@@ -402,6 +402,12 @@ impl WindowsClipboardContext {
 		let mut result: Result<(), Error> = Ok(());
 		//let mut success = false;
 		clipboard_win::with_clipboard(|| {
+			if let Err(e) = clipboard_win::raw::empty() {
+				result = Err(Error::Unknown {
+					description: format!("Failed to empty the clipboard. Got error code: {}", e)
+				});
+				return;
+			}
 			// let dib_result: Result<(), String> = Ok(());
 			let dib_result = unsafe { add_cf_dibv5(&image) };
 			// let bitmap_result: Result<(), String> = Ok(());
