@@ -183,7 +183,7 @@ impl OSXClipboardContext {
 	// 	}
 	// }
 	#[cfg(feature = "image-data")]
-	pub(crate) fn get_image(&mut self) -> Result<ImageData, Error> {
+	pub(crate) fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
 		use std::io::Cursor;
 
 		let image_class: Id<NSObject> = {
