@@ -149,6 +149,13 @@ fn all_tests() {
 		ctx.set_image(img_data.clone()).unwrap();
 		let got = ctx.get_image().unwrap();
 		assert_eq!(img_data.bytes, got.bytes);
+
+		// Make sure that setting one format overwrites the other.
+		ctx.set_image(img_data.clone()).unwrap();
+		assert!(matches!(ctx.get_text(), Err(Error::ContentNotAvailable)));
+
+		ctx.set_text("clipboard test".into()).unwrap();
+		assert!(matches!(ctx.get_image(), Err(Error::ContentNotAvailable)));
 	}
 	#[cfg(all(
 		unix,

@@ -26,11 +26,11 @@ use winapi::{
 	um::{
 		wingdi::{
 			CreateDIBitmap, DeleteObject, GetDIBits, LCS_sRGB, BITMAPINFO, BITMAPINFOHEADER,
-			BITMAPV4HEADER, BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, CIEXYZTRIPLE,
-			DIB_RGB_COLORS, LCS_GM_IMAGES, PROFILE_EMBEDDED, PROFILE_LINKED, RGBQUAD,
+			BITMAPV5HEADER, BI_RGB, CBM_INIT, CIEXYZTRIPLE, DIB_RGB_COLORS, LCS_GM_IMAGES,
+			PROFILE_EMBEDDED, PROFILE_LINKED, RGBQUAD,
 		},
 		winnt::LONG,
-		winuser::{GetDC, SetClipboardData, CF_BITMAP},
+		winuser::{GetDC, SetClipboardData},
 	},
 };
 
@@ -245,50 +245,6 @@ unsafe fn win_to_rgba(bytes: &mut [u8]) {
 	}
 }
 
-#[cfg(feature = "image-data")]
-unsafe fn add_cf_bitmap(image: &ImageData) -> Result<(), Error> {
-	let header = BITMAPV4HEADER {
-		bV4Size: std::mem::size_of::<BITMAPV4HEADER>() as _,
-		bV4Width: image.width as LONG,
-		bV4Height: -(image.height as LONG),
-		bV4Planes: 1,
-		bV4BitCount: 32,
-		bV4V4Compression: BI_BITFIELDS,
-		bV4SizeImage: (4 * image.width * image.height) as DWORD,
-		bV4XPelsPerMeter: 3000,
-		bV4YPelsPerMeter: 3000,
-		bV4ClrUsed: 0,
-		bV4ClrImportant: 0,
-		// I'm not sure if the nedianness conversion is good to do
-		bV4RedMask: u32::from_le(0x000000ff),
-		bV4GreenMask: u32::from_le(0x0000ff00),
-		bV4BlueMask: u32::from_le(0x00ff0000),
-		bV4AlphaMask: u32::from_le(0xff000000),
-		bV4CSType: 0,
-		bV4Endpoints: std::mem::MaybeUninit::<CIEXYZTRIPLE>::zeroed().assume_init(),
-		bV4GammaRed: 0,
-		bV4GammaGreen: 0,
-		bV4GammaBlue: 0,
-	};
-
-	let hdc = GetDC(std::ptr::null_mut());
-	let hbitmap = CreateDIBitmap(
-		hdc,
-		&header as *const BITMAPV4HEADER as *const _,
-		CBM_INIT,
-		image.bytes.as_ptr() as *const _,
-		&header as *const BITMAPV4HEADER as *const _,
-		DIB_RGB_COLORS,
-	);
-	if SetClipboardData(CF_BITMAP, hbitmap as _).is_null() {
-		DeleteObject(hbitmap as _);
-		return Err(Error::Unknown {
-			description: String::from("Call to `SetClipboardData` returned NULL"),
-		});
-	}
-	Ok(())
-}
-
 pub fn get_string(out: &mut Vec<u8>) -> Result<(), Error> {
 	use std::mem;
 	use std::ptr;
@@ -399,27 +355,15 @@ impl WindowsClipboardContext {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
-		let mut result: Result<(), Error> = Ok(());
-		//let mut success = false;
-		clipboard_win::with_clipboard(|| {
-			if let Err(e) = clipboard_win::raw::empty() {
-				result = Err(Error::Unknown {
-					description: format!("Failed to empty the clipboard. Got error code: {}", e)
-				});
-				return;
-			}
-			// let dib_result: Result<(), String> = Ok(());
-			let dib_result = unsafe { add_cf_dibv5(&image) };
-			// let bitmap_result: Result<(), String> = Ok(());
-			let bitmap_result = unsafe { add_cf_bitmap(&image) };
-			if let (Err(dib_err), Err(bitmap_err)) = (dib_result, bitmap_result) {
-				result = Err(Error::Unknown {
-					description: format!("Could not set the image for the clipboard in neither of `CF_DIBV5` and `CF_BITMAP` formats. The errors were:\n`CF_DIBV5`: {}\n`CF_BITMAP`: {}", dib_err, bitmap_err),
-				});
-			}
-		})
-		.map_err(|_| Error::ClipboardOccupied)?;
+		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
+			.map_err(|_| Error::ClipboardOccupied)?;
 
-		result
+		if let Err(e) = clipboard_win::raw::empty() {
+			return Err(Error::Unknown {
+				description: format!("Failed to empty the clipboard. Got error code: {}", e),
+			});
+		};
+
+		unsafe { add_cf_dibv5(&image) }
 	}
 }
