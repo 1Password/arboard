@@ -11,10 +11,13 @@ and conditions of the chosen license apply to this file.
 #[cfg(feature = "image-data")]
 use std::mem::size_of;
 
+use log::error;
+
 use clipboard_win::Clipboard as SystemClipboard;
 
 use scopeguard::defer;
 use winapi::um::{
+	errhandlingapi::GetLastError,
 	stringapiset::WideCharToMultiByte,
 	winbase::{GlobalLock, GlobalSize, GlobalUnlock},
 	winnls::CP_UTF8,
@@ -94,7 +97,15 @@ unsafe fn add_cf_dibv5(image: &ImageData) -> Result<(), Error> {
 				description: format!("Could not lock the global memory object at line {}", line!()),
 			});
 		}
-		defer!(GlobalUnlock(hdata););
+		defer!({
+			let retval = GlobalUnlock(hdata);
+			if retval == 0 {
+				let lasterr = GetLastError();
+				if lasterr != 0 {
+					error!("Failed calling GlobalUnlock when writing dibv5 data. Error code was 0x{:X}", lasterr);
+				}
+			}
+		});
 		copy_nonoverlapping(&header as *const _ as *const _, data_ptr, header_size);
 
 		let pixels_dst = data_ptr.add(header_size);
@@ -262,7 +273,15 @@ pub fn get_string(out: &mut Vec<u8>) -> Result<(), Error> {
 				description: "GlobalLock on clipboard data returned null.".into(),
 			});
 		}
-		defer!( GlobalUnlock(ptr); );
+		defer!({
+			let retval = GlobalUnlock(ptr);
+			if retval == 0 {
+				let lasterr = GetLastError();
+				if lasterr != 0 {
+					error!("Failed calling GlobalUnlock when reading string data. Error code was 0x{:X}", lasterr);
+				}
+			}
+		});
 
 		let char_count = GlobalSize(ptr) as usize / mem::size_of::<u16>();
 		let storage_req_size = WideCharToMultiByte(
@@ -346,7 +365,15 @@ impl WindowsClipboardContext {
 			if ptr.is_null() {
 				return Err(Error::Unknown { description: "GlobalLock returned null".into() });
 			}
-			defer!( GlobalUnlock(data_handle); );
+			defer!({
+				let retval = GlobalUnlock(data_handle);
+				if retval == 0 {
+					let lasterr = GetLastError();
+					if lasterr != 0 {
+						error!("Failed calling GlobalUnlock when reading dibv5 data. Error code was 0x{:X}", lasterr);
+					}
+				}
+			});
 			let data_size = GlobalSize(data_handle);
 			let data_slice = std::slice::from_raw_parts(ptr as *const u8, data_size);
 			read_cf_dibv5(data_slice)
