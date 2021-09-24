@@ -45,10 +45,11 @@ use super::common::ImageData;
 const MAX_OPEN_ATTEMPTS: usize = 5;
 
 #[cfg(feature = "image-data")]
-unsafe fn add_cf_dibv5(image: &ImageData) -> Result<(), Error> {
+unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 	use std::intrinsics::copy_nonoverlapping;
 	use winapi::um::{
 		winbase::{GlobalAlloc, GHND},
+		wingdi::BI_BITFIELDS,
 		winuser::CF_DIBV5,
 	};
 
@@ -56,13 +57,13 @@ unsafe fn add_cf_dibv5(image: &ImageData) -> Result<(), Error> {
 	let header = BITMAPV5HEADER {
 		bV5Size: header_size as u32,
 		bV5Width: image.width as LONG,
-		bV5Height: -(image.height as LONG),
+		bV5Height: image.height as LONG,
 		bV5Planes: 1,
 		bV5BitCount: 32,
-		bV5Compression: BI_RGB,
+		bV5Compression: BI_BITFIELDS,
 		bV5SizeImage: (4 * image.width * image.height) as DWORD,
-		bV5XPelsPerMeter: 3000,
-		bV5YPelsPerMeter: 3000,
+		bV5XPelsPerMeter: 0,
+		bV5YPelsPerMeter: 0,
 		bV5ClrUsed: 0,
 		bV5ClrImportant: 0,
 		bV5RedMask: 0x00ff0000,
@@ -79,6 +80,12 @@ unsafe fn add_cf_dibv5(image: &ImageData) -> Result<(), Error> {
 		bV5ProfileSize: 0,
 		bV5Reserved: 0,
 	};
+
+	// In theory we don't need to flip the image because we could just specify
+	// a negative height in the header, which according to the documentation, indicates that the
+	// image rows are in top-to-bottom order. HOWEVER: MS Word (and WordPad) cannot paste an image
+	// that has a negative height in its header.
+	let image = flip_v(image);
 
 	let data_size = header_size + image.bytes.len();
 	let hdata = GlobalAlloc(GHND, data_size);
@@ -237,6 +244,34 @@ unsafe fn rgba_to_win(bytes: &mut [u8]) {
 	}
 }
 
+/// Vertically flips the image pixels in memory
+#[cfg(feature = "image-data")]
+fn flip_v(image: ImageData) -> ImageData<'static> {
+	let w = image.width;
+	let h = image.height;
+
+	let mut bytes = image.bytes.into_owned();
+
+	let rowsize = w * 4; // each pixel is 4 bytes
+	let mut tmp_a = Vec::new();
+	tmp_a.resize(rowsize, 0);
+	// I believe this could be done safely with `as_chunks_mut`, but that's not stable yet
+	for a_row_id in 0..(h / 2) {
+		let b_row_id = h - a_row_id - 1;
+
+		// swap rows `first_id` and `second_id`
+		let a_byte_start = a_row_id * rowsize;
+		let a_byte_end = a_byte_start + rowsize;
+		let b_byte_start = b_row_id * rowsize;
+		let b_byte_end = b_byte_start + rowsize;
+		tmp_a.copy_from_slice(&bytes[a_byte_start..a_byte_end]);
+		bytes.copy_within(b_byte_start..b_byte_end, a_byte_start);
+		bytes[b_byte_start..b_byte_end].copy_from_slice(&tmp_a);
+	}
+
+	ImageData { width: image.width, height: image.height, bytes: bytes.into() }
+}
+
 /// Converts the ARGB (u32) pixel data into the RGBA (u8) format in-place
 ///
 /// Safety: the `bytes` slice must have a length that's a multiple of 4
@@ -376,6 +411,7 @@ impl WindowsClipboardContext {
 			});
 			let data_size = GlobalSize(data_handle);
 			let data_slice = std::slice::from_raw_parts(ptr as *const u8, data_size);
+
 			read_cf_dibv5(data_slice)
 		}
 	}
@@ -391,6 +427,6 @@ impl WindowsClipboardContext {
 			});
 		};
 
-		unsafe { add_cf_dibv5(&image) }
+		unsafe { add_cf_dibv5(image) }
 	}
 }
