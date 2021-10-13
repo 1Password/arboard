@@ -2,6 +2,10 @@
 [![Latest version](https://img.shields.io/crates/v/arboard?color=mediumvioletred)](https://crates.io/crates/arboard)
 [![Documentation](https://docs.rs/arboard/badge.svg)](https://docs.rs/arboard)
 
+## Warning
+
+I'm planning to stop maintaining this repository soon and archiving it. In the optimal case, someone makes a fork of this and diligently makes PRs against all repos that depend on this crate to depend on their actively maintained fork. Note that there's a significant amount of unfinished work on the `any-format` branch which intends to greatly extend the number of supported formats.
+
 ## General
 
 This is a cross-platform library for interacting with the clipboard. It allows to copy and paste both text and image data in a platform independent way on Linux, Mac, and Windows.
