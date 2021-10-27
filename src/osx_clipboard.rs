@@ -101,26 +101,13 @@ impl OSXClipboardContext {
 		Ok(OSXClipboardContext { pasteboard })
 	}
 	pub(crate) fn get_text(&mut self) -> Result<String, Error> {
-		let string_class: Id<NSObject> = {
-			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
-			unsafe { transmute(cls) }
-		};
-		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![string_class]);
-		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
-		let string_array: Id<NSArray<NSString>> = unsafe {
-			let obj: *mut NSArray<NSString> =
-				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
-			if obj.is_null() {
-				//return Err("pasteboard#readObjectsForClasses:options: returned null".into());
-				return Err(Error::ContentNotAvailable);
-			}
-			Id::from_ptr(obj)
-		};
-		if string_array.count() == 0 {
-			//Err("pasteboard#readObjectsForClasses:options: returned empty".into())
-			Err(Error::ContentNotAvailable)
+		let nsstring: *mut NSString =
+			unsafe { msg_send![self.pasteboard, stringForType: NSPasteboardTypeString] };
+		if nsstring.is_null() {
+			Err("pasteboard#stringForType returned null".into())
 		} else {
-			Ok(string_array[0].as_str().to_owned())
+			let nsstring: Id<NSString> = unsafe { Id::from_retained_ptr(nsstring) };
+			Ok(autoreleasepool(|| nsstring.as_str().to_owned()))
 		}
 	}
 	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Error> {
