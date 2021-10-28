@@ -18,7 +18,7 @@ use core_graphics::{
 	data_provider::{CGDataProvider, CustomData},
 	image::CGImage,
 };
-use objc::runtime::{Class, Object};
+use objc::{rc::autoreleasepool, runtime::{Class, Object, Sel}};
 #[cfg(feature = "image-data")]
 use objc::runtime::{BOOL, NO};
 use objc::{msg_send, sel, sel_impl};
@@ -29,7 +29,9 @@ use std::mem::transmute;
 
 // required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
-extern "C" {}
+extern "C" {
+    pub static NSPasteboardTypeString: Sel;
+}
 
 /// Returns an NSImage object on success.
 #[cfg(feature = "image-data")]
@@ -104,7 +106,7 @@ impl OSXClipboardContext {
 		let nsstring: *mut NSString =
 			unsafe { msg_send![self.pasteboard, stringForType: NSPasteboardTypeString] };
 		if nsstring.is_null() {
-			Err("pasteboard#stringForType returned null".into())
+            Err(Error::Unknown { description: "pasteboard#stringForType returned null".into() })
 		} else {
 			let nsstring: Id<NSString> = unsafe { Id::from_retained_ptr(nsstring) };
 			Ok(autoreleasepool(|| nsstring.as_str().to_owned()))
