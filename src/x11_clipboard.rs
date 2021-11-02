@@ -166,7 +166,7 @@ impl XContext {
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct ClipboardData {
 	bytes: Vec<u8>,
 
@@ -205,8 +205,19 @@ impl ClipboardContext {
             });
 		}
 
-		// only if the current owner isn't us, we try to become it
-		if !self.is_owner(selection)? {
+		let data_changed = {
+			// Guard encapsulated in a block so that it is dropped before making the requests.
+			let mut guard = self.data_of(selection).write();
+
+			// Just setting the data, and the `serve_requests` will take care of the rest.
+			let previous_data = guard.replace(data);
+
+			previous_data == *guard
+		};
+
+		// ICCCM version 2, section 2.6.1.3 states that we should re-assert ownership whenever data
+		// changes.
+		if data_changed || !self.is_owner(selection)? {
 			let server_win = self.server.win_id;
 
 			self.server
@@ -215,9 +226,6 @@ impl ClipboardContext {
 				.map_err(|_| Error::ClipboardOccupied)?;
 			self.server.conn.flush().map_err(into_unknown)?;
 		}
-
-		// Just setting the data, and the `serve_requests` will take care of the rest.
-		*self.data_of(selection).write() = Some(data);
 
 		Ok(())
 	}
