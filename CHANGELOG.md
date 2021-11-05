@@ -1,3 +1,8 @@
+## v2.0.1 on 2021-11-05
+
+### Changed
+- On X11, re-assert clipboard ownership every time the data changes.
+
 ## v2.0.0 on 2021-08-07
 
 ### Changed
