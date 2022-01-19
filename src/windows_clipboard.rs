@@ -57,7 +57,7 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 	let header = BITMAPV5HEADER {
 		bV5Size: header_size as u32,
 		bV5Width: image.width as LONG,
-		bV5Height: -(image.height as LONG),
+		bV5Height: image.height as LONG,
 		bV5Planes: 1,
 		bV5BitCount: 32,
 		bV5Compression: BI_BITFIELDS,
@@ -85,7 +85,7 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 	// a negative height in the header, which according to the documentation, indicates that the
 	// image rows are in top-to-bottom order. HOWEVER: MS Word (and WordPad) cannot paste an image
 	// that has a negative height in its header.
-	// let image = flip_v(image);
+	let image = flip_v(image);
 
 	let data_size = header_size + image.bytes.len();
 	let hdata = GlobalAlloc(GHND, data_size);
