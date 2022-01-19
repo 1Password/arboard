@@ -57,7 +57,7 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 	let header = BITMAPV5HEADER {
 		bV5Size: header_size as u32,
 		bV5Width: image.width as LONG,
-		bV5Height: image.height as LONG,
+		bV5Height: -(image.height as LONG),
 		bV5Planes: 1,
 		bV5BitCount: 32,
 		bV5Compression: BI_BITFIELDS,
@@ -85,7 +85,7 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 	// a negative height in the header, which according to the documentation, indicates that the
 	// image rows are in top-to-bottom order. HOWEVER: MS Word (and WordPad) cannot paste an image
 	// that has a negative height in its header.
-	let image = flip_v(image);
+	// let image = flip_v(image);
 
 	let data_size = header_size + image.bytes.len();
 	let hdata = GlobalAlloc(GHND, data_size);
@@ -98,7 +98,7 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 		});
 	}
 	{
-		let data_ptr = GlobalLock(hdata);
+		let data_ptr = GlobalLock(hdata) as *mut u8;
 		if data_ptr.is_null() {
 			return Err(Error::Unknown {
 				description: format!("Could not lock the global memory object at line {}", line!()),
@@ -113,13 +113,13 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 				}
 			}
 		});
-		copy_nonoverlapping(&header as *const _ as *const _, data_ptr, header_size);
+		copy_nonoverlapping::<u8>((&header) as *const _ as *const u8, data_ptr, header_size);
 
-		let pixels_dst = data_ptr.add(header_size);
-		copy_nonoverlapping(image.bytes.as_ptr() as *const _, pixels_dst, image.bytes.len());
+		// Not using the `add` function, because that has a restriction, that the result cannot overflow isize
+		let pixels_dst = (data_ptr as usize + header_size) as *mut u8;
+		copy_nonoverlapping::<u8>(image.bytes.as_ptr(), pixels_dst, image.bytes.len());
 
-		let dst_pixels_slice =
-			std::slice::from_raw_parts_mut(pixels_dst as *mut u8, image.bytes.len());
+		let dst_pixels_slice = std::slice::from_raw_parts_mut(pixels_dst, image.bytes.len());
 		rgba_to_win(dst_pixels_slice);
 	}
 
