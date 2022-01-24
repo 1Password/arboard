@@ -205,16 +205,16 @@ impl ClipboardContext {
             });
 		}
 
-		// only if the current owner isn't us, we try to become it
-		if !self.is_owner(selection)? {
-			let server_win = self.server.win_id;
+		let server_win = self.server.win_id;
 
-			self.server
-				.conn
-				.set_selection_owner(server_win, self.atom_of(selection), Time::CURRENT_TIME)
-				.map_err(|_| Error::ClipboardOccupied)?;
-			self.server.conn.flush().map_err(into_unknown)?;
-		}
+		// ICCCM version 2, section 2.6.1.3 states that we should re-assert ownership whenever data
+		// changes.
+		self.server
+			.conn
+			.set_selection_owner(server_win, self.atom_of(selection), Time::CURRENT_TIME)
+			.map_err(|_| Error::ClipboardOccupied)?;
+
+		self.server.conn.flush().map_err(into_unknown)?;
 
 		// Just setting the data, and the `serve_requests` will take care of the rest.
 		*self.data_of(selection).write() = Some(data);
