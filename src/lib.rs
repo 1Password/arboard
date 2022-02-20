@@ -10,8 +10,6 @@ and conditions of the chosen license apply to this file.
 
 #![crate_name = "arboard"]
 #![crate_type = "lib"]
-#![crate_type = "dylib"]
-#![crate_type = "rlib"]
 
 mod common;
 pub use common::Error;
