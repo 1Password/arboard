@@ -848,7 +848,7 @@ impl X11ClipboardContext {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub fn get_image(&self) -> Result<ImageData> {
+	pub fn get_image(&self) -> Result<ImageData<'static>> {
 		let formats = [self.inner.atoms.PNG_MIME];
 		let bytes = self.inner.read(&formats, LinuxClipboardKind::Clipboard)?.bytes;
 

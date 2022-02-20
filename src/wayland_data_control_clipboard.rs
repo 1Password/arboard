@@ -106,7 +106,7 @@ impl WaylandDataControlClipboardContext {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub fn get_image(&mut self) -> Result<ImageData, Error> {
+	pub fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
 		use std::io::Cursor;
 		use wl_clipboard_rs::paste::MimeType;
 
