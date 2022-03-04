@@ -1,4 +1,4 @@
-Copyright (c) 2020 The arboard contributors
+Copyright (c) 2020 The Arboard ontributors
 
 This software is licensed under either the MIT (see LICENSE-MIT.txt) license
 or the Apache 2.0 (see LICENSE-APACHE.txt) license at your option.
