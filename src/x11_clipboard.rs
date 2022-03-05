@@ -305,7 +305,7 @@ impl ClipboardContext {
 				Event::SelectionNotify(event) => {
 					trace!("Read SelectionNotify");
 					let result = self.handle_read_selection_notify(
-						&reader,
+						reader,
 						target_format,
 						&mut using_incr,
 						&mut incr_data,
@@ -327,7 +327,7 @@ impl ClipboardContext {
 				// a PropertyNotify event.
 				Event::PropertyNotify(event) => {
 					let result = self.handle_read_property_notify(
-						&reader,
+						reader,
 						target_format,
 						&mut using_incr,
 						&mut incr_data,
