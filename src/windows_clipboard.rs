@@ -148,12 +148,13 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 
 	let has_profile =
 		header.bV5CSType as i32 == PROFILE_LINKED || header.bV5CSType as i32 == PROFILE_EMBEDDED;
-	let pixel_data_start;
-	if has_profile {
-		pixel_data_start = header.bV5ProfileData as isize + header.bV5ProfileSize as isize;
+
+	let pixel_data_start = if has_profile {
+		header.bV5ProfileData as isize + header.bV5ProfileSize as isize
 	} else {
-		pixel_data_start = header_size as isize;
-	}
+		header_size as isize
+	};
+
 	unsafe {
 		let image_bytes = dibv5.as_ptr().offset(pixel_data_start) as *const _;
 		let hdc = GetDC(std::ptr::null_mut());

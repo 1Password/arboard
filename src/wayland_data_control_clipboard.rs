@@ -26,9 +26,7 @@ impl TryInto<copy::ClipboardType> for LinuxClipboardKind {
 		match self {
 			LinuxClipboardKind::Clipboard => Ok(copy::ClipboardType::Regular),
 			LinuxClipboardKind::Primary => Ok(copy::ClipboardType::Primary),
-			LinuxClipboardKind::Secondary => {
-				return Err(Error::ClipboardNotSupported);
-			}
+			LinuxClipboardKind::Secondary => Err(Error::ClipboardNotSupported),
 		}
 	}
 }
@@ -40,9 +38,7 @@ impl TryInto<paste::ClipboardType> for LinuxClipboardKind {
 		match self {
 			LinuxClipboardKind::Clipboard => Ok(paste::ClipboardType::Regular),
 			LinuxClipboardKind::Primary => Ok(paste::ClipboardType::Primary),
-			LinuxClipboardKind::Secondary => {
-				return Err(Error::ClipboardNotSupported);
-			}
+			LinuxClipboardKind::Secondary => Err(Error::ClipboardNotSupported),
 		}
 	}
 }
