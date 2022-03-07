@@ -39,7 +39,7 @@ use super::common::ImageData;
 const MAX_OPEN_ATTEMPTS: usize = 5;
 
 #[cfg(feature = "image-data")]
-unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
+fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 	use std::intrinsics::copy_nonoverlapping;
 	use winapi::um::{
 		winbase::{GlobalAlloc, GHND},
@@ -65,7 +65,8 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 		bV5BlueMask: 0x000000ff,
 		bV5AlphaMask: 0xff000000,
 		bV5CSType: LCS_sRGB as u32,
-		bV5Endpoints: std::mem::zeroed(),
+		// SAFETY: Windows ignores this field because `bV5CSType` is not set to `LCS_CALIBRATED_RGB`.
+		bV5Endpoints: unsafe { std::mem::zeroed() },
 		bV5GammaRed: 0,
 		bV5GammaGreen: 0,
 		bV5GammaBlue: 0,
@@ -82,7 +83,7 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 	let image = flip_v(image);
 
 	let data_size = header_size + image.bytes.len();
-	let hdata = GlobalAlloc(GHND, data_size);
+	let hdata = unsafe { GlobalAlloc(GHND, data_size) };
 	if hdata.is_null() {
 		return Err(Error::Unknown {
 			description: format!(
@@ -91,7 +92,7 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 			),
 		});
 	}
-	{
+	unsafe {
 		let data_ptr = GlobalLock(hdata) as *mut u8;
 		if data_ptr.is_null() {
 			return Err(Error::Unknown {
@@ -117,12 +118,18 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 		rgba_to_win(dst_pixels_slice);
 	}
 
-	if SetClipboardData(CF_DIBV5, hdata as _).is_null() {
-		DeleteObject(hdata as _);
-		return Err(Error::Unknown {
-			description: format!("Call to `SetClipboardData` returned NULL at line {}", line!()),
-		});
+	unsafe {
+		if SetClipboardData(CF_DIBV5, hdata as _).is_null() {
+			DeleteObject(hdata as _);
+			return Err(Error::Unknown {
+				description: format!(
+					"Call to `SetClipboardData` returned NULL at line {}",
+					line!()
+				),
+			});
+		}
 	}
+
 	Ok(())
 }
 
@@ -378,6 +385,6 @@ impl WindowsClipboardContext {
 			});
 		};
 
-		unsafe { add_cf_dibv5(image) }
+		add_cf_dibv5(image)
 	}
 }
