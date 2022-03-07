@@ -11,26 +11,20 @@ and conditions of the chosen license apply to this file.
 #[cfg(feature = "image-data")]
 use std::mem::size_of;
 
-use log::error;
-
 use clipboard_win::Clipboard as SystemClipboard;
 
+#[cfg(feature = "image-data")]
 use scopeguard::defer;
-use winapi::um::{
-	errhandlingapi::GetLastError,
-	stringapiset::WideCharToMultiByte,
-	winbase::{GlobalLock, GlobalSize, GlobalUnlock},
-	winnls::CP_UTF8,
-	winuser::{GetClipboardData, CF_UNICODETEXT},
-};
 #[cfg(feature = "image-data")]
 use winapi::{
 	shared::minwindef::DWORD,
 	um::{
+		errhandlingapi::GetLastError,
+		winbase::{GlobalLock, GlobalUnlock},
 		wingdi::{
 			CreateDIBitmap, DeleteObject, GetDIBits, LCS_sRGB, BITMAPINFO, BITMAPINFOHEADER,
-			BITMAPV5HEADER, BI_RGB, CBM_INIT, CIEXYZTRIPLE, DIB_RGB_COLORS, LCS_GM_IMAGES,
-			PROFILE_EMBEDDED, PROFILE_LINKED, RGBQUAD,
+			BITMAPV5HEADER, BI_RGB, CBM_INIT, DIB_RGB_COLORS, LCS_GM_IMAGES, PROFILE_EMBEDDED,
+			PROFILE_LINKED, RGBQUAD,
 		},
 		winnt::LONG,
 		winuser::{GetDC, SetClipboardData},
@@ -71,7 +65,7 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 		bV5BlueMask: 0x000000ff,
 		bV5AlphaMask: 0xff000000,
 		bV5CSType: LCS_sRGB as u32,
-		bV5Endpoints: std::mem::MaybeUninit::<CIEXYZTRIPLE>::zeroed().assume_init(),
+		bV5Endpoints: std::mem::zeroed(),
 		bV5GammaRed: 0,
 		bV5GammaGreen: 0,
 		bV5GammaBlue: 0,
@@ -109,7 +103,7 @@ unsafe fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 			if retval == 0 {
 				let lasterr = GetLastError();
 				if lasterr != 0 {
-					error!("Failed calling GlobalUnlock when writing dibv5 data. Error code was 0x{:X}", lasterr);
+					log::error!("Failed calling GlobalUnlock when writing dibv5 data. Error code was 0x{:X}", lasterr);
 				}
 			}
 		});
@@ -292,129 +286,85 @@ unsafe fn win_to_rgba(bytes: &mut [u8]) {
 	}
 }
 
-pub fn get_string(out: &mut Vec<u8>) -> Result<(), Error> {
-	use std::mem;
-	use std::ptr;
-
-	// This pointer must not be free'd.
-	let ptr = unsafe { GetClipboardData(CF_UNICODETEXT) };
-	if ptr.is_null() {
-		return Err(Error::ContentNotAvailable);
-	}
-
-	unsafe {
-		let data_ptr = GlobalLock(ptr);
-		if data_ptr.is_null() {
-			return Err(Error::Unknown {
-				description: "GlobalLock on clipboard data returned null.".into(),
-			});
-		}
-		defer!({
-			let retval = GlobalUnlock(ptr);
-			if retval == 0 {
-				let lasterr = GetLastError();
-				if lasterr != 0 {
-					error!("Failed calling GlobalUnlock when reading string data. Error code was 0x{:X}", lasterr);
-				}
-			}
-		});
-
-		let char_count = GlobalSize(ptr) as usize / mem::size_of::<u16>();
-		let storage_req_size = WideCharToMultiByte(
-			CP_UTF8,
-			0,
-			data_ptr as _,
-			char_count as _,
-			ptr::null_mut(),
-			0,
-			ptr::null(),
-			ptr::null_mut(),
-		);
-		if storage_req_size == 0 {
-			return Err(Error::ConversionFailure);
-		}
-
-		let storage_cursor = out.len();
-		out.reserve(storage_req_size as usize);
-		let storage_ptr = out.as_mut_ptr().add(storage_cursor) as *mut _;
-		let output_size = WideCharToMultiByte(
-			CP_UTF8,
-			0,
-			data_ptr as _,
-			char_count as _,
-			storage_ptr,
-			storage_req_size,
-			ptr::null(),
-			ptr::null_mut(),
-		);
-		if output_size == 0 {
-			return Err(Error::ConversionFailure);
-		}
-		out.set_len(storage_cursor + storage_req_size as usize);
-
-		//It seems WinAPI always supposed to have at the end null char.
-		//But just to be safe let's check for it and only then remove.
-		if let Some(last_byte) = out.last() {
-			if *last_byte == 0 {
-				out.set_len(out.len() - 1);
-			}
-		}
-	}
-	Ok(())
-}
-
 pub struct WindowsClipboardContext;
 
 impl WindowsClipboardContext {
 	pub(crate) fn new() -> Result<Self, Error> {
 		Ok(WindowsClipboardContext)
 	}
+
 	pub(crate) fn get_text(&mut self) -> Result<String, Error> {
-		// Using this nifty RAII object to open and close the clipboard.
+		const FORMAT: u32 = clipboard_win::formats::CF_UNICODETEXT;
+
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
 			.map_err(|_| Error::ClipboardOccupied)?;
-		let mut result = String::new();
-		get_string(unsafe { result.as_mut_vec() })?;
-		Ok(result)
+
+		// XXX: ToC/ToU race conditions are not possible because we are the sole owners of the clipboard currently.
+		if !clipboard_win::is_format_avail(FORMAT) {
+			return Err(Error::ContentNotAvailable);
+		}
+
+		let text_size = clipboard_win::raw::size(FORMAT).ok_or_else(|| Error::Unknown {
+			description: "failed to read clipboard text size".into(),
+		})?;
+
+		// Allocate the specific number of WTF-16 characters we need to receive.
+		// This division is always accurate because Windows uses 16-bit characters.
+		let mut out: Vec<u16> = vec![0u16; text_size.get() / 2];
+
+		let bytes_read = {
+			// SAFETY: The source slice has a greater alignment than the resulting one.
+			let out: &mut [u8] =
+				unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr().cast(), out.len() * 2) };
+
+			let mut bytes_read = clipboard_win::raw::get(FORMAT, out).map_err(|_| {
+				Error::Unknown { description: "failed to read clipboard string".into() }
+			})?;
+
+			// Convert the number of bytes read to the number of `u16`s
+			bytes_read /= 2;
+
+			// Remove the NUL terminator, if it existed.
+			if let Some(last) = out.last().copied() {
+				if last == 0 {
+					bytes_read -= 1;
+				}
+			}
+
+			bytes_read
+		};
+
+		// Create a UTF-8 string from WTF-16 data, if it was valid.
+		String::from_utf16(&out[..bytes_read]).map_err(|_| Error::ConversionFailure)
 	}
+
 	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Error> {
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
 			.map_err(|_| Error::ClipboardOccupied)?;
-		clipboard_win::set(clipboard_win::formats::Unicode, data).map_err(|_| Error::Unknown {
+
+		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
 			description: "Could not place the specified text to the clipboard".into(),
 		})
 	}
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
-		use winapi::um::winuser::CF_DIBV5;
+		const FORMAT: u32 = clipboard_win::formats::CF_DIBV5;
 
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
 			.map_err(|_| Error::ClipboardOccupied)?;
 
-		let data_handle = unsafe { GetClipboardData(CF_DIBV5) as *mut winapi::ctypes::c_void };
-		if data_handle.is_null() {
+		if !clipboard_win::is_format_avail(FORMAT) {
 			return Err(Error::ContentNotAvailable);
 		}
-		unsafe {
-			let ptr = GlobalLock(data_handle);
-			if ptr.is_null() {
-				return Err(Error::Unknown { description: "GlobalLock returned null".into() });
-			}
-			defer!({
-				let retval = GlobalUnlock(data_handle);
-				if retval == 0 {
-					let lasterr = GetLastError();
-					if lasterr != 0 {
-						error!("Failed calling GlobalUnlock when reading dibv5 data. Error code was 0x{:X}", lasterr);
-					}
-				}
-			});
-			let data_size = GlobalSize(data_handle);
-			let data_slice = std::slice::from_raw_parts(ptr as *const u8, data_size);
 
-			read_cf_dibv5(data_slice)
-		}
+		let mut data = Vec::new();
+
+		clipboard_win::raw::get_vec(FORMAT, &mut data).map_err(|_| Error::Unknown {
+			description: "failed to read clipboard image data".into(),
+		})?;
+
+		read_cf_dibv5(&data)
 	}
 
 	#[cfg(feature = "image-data")]
