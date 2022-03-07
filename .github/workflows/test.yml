@@ -90,3 +90,28 @@ jobs:
         with:
           command: test
           args: --all-features
+
+  miri:
+    needs: clippy
+    env:
+      MIRIFLAGS: -Zmiri-symbolic-alignment-check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # Currently, only Windows has soundness tests.
+        os: [windows-latest]
+    steps:
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+          components: miri
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Check soundness
+        uses: actions-rs/cargo@v1
+        with:
+          command: miri
+          args: test windows_clipboard --features image-data
