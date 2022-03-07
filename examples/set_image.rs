@@ -1,5 +1,3 @@
-extern crate arboard;
-
 use arboard::{Clipboard, ImageData};
 
 fn main() {
