@@ -9,7 +9,7 @@ and conditions of the chosen license apply to this file.
 */
 
 #[cfg(feature = "image-data")]
-use std::mem::size_of;
+use std::{borrow::Cow, convert::TryInto, mem::size_of};
 
 use clipboard_win::Clipboard as SystemClipboard;
 
@@ -115,7 +115,14 @@ fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 		copy_nonoverlapping::<u8>(image.bytes.as_ptr(), pixels_dst, image.bytes.len());
 
 		let dst_pixels_slice = std::slice::from_raw_parts_mut(pixels_dst, image.bytes.len());
-		rgba_to_win(dst_pixels_slice);
+
+		// If the non-allocating version of the function failed, we need to assign the new bytes to
+		// the global allocation.
+		if let Cow::Owned(new_pixels) = rgba_to_win(dst_pixels_slice) {
+			// SAFETY: `data_ptr` is valid to write to and has no outstanding mutable borrows, and
+			// `new_pixels` will be the same length as the original bytes.
+			copy_nonoverlapping::<u8>(new_pixels.as_ptr(), data_ptr, new_pixels.len())
+		}
 	}
 
 	unsafe {
@@ -218,10 +225,10 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 		}
 		result_bytes.set_len(read_len);
 
-		win_to_rgba(&mut result_bytes);
+		let result_bytes = win_to_rgba(&mut result_bytes);
 
 		let result =
-			ImageData { bytes: result_bytes.into(), width: w as usize, height: h as usize };
+			ImageData { bytes: Cow::Owned(result_bytes), width: w as usize, height: h as usize };
 		Ok(result)
 	}
 }
@@ -231,18 +238,32 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 /// Safety: the `bytes` slice must have a length that's a multiple of 4
 #[cfg(feature = "image-data")]
 #[allow(clippy::identity_op, clippy::erasing_op)]
-unsafe fn rgba_to_win(bytes: &mut [u8]) {
-	let u32pixels = std::slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut u32, bytes.len() / 4);
+#[must_use]
+unsafe fn rgba_to_win(bytes: &mut [u8]) -> Cow<'_, [u8]> {
+	// Check safety invariants to catch obvious bugs.
+	debug_assert_eq!(bytes.len() % 4, 0);
 
-	for p in u32pixels {
-		let tmp = *p;
-		let rgba = std::slice::from_raw_parts((&tmp) as *const u32 as *const u8, 4);
-		let a = (rgba[3] as u32) << (3 * 8);
-		let r = (rgba[0] as u32) << (2 * 8);
-		let g = (rgba[1] as u32) << (1 * 8);
-		let b = (rgba[2] as u32) << (0 * 8);
+	let mut u32pixels_buffer = convert_bytes_to_u32s(bytes);
+	let u32pixels = match u32pixels_buffer {
+		ImageDataCow::Borrowed(ref mut b) => b,
+		ImageDataCow::Owned(ref mut b) => b.as_mut_slice(),
+	};
 
-		*p = a | r | g | b;
+	for p in u32pixels.iter_mut() {
+		let [mut r, mut g, mut b, mut a] = p.to_ne_bytes().map(u32::from);
+		r <<= 2 * 8;
+		g <<= 1 * 8;
+		b <<= 0 * 8;
+		a <<= 3 * 8;
+
+		*p = r | g | b | a;
+	}
+
+	match u32pixels_buffer {
+		ImageDataCow::Borrowed(_) => Cow::Borrowed(bytes),
+		ImageDataCow::Owned(bytes) => {
+			Cow::Owned(bytes.into_iter().flat_map(|b| b.to_ne_bytes()).collect())
+		}
 	}
 }
 
@@ -279,17 +300,57 @@ fn flip_v(image: ImageData) -> ImageData<'static> {
 /// Safety: the `bytes` slice must have a length that's a multiple of 4
 #[cfg(feature = "image-data")]
 #[allow(clippy::identity_op, clippy::erasing_op)]
-unsafe fn win_to_rgba(bytes: &mut [u8]) {
-	let u32pixels = std::slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut u32, bytes.len() / 4);
+#[must_use]
+unsafe fn win_to_rgba(bytes: &mut [u8]) -> Vec<u8> {
+	// Check safety invariants to catch obvious bugs.
+	debug_assert_eq!(bytes.len() % 4, 0);
+
+	let mut u32pixels_buffer = convert_bytes_to_u32s(bytes);
+	let u32pixels = match u32pixels_buffer {
+		ImageDataCow::Borrowed(ref mut b) => b,
+		ImageDataCow::Owned(ref mut b) => b.as_mut_slice(),
+	};
 
 	for p in u32pixels {
-		let mut tmp = *p;
-		let bytes = std::slice::from_raw_parts_mut((&mut tmp) as *mut u32 as *mut u8, 4);
+		let mut bytes = p.to_ne_bytes();
 		bytes[0] = (*p >> (2 * 8)) as u8;
 		bytes[1] = (*p >> (1 * 8)) as u8;
 		bytes[2] = (*p >> (0 * 8)) as u8;
 		bytes[3] = (*p >> (3 * 8)) as u8;
-		*p = tmp;
+		*p = u32::from_ne_bytes(bytes);
+	}
+
+	match u32pixels_buffer {
+		ImageDataCow::Borrowed(_) => bytes.to_vec(),
+		ImageDataCow::Owned(bytes) => bytes.into_iter().flat_map(|b| b.to_ne_bytes()).collect(),
+	}
+}
+
+#[cfg(feature = "image-data")]
+// XXX: std's Cow is not usable here because it does not allow mutably
+// borrowing data.
+enum ImageDataCow<'a> {
+	Borrowed(&'a mut [u32]),
+	Owned(Vec<u32>),
+}
+
+/// Safety: the `bytes` slice must have a length that's a multiple of 4
+#[cfg(feature = "image-data")]
+unsafe fn convert_bytes_to_u32s(bytes: &mut [u8]) -> ImageDataCow<'_> {
+	// When the correct conditions are upheld, `std` should return everything in the well-aligned slice.
+	let (prefix, _, suffix) = bytes.align_to::<u32>();
+
+	// Check if `align_to` gave us the optimal result.
+	//
+	// If it didn't, use the slow path with more allocations
+	if prefix.is_empty() && suffix.is_empty() {
+		// We know that the newly-aligned slice will contain all the values
+		ImageDataCow::Borrowed(bytes.align_to_mut::<u32>().1)
+	} else {
+		// XXX: Use `as_chunks` when it stabilizes.
+		let u32pixels_buffer =
+			bytes.chunks(4).map(|chunk| u32::from_ne_bytes(chunk.try_into().unwrap())).collect();
+		ImageDataCow::Owned(u32pixels_buffer)
 	}
 }
 
@@ -386,5 +447,25 @@ impl WindowsClipboardContext {
 		};
 
 		add_cf_dibv5(image)
+	}
+}
+
+#[cfg(all(test, feature = "image-data"))]
+mod tests {
+	use super::{rgba_to_win, win_to_rgba};
+
+	const DATA: [u8; 16] =
+		[100, 100, 255, 100, 0, 0, 0, 255, 255, 100, 100, 255, 100, 255, 100, 100];
+
+	#[test]
+	fn check_win_to_rgba_conversion() {
+		let mut data = DATA;
+		unsafe { win_to_rgba(&mut data) };
+	}
+
+	#[test]
+	fn check_rgba_to_win_conversion() {
+		let mut data = DATA;
+		unsafe { rgba_to_win(&mut data) };
 	}
 }
