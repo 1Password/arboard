@@ -14,8 +14,6 @@ use std::{borrow::Cow, convert::TryInto, mem::size_of};
 use clipboard_win::Clipboard as SystemClipboard;
 
 #[cfg(feature = "image-data")]
-use scopeguard::defer;
-#[cfg(feature = "image-data")]
 use winapi::{
 	shared::minwindef::DWORD,
 	um::{
@@ -34,7 +32,7 @@ use winapi::{
 use super::common::Error;
 
 #[cfg(feature = "image-data")]
-use super::common::ImageData;
+use super::common::{ImageData, ScopeGuard};
 
 const MAX_OPEN_ATTEMPTS: usize = 5;
 
@@ -99,7 +97,8 @@ fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 				description: format!("Could not lock the global memory object at line {}", line!()),
 			});
 		}
-		defer!({
+
+		let _unlock = ScopeGuard::new(|| {
 			let retval = GlobalUnlock(hdata);
 			if retval == 0 {
 				let lasterr = GetLastError();
@@ -108,6 +107,7 @@ fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 				}
 			}
 		});
+
 		copy_nonoverlapping::<u8>((&header) as *const _ as *const u8, data_ptr, header_size);
 
 		// Not using the `add` function, because that has a restriction, that the result cannot overflow isize

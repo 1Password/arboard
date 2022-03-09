@@ -43,9 +43,9 @@ use x11rb::{
 	COPY_DEPTH_FROM_PARENT, COPY_FROM_PARENT, NONE,
 };
 
+use crate::{common::ScopeGuard, common_linux::into_unknown, Error, LinuxClipboardKind};
 #[cfg(feature = "image-data")]
 use crate::{common_linux::encode_as_png, ImageData};
-use crate::{common_linux::into_unknown, Error, LinuxClipboardKind};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -663,22 +663,6 @@ impl ClipboardContext {
 		Err(Error::Unknown {
 			description: "The handover was not finished and the condvar didn't time out, yet the condvar wait ended. This should be unreachable.".into()
 		})
-	}
-}
-
-struct ScopeGuard<F: FnOnce()> {
-	callback: Option<F>,
-}
-impl<F: FnOnce()> ScopeGuard<F> {
-	fn new(callback: F) -> Self {
-		ScopeGuard { callback: Some(callback) }
-	}
-}
-impl<F: FnOnce()> Drop for ScopeGuard<F> {
-	fn drop(&mut self) {
-		if let Some(callback) = self.callback.take() {
-			(callback)();
-		}
 	}
 }
 

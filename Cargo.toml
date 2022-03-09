@@ -11,7 +11,7 @@ edition = "2018"
 
 [features]
 default = ["image-data"]
-image-data = ["core-graphics", "image", "winapi/minwindef", "winapi/wingdi", "winapi/winnt", "scopeguard"]
+image-data = ["core-graphics", "image", "winapi/minwindef", "winapi/wingdi", "winapi/winnt"]
 wayland-data-control = ["wl-clipboard-rs"]
 
 [dependencies]
@@ -27,7 +27,6 @@ winapi = { version = "0.3.9", features = [
     "winuser",
     "winbase",
 ]}
-scopeguard = { version =  "1.1.0", optional = true }
 clipboard-win = "4.2"
 log = "0.4"
 
