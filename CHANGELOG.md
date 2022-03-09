@@ -1,3 +1,10 @@
+## v2.1.0 on 2022-09-03
+
+### Changed
+- Updated most dependencies
+- Removed crate deprecation
+- Fixed soundness bug in Windows clipboard
+
 ## v2.0.1 on 2021-11-05
 
 ### Changed
