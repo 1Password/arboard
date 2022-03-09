@@ -137,3 +137,25 @@ impl<'a> ImageData<'a> {
 		}
 	}
 }
+
+#[cfg(any(windows, target_os = "linux"))]
+pub(crate) struct ScopeGuard<F: FnOnce()> {
+	callback: Option<F>,
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+impl<F: FnOnce()> ScopeGuard<F> {
+	#[cfg_attr(all(windows, not(feature = "image-data")), allow(dead_code))]
+	pub(crate) fn new(callback: F) -> Self {
+		ScopeGuard { callback: Some(callback) }
+	}
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+impl<F: FnOnce()> Drop for ScopeGuard<F> {
+	fn drop(&mut self) {
+		if let Some(callback) = self.callback.take() {
+			(callback)();
+		}
+	}
+}

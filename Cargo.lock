@@ -55,7 +55,6 @@ dependencies = [
  "objc_id",
  "once_cell",
  "parking_lot 0.12.0",
- "scopeguard",
  "simple_logger",
  "thiserror",
  "winapi",
