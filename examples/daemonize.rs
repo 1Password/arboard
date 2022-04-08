@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 	let _logger = SimpleLogger::new().init().unwrap();
 
-	process::Command::new(dbg!(env::current_exe()?))
+	process::Command::new(env::current_exe()?)
 		.arg("__internal_daemonize")
 		.stdin(process::Stdio::null())
 		.stdout(process::Stdio::null())
