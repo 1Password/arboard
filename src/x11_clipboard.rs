@@ -26,7 +26,6 @@ use std::{
 };
 
 use log::{error, trace, warn};
-use once_cell::sync::Lazy;
 use parking_lot::{Condvar, Mutex, MutexGuard, RwLock};
 use x11rb::{
 	connection::Connection,
@@ -49,7 +48,7 @@ use crate::{common_linux::encode_as_png, ImageData};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-static CLIPBOARD: Lazy<Mutex<Option<GlobalClipboard>>> = Lazy::new(|| Mutex::new(None));
+static CLIPBOARD: Mutex<Option<GlobalClipboard>> = parking_lot::const_mutex(None);
 
 x11rb::atom_manager! {
 	pub Atoms: AtomCookies {
