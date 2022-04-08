@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 		.stdin(process::Stdio::null())
 		.stdout(process::Stdio::null())
 		.stderr(process::Stdio::null())
-        .current_dir("/")
+		.current_dir("/")
 		.spawn()?;
 
 	Ok(())
