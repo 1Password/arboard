@@ -77,7 +77,7 @@ pub enum LinuxClipboardKind {
 	Secondary,
 }
 
-/// Linux-specific extensions to the [`Clipboard`] type.
+/// Linux-specific extensions to the [`Clipboard`](crate::Clipboard) type.
 ///
 /// # Clipboard selections
 ///
@@ -87,23 +87,6 @@ pub enum LinuxClipboardKind {
 ///
 /// See https://specifications.freedesktop.org/clipboards-spec/clipboards-0.1.txt for a better
 /// description of the different clipboards.
-///
-/// # Examples
-///
-/// ```
-/// use arboard::{Clipboard, ClipboardExtLinux, LinuxClipboardKind};
-/// let mut ctx = Clipboard::new().unwrap();
-///
-/// ctx.set_text_with_clipboard(
-///     "This goes in the traditional (ex. Copy & Paste) clipboard.".to_string(),
-///     LinuxClipboardKind::Clipboard
-/// ).unwrap();
-///
-/// ctx.set_text_with_clipboard(
-///     "This goes in the primary keyboard. It's typically used via middle mouse click.".to_string(),
-///     LinuxClipboardKind::Primary
-/// ).unwrap();
-/// ```
 ///
 /// # Clipboard waiting
 ///
@@ -124,10 +107,30 @@ pub enum LinuxClipboardKind {
 /// To support that pattern, this trait additionally provides a [`set_text_wait`] method which will
 /// not only set the text of the clipboard, but also wait and continue to serve requests until the
 /// clipboard is overwritten. As long as you don't exit the current process until that method has
-/// returned, you can avoid all surprising situations where the clipboard contents seemingly
-/// disappears from under your feet.
+/// returned, you can avoid all surprising situations where the clipboard's contents seemingly
+/// disappear from under your feet.
+///
+/// See the [daemonize example] for an demo of how you could implement this.
+///
+/// # Examples
+///
+/// ```
+/// use arboard::{Clipboard, ClipboardExtLinux, LinuxClipboardKind};
+/// let mut ctx = Clipboard::new().unwrap();
+///
+/// ctx.set_text_with_clipboard(
+///     "This goes in the traditional (ex. Copy & Paste) clipboard.".to_string(),
+///     LinuxClipboardKind::Clipboard
+/// ).unwrap();
+///
+/// ctx.set_text_with_clipboard(
+///     "This goes in the primary keyboard. It's typically used via middle mouse click.".to_string(),
+///     LinuxClipboardKind::Primary
+/// ).unwrap();
+/// ```
 ///
 /// [`set_text_wait`]: ClipboardExtLinux::set_text_wait
+/// [daemonize example]: https://github.com/1Password/arboard/blob/master/examples/daemonize.rs
 pub trait ClipboardExtLinux {
 	/// Places the text on the main clipboard and waits until it is overwritten.
 	fn set_text_wait(&mut self, text: String) -> Result<(), Error>;
