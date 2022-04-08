@@ -77,6 +77,10 @@ pub enum LinuxClipboardKind {
 	Secondary,
 }
 
+/// Linux-specific extensions to the [`Clipboard`] type.
+///
+/// # Clipboard selections
+///
 /// Linux has a concept of clipboard "selections" which tend to be used in different contexts. This
 /// trait extension provides a way to get/set to a specific clipboard (the default
 /// [LinuxClipboardKind::Clipboard] being used for the common platform API).
@@ -100,11 +104,51 @@ pub enum LinuxClipboardKind {
 ///     LinuxClipboardKind::Primary
 /// ).unwrap();
 /// ```
+///
+/// # Clipboard waiting
+///
+/// The Wayland and X11 clipboards work by having the clipboard content be at any given time
+/// "owned" by a single process, and that process is expected to perform all the request serving to
+/// any other system process that wishes to access the clipboard's contents. As a consequence, when
+/// that process exits the contents of the clipboard will effectively be cleared since there is no
+/// longer anyone around to serve requests for it.
+///
+/// This poses a problem for short-lived programs that just want to copy to the clipboard and then
+/// exit, since they don't want to wait until the user happens to copy something else just to
+/// finish. To resolve that, whenever the user copies something you can offload the actual work
+/// to a newly-spawned daemon process which will run in the background (potentially outliving the
+/// current process) and serve all the requests. That process will then automatically and silently
+/// exit once the user copies something else to their clipboard so it doesn't take up too many
+/// resources.
+///
+/// To support that pattern, this trait additionally provides a [`set_text_wait`] method which will
+/// not only set the text of the clipboard, but also wait and continue to serve requests until the
+/// clipboard is overwritten. As long as you don't exit the current process until that method has
+/// returned, you can avoid all surprising situations where the clipboard contents seemingly
+/// disappears from under your feet.
+///
+/// [`set_text_wait`]: ClipboardExtLinux::set_text_wait
 pub trait ClipboardExtLinux {
+	/// Places the text on the main clipboard and waits until it is overwritten.
+	fn set_text_wait(&mut self, text: String) -> Result<(), Error>;
+
+	/// Places an image to the clipboard and waits until it is overwritten.
+	#[cfg(feature = "image-data")]
+	fn set_image_wait(&mut self, image: ImageData) -> Result<(), Error>;
+
 	/// Places the text onto the selected clipboard. Any valid utf-8 string is accepted. If wayland
 	/// support is enabled and available, attempting to use the Secondary clipboard will return an
 	/// error.
 	fn set_text_with_clipboard(
+		&mut self,
+		text: String,
+		clipboard: LinuxClipboardKind,
+	) -> Result<(), Error>;
+
+	/// Places the text on the selected clipboard and waits until it is overwritten. If wayland
+	/// support is enabled and available, attempting to use the Secondary clipboard will return an
+	/// error.
+	fn set_text_with_clipboard_wait(
 		&mut self,
 		text: String,
 		clipboard: LinuxClipboardKind,
@@ -116,12 +160,24 @@ pub trait ClipboardExtLinux {
 }
 
 impl ClipboardExtLinux for super::Clipboard {
-	fn get_text_with_clipboard(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
+	fn set_text_wait(&mut self, text: String) -> Result<(), Error> {
 		match &mut self.platform {
-			LinuxClipboard::X11(cb) => cb.get_text_with_clipboard(selection),
-
+			LinuxClipboard::X11(cb) => {
+				cb.set_text_with_clipboard(text, LinuxClipboardKind::Clipboard, true)
+			}
 			#[cfg(feature = "wayland-data-control")]
-			LinuxClipboard::WlDataControl(cb) => cb.get_text_with_clipboard(selection),
+			LinuxClipboard::WlDataControl(cb) => {
+				cb.set_text_with_clipboard(text, LinuxClipboardKind::Clipboard, true)
+			}
+		}
+	}
+
+	#[cfg(feature = "image-data")]
+	fn set_image_wait(&mut self, image: ImageData) -> Result<(), Error> {
+		match &mut self.platform {
+			LinuxClipboard::X11(cb) => cb.set_image_wait(image, true),
+			#[cfg(feature = "wayland-data-control")]
+			LinuxClipboard::WlDataControl(cb) => cb.set_image_wait(image, true),
 		}
 	}
 
@@ -131,10 +187,32 @@ impl ClipboardExtLinux for super::Clipboard {
 		selection: LinuxClipboardKind,
 	) -> Result<(), Error> {
 		match &mut self.platform {
-			LinuxClipboard::X11(cb) => cb.set_text_with_clipboard(text, selection),
+			LinuxClipboard::X11(cb) => cb.set_text_with_clipboard(text, selection, false),
 
 			#[cfg(feature = "wayland-data-control")]
-			LinuxClipboard::WlDataControl(cb) => cb.set_text_with_clipboard(text, selection),
+			LinuxClipboard::WlDataControl(cb) => cb.set_text_with_clipboard(text, selection, false),
+		}
+	}
+
+	fn set_text_with_clipboard_wait(
+		&mut self,
+		text: String,
+		selection: LinuxClipboardKind,
+	) -> Result<(), Error> {
+		match &mut self.platform {
+			LinuxClipboard::X11(cb) => cb.set_text_with_clipboard(text, selection, true),
+
+			#[cfg(feature = "wayland-data-control")]
+			LinuxClipboard::WlDataControl(cb) => cb.set_text_with_clipboard(text, selection, true),
+		}
+	}
+
+	fn get_text_with_clipboard(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
+		match &mut self.platform {
+			LinuxClipboard::X11(cb) => cb.get_text_with_clipboard(selection),
+
+			#[cfg(feature = "wayland-data-control")]
+			LinuxClipboard::WlDataControl(cb) => cb.get_text_with_clipboard(selection),
 		}
 	}
 }

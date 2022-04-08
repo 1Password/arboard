@@ -115,9 +115,10 @@ struct ClipboardContext {
 	/// requests coming to us.
 	server: XContext,
 	atoms: Atoms,
-	clipboard_data: RwLock<Option<ClipboardData>>,
-	primary_data: RwLock<Option<ClipboardData>>,
-	secondary_data: RwLock<Option<ClipboardData>>,
+
+	clipboard: Clipboard,
+	primary: Clipboard,
+	secondary: Clipboard,
 
 	handover_state: Mutex<ManagerHandoverState>,
 	handover_cv: Condvar,
@@ -166,6 +167,17 @@ impl XContext {
 	}
 }
 
+#[derive(Default)]
+struct Clipboard {
+	data: RwLock<Option<ClipboardData>>,
+	/// Mutex around nothing to use with the below condvar.
+	mutex: Mutex<()>,
+	/// A condvar that is notified when the contents of this clipboard are changed.
+	///
+	/// This is associated with `Self::mutex`.
+	data_changed: Condvar,
+}
+
 #[derive(Debug, Clone)]
 struct ClipboardData {
 	bytes: Vec<u8>,
@@ -189,16 +201,16 @@ impl ClipboardContext {
 		Ok(Self {
 			server,
 			atoms,
-			clipboard_data: RwLock::default(),
-			primary_data: RwLock::default(),
-			secondary_data: RwLock::default(),
+			clipboard: Clipboard::default(),
+			primary: Clipboard::default(),
+			secondary: Clipboard::default(),
 			handover_state: Mutex::new(ManagerHandoverState::Idle),
 			handover_cv: Condvar::new(),
 			serve_stopped: AtomicBool::new(false),
 		})
 	}
 
-	fn write(&self, data: ClipboardData, selection: LinuxClipboardKind) -> Result<()> {
+	fn write(&self, data: ClipboardData, selection: LinuxClipboardKind, wait: bool) -> Result<()> {
 		if self.serve_stopped.load(Ordering::Relaxed) {
 			return Err(Error::Unknown {
                 description: "The clipboard handler thread seems to have stopped. Logging messages may reveal the cause. (See the `log` crate.)".into()
@@ -217,7 +229,25 @@ impl ClipboardContext {
 		self.server.conn.flush().map_err(into_unknown)?;
 
 		// Just setting the data, and the `serve_requests` will take care of the rest.
-		*self.data_of(selection).write() = Some(data);
+		let clipboard = self.clipboard_of(selection);
+		let mut data_guard = clipboard.data.write();
+		*data_guard = Some(data);
+
+		// Lock the mutex to both ensure that no wakers of `data_changed` can wake us between
+		// dropping the `data_guard` and calling `wait[_for]` and that we don't we wake other
+		// threads in that position.
+		let mut guard = clipboard.mutex.lock();
+
+		// Notify any existing waiting threads that we have changed the data in the clipboard.
+		// It is important that the mutex is locked to prevent this notication getting lost.
+		clipboard.data_changed.notify_all();
+
+		if wait {
+			drop(data_guard);
+
+			// Wait for the clipboard's content to be changed.
+			clipboard.data_changed.wait(&mut guard);
+		}
 
 		Ok(())
 	}
@@ -228,7 +258,7 @@ impl ClipboardContext {
 	fn read(&self, formats: &[Atom], selection: LinuxClipboardKind) -> Result<ClipboardData> {
 		// if we are the current owner, we can get the current clipboard ourselves
 		if self.is_owner(selection)? {
-			let data = self.data_of(selection).read();
+			let data = self.clipboard_of(selection).data.read();
 			if let Some(data) = &*data {
 				for format in formats {
 					if *format == data.format {
@@ -353,11 +383,11 @@ impl ClipboardContext {
 		}
 	}
 
-	fn data_of(&self, selection: LinuxClipboardKind) -> &RwLock<Option<ClipboardData>> {
+	fn clipboard_of(&self, selection: LinuxClipboardKind) -> &Clipboard {
 		match selection {
-			LinuxClipboardKind::Clipboard => &self.clipboard_data,
-			LinuxClipboardKind::Primary => &self.primary_data,
-			LinuxClipboardKind::Secondary => &self.secondary_data,
+			LinuxClipboardKind::Clipboard => &self.clipboard,
+			LinuxClipboardKind::Primary => &self.primary,
+			LinuxClipboardKind::Secondary => &self.secondary,
 		}
 	}
 
@@ -537,7 +567,7 @@ impl ClipboardContext {
 			let mut targets = Vec::with_capacity(10);
 			targets.push(self.atoms.TARGETS);
 			targets.push(self.atoms.SAVE_TARGETS);
-			let data = self.data_of(selection).read();
+			let data = self.clipboard_of(selection).data.read();
 			if let Some(data) = &*data {
 				targets.push(data.format);
 				if data.format == self.atoms.UTF8_STRING {
@@ -562,7 +592,7 @@ impl ClipboardContext {
 			success = true;
 		} else {
 			trace!("Handling request for (probably) the clipboard contents.");
-			let data = self.data_of(selection).read();
+			let data = self.clipboard_of(selection).data.read();
 			if let Some(data) = &*data {
 				if data.format == event.target {
 					self.server
@@ -622,7 +652,7 @@ impl ClipboardContext {
 			// We are not owning the clipboard, nothing to do.
 			return Ok(());
 		}
-		if self.data_of(LinuxClipboardKind::Clipboard).read().is_none() {
+		if self.clipboard_of(LinuxClipboardKind::Clipboard).data.read().is_none() {
 			// If we don't have any data, there's nothing to do.
 			return Ok(());
 		}
@@ -666,7 +696,7 @@ impl ClipboardContext {
 	}
 }
 
-fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::error::Error>> {
+fn serve_requests(context: Arc<ClipboardContext>) -> Result<(), Box<dyn std::error::Error>> {
 	fn handover_finished(
 		clip: &Arc<ClipboardContext>,
 		mut handover_state: MutexGuard<ManagerHandoverState>,
@@ -683,14 +713,14 @@ fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::e
 	trace!("Started serve reqests thread.");
 
 	let _guard = ScopeGuard::new(|| {
-		clipboard.serve_stopped.store(true, Ordering::Relaxed);
+		context.serve_stopped.store(true, Ordering::Relaxed);
 	});
 
 	let mut written = false;
 	let mut notified = false;
 
 	loop {
-		match clipboard.server.conn.wait_for_event().map_err(into_unknown)? {
+		match context.server.conn.wait_for_event().map_err(into_unknown)? {
 			Event::DestroyNotify(_) => {
 				// This window is being destroyed.
 				trace!("Clipboard server window is being destroyed x_x");
@@ -702,32 +732,41 @@ fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::e
 				// notifying us that we should delete our data now.
 				trace!("Somebody else owns the clipboard now");
 
-				if let Some(selection) = clipboard.kind_of(event.selection) {
-					let mut data = clipboard.data_of(selection).write();
-					*data = None
+				if let Some(selection) = context.kind_of(event.selection) {
+					let clipboard = context.clipboard_of(selection);
+					let mut data_guard = clipboard.data.write();
+					*data_guard = None;
+
+					// It is important that this mutex is locked at the time of calling
+					// `notify_all` to prevent notifications getting lost in case the sleeping
+					// thread has unlocked its `data_guard` and is just about to sleep.
+					// It is also important that the RwLock is kept write-locked for the same
+					// reason.
+					let _guard = clipboard.mutex.lock();
+					clipboard.data_changed.notify_all();
 				}
 			}
 			Event::SelectionRequest(event) => {
 				trace!(
 					"SelectionRequest - selection is: {}, target is {}",
-					clipboard.atom_name_dbg(event.selection),
-					clipboard.atom_name_dbg(event.target),
+					context.atom_name_dbg(event.selection),
+					context.atom_name_dbg(event.target),
 				);
 				// Someone is requesting the clipboard content from us.
-				clipboard.handle_selection_request(event).map_err(into_unknown)?;
+				context.handle_selection_request(event).map_err(into_unknown)?;
 
 				// if we are in the progress of saving to the clipboard manager
 				// make sure we save that we have finished writing
-				let handover_state = clipboard.handover_state.lock();
+				let handover_state = context.handover_state.lock();
 				if *handover_state == ManagerHandoverState::InProgress {
 					// Only set written, when the actual contents were written,
 					// not just a response to what TARGETS we have.
-					if event.target != clipboard.atoms.TARGETS {
+					if event.target != context.atoms.TARGETS {
 						trace!("The contents were written to the clipboard manager.");
 						written = true;
 						// if we have written and notified, make sure to notify that we are done
 						if notified {
-							handover_finished(&clipboard, handover_state);
+							handover_finished(&context, handover_state);
 						}
 					}
 				}
@@ -737,11 +776,11 @@ fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::e
 				// Considering that this thread is not responsible for reading
 				// clipboard contents, this must come from the clipboard manager
 				// signaling that the data was handed over successfully.
-				if event.selection != clipboard.atoms.CLIPBOARD_MANAGER {
+				if event.selection != context.atoms.CLIPBOARD_MANAGER {
 					error!("Received a `SelectionNotify` from a selection other than the CLIPBOARD_MANAGER. This is unexpected in this thread.");
 					continue;
 				}
-				let handover_state = clipboard.handover_state.lock();
+				let handover_state = context.handover_state.lock();
 				if *handover_state == ManagerHandoverState::InProgress {
 					// Note that some clipboard managers send a selection notify
 					// before even sending a request for the actual contents.
@@ -756,7 +795,7 @@ fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::e
 					// but following that, we also get a valid SelectionRequest
 					// from the clipboard manager.
 					if written {
-						handover_finished(&clipboard, handover_state);
+						handover_finished(&context, handover_state);
 					}
 				}
 			}
@@ -818,17 +857,18 @@ impl X11ClipboardContext {
 	}
 
 	pub fn set_text(&self, message: String) -> Result<()> {
-		self.set_text_with_clipboard(message, LinuxClipboardKind::Clipboard)
+		self.set_text_with_clipboard(message, LinuxClipboardKind::Clipboard, false)
 	}
 
 	pub(crate) fn set_text_with_clipboard(
 		&self,
 		message: String,
 		selection: LinuxClipboardKind,
+		wait: bool,
 	) -> Result<()> {
 		let data =
 			ClipboardData { bytes: message.into_bytes(), format: self.inner.atoms.UTF8_STRING };
-		self.inner.write(data, selection)
+		self.inner.write(data, selection, wait)
 	}
 
 	#[cfg(feature = "image-data")]
@@ -851,9 +891,14 @@ impl X11ClipboardContext {
 
 	#[cfg(feature = "image-data")]
 	pub fn set_image(&self, image: ImageData) -> Result<()> {
+		self.set_image_wait(image, false)
+	}
+
+	#[cfg(feature = "image-data")]
+	pub(crate) fn set_image_wait(&self, image: ImageData, wait: bool) -> Result<()> {
 		let encoded = encode_as_png(&image)?;
 		let data = ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME };
-		self.inner.write(data, LinuxClipboardKind::Clipboard)
+		self.inner.write(data, LinuxClipboardKind::Clipboard, wait)
 	}
 }
 

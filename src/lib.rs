@@ -107,6 +107,15 @@ impl Clipboard {
 #[cfg(test)]
 #[test]
 fn all_tests() {
+	use std::{
+		sync::{
+			atomic::{self, AtomicBool},
+			Arc,
+		},
+		thread,
+		time::Duration,
+	};
+
 	let _ = env_logger::builder().is_test(true).try_init();
 	{
 		let mut ctx = Clipboard::new().unwrap();
@@ -121,8 +130,7 @@ fn all_tests() {
 		// Give any external mechanism a generous amount of time to take over
 		// responsibility for the clipboard, in case that happens asynchronously
 		// (it appears that this is the case on X11 plus Mutter 3.34+, see #4)
-		use std::time::Duration;
-		std::thread::sleep(Duration::from_millis(100));
+		thread::sleep(Duration::from_millis(300));
 
 		let mut ctx = Clipboard::new().unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
@@ -204,5 +212,23 @@ fn all_tests() {
 		{
 			assert_eq!(TEXT3, &ctx.get_text_with_clipboard(LinuxClipboardKind::Secondary).unwrap());
 		}
+
+		let was_replaced = Arc::new(AtomicBool::new(false));
+
+		let setter = thread::spawn({
+			let was_replaced = was_replaced.clone();
+			move || {
+				thread::sleep(Duration::from_millis(100));
+				let mut ctx = Clipboard::new().unwrap();
+				ctx.set_text("replacement text".to_owned()).unwrap();
+				was_replaced.store(true, atomic::Ordering::Release);
+			}
+		});
+
+		ctx.set_text_wait("initial text".to_owned()).unwrap();
+
+		assert!(was_replaced.load(atomic::Ordering::Acquire));
+
+		setter.join().unwrap();
 	}
 }

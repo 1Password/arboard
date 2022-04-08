@@ -82,16 +82,18 @@ impl WaylandDataControlClipboardContext {
 	}
 
 	pub fn set_text(&mut self, text: String) -> Result<(), Error> {
-		self.set_text_with_clipboard(text, LinuxClipboardKind::Clipboard)
+		self.set_text_with_clipboard(text, LinuxClipboardKind::Clipboard, false)
 	}
 
 	pub(crate) fn set_text_with_clipboard(
 		&self,
 		text: String,
 		selection: LinuxClipboardKind,
+		wait: bool,
 	) -> Result<(), Error> {
 		use wl_clipboard_rs::copy::MimeType;
 		let mut opts = Options::new();
+		opts.foreground(wait);
 		opts.clipboard(selection.try_into()?);
 		let source = Source::Bytes(text.as_bytes().into());
 		opts.copy(source, MimeType::Text).map_err(|e| match e {
@@ -143,10 +145,16 @@ impl WaylandDataControlClipboardContext {
 
 	#[cfg(feature = "image-data")]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
+		self.set_image_wait(image, false)
+	}
+
+	#[cfg(feature = "image-data")]
+	pub(crate) fn set_image_wait(&mut self, image: ImageData, wait: bool) -> Result<(), Error> {
 		use wl_clipboard_rs::copy::MimeType;
 
 		let image = encode_as_png(&image)?;
-		let opts = Options::new();
+		let mut opts = Options::new();
+		opts.foreground(wait);
 		let source = Source::Bytes(image.into());
 		opts.copy(source, MimeType::Specific(MIME_PNG.into())).map_err(into_unknown)?;
 		Ok(())
