@@ -328,7 +328,7 @@ impl ClipboardContext {
 					let result = self.handle_read_property_notify(
 						reader,
 						target_format,
-						&mut using_incr,
+						using_incr,
 						&mut incr_data,
 						&mut timeout_end,
 						event,
@@ -486,7 +486,7 @@ impl ClipboardContext {
 		&self,
 		reader: &XContext,
 		target_format: u32,
-		using_incr: &mut bool,
+		using_incr: bool,
 		incr_data: &mut Vec<u8>,
 		timeout_end: &mut Instant,
 		event: PropertyNotifyEvent,
@@ -494,7 +494,7 @@ impl ClipboardContext {
 		if event.atom != self.atoms.ARBOARD_CLIPBOARD || event.state != Property::NEW_VALUE {
 			return Ok(false);
 		}
-		if !*using_incr {
+		if !using_incr {
 			// This must mean the selection owner received our request, and is
 			// now preparing the data
 			return Ok(false);
