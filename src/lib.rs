@@ -58,7 +58,7 @@ pub use common_linux::{ClipboardExtLinux, LinuxClipboardKind};
 /// that your application is about to quit.
 ///
 /// It is also valid to have multiple `Clipboards` on separate threads at once but note that
-/// executing multiple clipboard operations in paralell might fail with a `ClipboardOccupied` error.
+/// executing multiple clipboard operations in parallel might fail with a `ClipboardOccupied` error.
 pub struct Clipboard {
 	pub(crate) platform: PlatformClipboard,
 }

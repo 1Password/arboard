@@ -169,7 +169,7 @@ impl XContext {
 struct ClipboardData {
 	bytes: Vec<u8>,
 
-	/// The atom represeting the format in which the data is encoded.
+	/// The atom representing the format in which the data is encoded.
 	format: Atom,
 }
 
@@ -328,7 +328,7 @@ impl ClipboardContext {
 					let result = self.handle_read_property_notify(
 						reader,
 						target_format,
-						&mut using_incr,
+						using_incr,
 						&mut incr_data,
 						&mut timeout_end,
 						event,
@@ -486,7 +486,7 @@ impl ClipboardContext {
 		&self,
 		reader: &XContext,
 		target_format: u32,
-		using_incr: &mut bool,
+		using_incr: bool,
 		incr_data: &mut Vec<u8>,
 		timeout_end: &mut Instant,
 		event: PropertyNotifyEvent,
@@ -494,7 +494,7 @@ impl ClipboardContext {
 		if event.atom != self.atoms.ARBOARD_CLIPBOARD || event.state != Property::NEW_VALUE {
 			return Ok(false);
 		}
-		if !*using_incr {
+		if !using_incr {
 			// This must mean the selection owner received our request, and is
 			// now preparing the data
 			return Ok(false);
@@ -648,7 +648,7 @@ impl ClipboardContext {
 		let max_handover_duration = Duration::from_millis(100);
 
 		// Note that we are using a parking_lot condvar here, which doesn't wake up
-		// spouriously
+		// spuriously
 		let result = self.handover_cv.wait_for(&mut handover_state, max_handover_duration);
 
 		if *handover_state == ManagerHandoverState::Finished {
@@ -679,7 +679,7 @@ fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::e
 		clip.handover_cv.notify_all();
 	}
 
-	trace!("Started serve reqests thread.");
+	trace!("Started serve requests thread.");
 
 	let _guard = ScopeGuard::new(|| {
 		clipboard.serve_stopped.store(true, Ordering::Relaxed);
@@ -760,7 +760,7 @@ fn serve_requests(clipboard: Arc<ClipboardContext>) -> Result<(), Box<dyn std::e
 				}
 			}
 			_event => {
-				// May be useful for debbuging but nothing else really.
+				// May be useful for debugging but nothing else really.
 				// trace!("Received unwanted event: {:?}", event);
 			}
 		}
@@ -777,7 +777,7 @@ impl X11ClipboardContext {
 		if let Some(global_cb) = &*global_cb {
 			return Ok(Self { inner: Arc::clone(&global_cb.context) });
 		}
-		// At this point we know that the clipboard does not exists.
+		// At this point we know that the clipboard does not exist.
 		let ctx = Arc::new(ClipboardContext::new()?);
 		let join_handle;
 		{
@@ -866,7 +866,7 @@ impl Drop for X11ClipboardContext {
 		// conditions below.
 		let mut global_cb = CLIPBOARD.lock();
 		if Arc::strong_count(&self.inner) == MIN_OWNERS {
-			// If the are the only owers of the clipboard are ourselves and
+			// If the are the only owners of the clipboard are ourselves and
 			// the global object, then we should destroy the global object,
 			// and send the data to the clipboard manager
 
