@@ -7,9 +7,13 @@ use arboard::ClipboardExtLinux;
 use simple_logger::SimpleLogger;
 use std::{env, error::Error, process};
 
+// An argument that can be passed into the program to signal that it should daemonize itself. This
+// can be anything as long as it is unlikely to be passed in by the user by mistake.
+const DAEMONIZE_ARG: &str = "__internal_daemonize";
+
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 	#[cfg(target_os = "linux")]
-	if env::args().nth(1).as_deref() == Some("__internal_daemonize") {
+	if env::args().nth(1).as_deref() == Some(DAEMONIZE_ARG) {
 		Clipboard::new()?.set_text_wait("Hello, world!".into())?;
 		return Ok(());
 	}
@@ -18,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 	if cfg!(target_os = "linux") {
 		process::Command::new(env::current_exe()?)
-			.arg("__internal_daemonize")
+			.arg(DAEMONIZE_ARG)
 			.stdin(process::Stdio::null())
 			.stdout(process::Stdio::null())
 			.stderr(process::Stdio::null())
