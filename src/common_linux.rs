@@ -90,8 +90,8 @@ pub enum LinuxClipboardKind {
 ///
 /// # Clipboard waiting
 ///
-/// The Wayland and X11 clipboards work by having the clipboard content be at any given time
-/// "owned" by a single process, and that process is expected to perform all the request serving to
+/// The Wayland and X11 clipboards work by having the clipboard content being, at any given time,
+/// "owned" by a single process, and that process is expected to reply to all the requests from
 /// any other system process that wishes to access the clipboard's contents. As a consequence, when
 /// that process exits the contents of the clipboard will effectively be cleared since there is no
 /// longer anyone around to serve requests for it.
@@ -110,7 +110,7 @@ pub enum LinuxClipboardKind {
 /// returned, you can avoid all surprising situations where the clipboard's contents seemingly
 /// disappear from under your feet.
 ///
-/// See the [daemonize example] for an demo of how you could implement this.
+/// See the [daemonize example] for a demo of how you could implement this.
 ///
 /// # Examples
 ///
