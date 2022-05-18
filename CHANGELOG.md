@@ -1,3 +1,11 @@
+## v2.1.1 on 2022-19-05
+
+### Changed
+- Fix compilation on FreeBSD 
+- Internal cleanup and documentation fixes
+- Remove direct dependency on the `once_cell`.
+- Fixed crates.io respository link
+
 ## v2.1.0 on 2022-09-03
 
 ### Changed
