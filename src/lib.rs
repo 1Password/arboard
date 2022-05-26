@@ -36,9 +36,9 @@ pub mod windows_clipboard;
 pub mod osx_clipboard;
 
 #[cfg(not(any(
-target_os = "macos",
-windows,
-all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten")))
+	all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))),
+	windows,
+	target_os = "macos"
 )))]
 pub mod dummy_clipboard; // Unsupported platforms
 
@@ -50,9 +50,9 @@ type PlatformClipboard = windows_clipboard::WindowsClipboardContext;
 type PlatformClipboard = osx_clipboard::OSXClipboardContext;
 
 #[cfg(not(any(
-target_os = "macos",
-windows,
-all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten")))
+	all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))),
+	windows,
+	target_os = "macos"
 )))]
 type PlatformClipboard = dummy_clipboard::DummyClipboard; // Unsupported platforms
 
