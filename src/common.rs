@@ -30,6 +30,7 @@ pub enum Error {
 	/// This can be caused by a few conditions:
 	/// - Using the Primary clipboard with an older Wayland compositor (that doesn't support version 2)
 	/// - Using the Secondary clipboard on Wayland
+	/// - Using the clipboard on an unsupported platform
 	#[error("The selected clipboard is not supported with the current system configuration.")]
 	ClipboardNotSupported,
 
