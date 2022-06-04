@@ -807,12 +807,12 @@ fn serve_requests(context: Arc<ClipboardContext>) -> Result<(), Box<dyn std::err
 	}
 }
 
-pub struct X11ClipboardContext {
+pub(crate) struct X11ClipboardContext {
 	inner: Arc<ClipboardContext>,
 }
 
 impl X11ClipboardContext {
-	pub fn new() -> Result<Self> {
+	pub(crate) fn new() -> Result<Self> {
 		let mut global_cb = CLIPBOARD.lock();
 		if let Some(global_cb) = &*global_cb {
 			return Ok(Self { inner: Arc::clone(&global_cb.context) });
@@ -833,11 +833,7 @@ impl X11ClipboardContext {
 		Ok(Self { inner: ctx })
 	}
 
-	pub fn get_text(&self) -> Result<String> {
-		self.get_text_with_clipboard(LinuxClipboardKind::Clipboard)
-	}
-
-	pub(crate) fn get_text_with_clipboard(&self, selection: LinuxClipboardKind) -> Result<String> {
+	pub(crate) fn get_text(&self, selection: LinuxClipboardKind) -> Result<String> {
 		let formats = [
 			self.inner.atoms.UTF8_STRING,
 			self.inner.atoms.UTF8_MIME_0,
@@ -856,11 +852,7 @@ impl X11ClipboardContext {
 		}
 	}
 
-	pub fn set_text(&self, message: String) -> Result<()> {
-		self.set_text_with_clipboard(message, LinuxClipboardKind::Clipboard, false)
-	}
-
-	pub(crate) fn set_text_with_clipboard(
+	pub(crate) fn set_text(
 		&self,
 		message: String,
 		selection: LinuxClipboardKind,
@@ -872,7 +864,7 @@ impl X11ClipboardContext {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub fn get_image(&self) -> Result<ImageData<'static>> {
+	pub(crate) fn get_image(&self) -> Result<ImageData<'static>> {
 		let formats = [self.inner.atoms.PNG_MIME];
 		let bytes = self.inner.read(&formats, LinuxClipboardKind::Clipboard)?.bytes;
 
@@ -890,12 +882,7 @@ impl X11ClipboardContext {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub fn set_image(&self, image: ImageData) -> Result<()> {
-		self.set_image_wait(image, false)
-	}
-
-	#[cfg(feature = "image-data")]
-	pub(crate) fn set_image_wait(&self, image: ImageData, wait: bool) -> Result<()> {
+	pub(crate) fn set_image(&self, image: ImageData, wait: bool) -> Result<()> {
 		let encoded = encode_as_png(&image)?;
 		let data = ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME };
 		self.inner.write(data, LinuxClipboardKind::Clipboard, wait)

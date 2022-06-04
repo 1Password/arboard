@@ -40,9 +40,9 @@ fn image_from_pixels(
 ) -> Result<Id<NSObject>, Box<dyn std::error::Error>> {
 	#[repr(C)]
 	#[derive(Copy, Clone)]
-	pub struct NSSize {
-		pub width: CGFloat,
-		pub height: CGFloat,
+	struct NSSize {
+		width: CGFloat,
+		height: CGFloat,
 	}
 
 	#[derive(Debug, Clone)]
@@ -83,12 +83,12 @@ fn image_from_pixels(
 	Ok(image)
 }
 
-pub struct OSXClipboardContext {
+pub(crate) struct Clipboard {
 	pasteboard: Id<Object>,
 }
 
-impl OSXClipboardContext {
-	pub(crate) fn new() -> Result<OSXClipboardContext, Error> {
+impl Clipboard {
+	pub(crate) fn new() -> Result<Clipboard, Error> {
 		let cls = Class::get("NSPasteboard")
 			.ok_or(Error::Unknown { description: "Class::get(\"NSPasteboard\")".into() })?;
 		let pasteboard: *mut Object = unsafe { msg_send![cls, generalPasteboard] };
@@ -98,40 +98,7 @@ impl OSXClipboardContext {
 			});
 		}
 		let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
-		Ok(OSXClipboardContext { pasteboard })
-	}
-	pub(crate) fn get_text(&mut self) -> Result<String, Error> {
-		let string_class: Id<NSObject> = {
-			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
-			unsafe { transmute(cls) }
-		};
-		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![string_class]);
-		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
-		let string_array: Id<NSArray<NSString>> = unsafe {
-			let obj: *mut NSArray<NSString> =
-				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
-			if obj.is_null() {
-				//return Err("pasteboard#readObjectsForClasses:options: returned null".into());
-				return Err(Error::ContentNotAvailable);
-			}
-			Id::from_ptr(obj)
-		};
-		if string_array.count() == 0 {
-			//Err("pasteboard#readObjectsForClasses:options: returned empty".into())
-			Err(Error::ContentNotAvailable)
-		} else {
-			Ok(string_array[0].as_str().to_owned())
-		}
-	}
-	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Error> {
-		let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
-		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
-		let success: bool = unsafe { msg_send![self.pasteboard, writeObjects: string_array] };
-		if success {
-			Ok(())
-		} else {
-			Err(Error::Unknown { description: "NSPasteboard#writeObjects: returned false".into() })
-		}
+		Ok(Clipboard { pasteboard })
 	}
 	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn std::error::Error>> {
 	// 	let string_class: Id<NSObject> = {
@@ -182,8 +149,43 @@ impl OSXClipboardContext {
 	// 		}
 	// 	}
 	// }
+}
+
+pub(crate) struct Get<'clipboard> {
+	pasteboard: &'clipboard Object,
+}
+
+impl<'clipboard> Get<'clipboard> {
+	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { pasteboard: &*clipboard.pasteboard }
+	}
+
+	pub(crate) fn text(self) -> Result<String, Error> {
+		let string_class: Id<NSObject> = {
+			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
+			unsafe { transmute(cls) }
+		};
+		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![string_class]);
+		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
+		let string_array: Id<NSArray<NSString>> = unsafe {
+			let obj: *mut NSArray<NSString> =
+				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
+			if obj.is_null() {
+				//return Err("pasteboard#readObjectsForClasses:options: returned null".into());
+				return Err(Error::ContentNotAvailable);
+			}
+			Id::from_ptr(obj)
+		};
+		if string_array.count() == 0 {
+			//Err("pasteboard#readObjectsForClasses:options: returned empty".into())
+			Err(Error::ContentNotAvailable)
+		} else {
+			Ok(string_array[0].as_str().to_owned())
+		}
+	}
+
 	#[cfg(feature = "image-data")]
-	pub(crate) fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
+	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		use std::io::Cursor;
 
 		let image_class: Id<NSObject> = {
@@ -240,9 +242,30 @@ impl OSXClipboardContext {
 		}
 		result
 	}
+}
+
+pub(crate) struct Set<'clipboard> {
+	pasteboard: &'clipboard Object,
+}
+
+impl<'clipboard> Set<'clipboard> {
+	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { pasteboard: &*clipboard.pasteboard }
+	}
+
+	pub(crate) fn text(self, data: String) -> Result<(), Error> {
+		let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
+		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
+		let success: bool = unsafe { msg_send![self.pasteboard, writeObjects: string_array] };
+		if success {
+			Ok(())
+		} else {
+			Err(Error::Unknown { description: "NSPasteboard#writeObjects: returned false".into() })
+		}
+	}
 
 	#[cfg(feature = "image-data")]
-	pub(crate) fn set_image(&mut self, data: ImageData) -> Result<(), Error> {
+	pub(crate) fn image(self, data: ImageData) -> Result<(), Error> {
 		let pixels = data.bytes.into();
 		let image = image_from_pixels(pixels, data.width, data.height)
 			.map_err(|_| Error::ConversionFailure)?;
@@ -264,6 +287,6 @@ impl OSXClipboardContext {
 //  glutin define, which seems to depend on the fact that
 //  Option::None has the same representation as a null pointer
 #[inline]
-pub fn class(name: &str) -> *mut Class {
+fn class(name: &str) -> *mut Class {
 	unsafe { transmute(Class::get(name)) }
 }

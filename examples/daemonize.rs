@@ -3,7 +3,7 @@
 
 use arboard::Clipboard;
 #[cfg(target_os = "linux")]
-use arboard::ClipboardExtLinux;
+use arboard::SetExtLinux;
 use simple_logger::SimpleLogger;
 use std::{env, error::Error, process};
 
@@ -14,7 +14,7 @@ const DAEMONIZE_ARG: &str = "__internal_daemonize";
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 	#[cfg(target_os = "linux")]
 	if env::args().nth(1).as_deref() == Some(DAEMONIZE_ARG) {
-		Clipboard::new()?.set_text_wait("Hello, world!".into())?;
+		Clipboard::new()?.set().wait().text("Hello, world!".into())?;
 		return Ok(());
 	}
 

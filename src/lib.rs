@@ -16,37 +16,43 @@ pub use common::Error;
 #[cfg(feature = "image-data")]
 pub use common::ImageData;
 
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),))]
-pub(crate) mod common_linux;
+// Linux backends
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),))]
-pub mod x11_clipboard;
+mod x11_clipboard;
 
 #[cfg(all(
 	unix,
 	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 	feature = "wayland-data-control"
 ))]
-pub mod wayland_data_control_clipboard;
+mod wayland_data_control_clipboard;
+
+// Platforms
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
+mod common_linux;
+#[cfg(all(
+	unix,
+	not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
+))]
+use common_linux as platform;
 
 #[cfg(windows)]
-pub mod windows_clipboard;
-
-#[cfg(target_os = "macos")]
-pub mod osx_clipboard;
-
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),))]
-type PlatformClipboard = common_linux::LinuxClipboard;
+mod windows_clipboard;
 #[cfg(windows)]
-type PlatformClipboard = windows_clipboard::WindowsClipboardContext;
+use windows_clipboard as platform;
+
 #[cfg(target_os = "macos")]
-type PlatformClipboard = osx_clipboard::OSXClipboardContext;
+mod osx_clipboard;
+#[cfg(target_os = "macos")]
+use osx_clipboard as platform;
 
 #[cfg(all(
 	unix,
 	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 ))]
-pub use common_linux::{ClipboardExtLinux, LinuxClipboardKind};
+pub use common_linux::{ClipboardExtLinux, GetExtLinux, LinuxClipboardKind, SetExtLinux};
 
 /// The OS independent struct for accessing the clipboard.
 ///
@@ -60,23 +66,23 @@ pub use common_linux::{ClipboardExtLinux, LinuxClipboardKind};
 /// It is also valid to have multiple `Clipboards` on separate threads at once but note that
 /// executing multiple clipboard operations in paralell might fail with a `ClipboardOccupied` error.
 pub struct Clipboard {
-	pub(crate) platform: PlatformClipboard,
+	pub(crate) platform: platform::Clipboard,
 }
 
 impl Clipboard {
 	/// Creates an instance of the clipboard
 	pub fn new() -> Result<Self, Error> {
-		Ok(Clipboard { platform: PlatformClipboard::new()? })
+		Ok(Clipboard { platform: platform::Clipboard::new()? })
 	}
 
 	/// Fetches utf-8 text from the clipboard and returns it.
 	pub fn get_text(&mut self) -> Result<String, Error> {
-		self.platform.get_text()
+		self.get().text()
 	}
 
 	/// Places the text onto the clipboard. Any valid utf-8 string is accepted.
 	pub fn set_text(&mut self, text: String) -> Result<(), Error> {
-		self.platform.set_text(text)
+		self.set().text(text)
 	}
 
 	/// Fetches image data from the clipboard, and returns the decoded pixels.
@@ -86,7 +92,7 @@ impl Clipboard {
 	/// other application will be of a supported format.
 	#[cfg(feature = "image-data")]
 	pub fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
-		self.platform.get_image()
+		self.get().image()
 	}
 
 	/// Places an image to the clipboard.
@@ -98,7 +104,67 @@ impl Clipboard {
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
 	#[cfg(feature = "image-data")]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
-		self.platform.set_image(image)
+		self.set().image(image)
+	}
+
+	/// Begins a "get" operation to retrieve data from the clipboard.
+	pub fn get(&mut self) -> Get<'_> {
+		Get { platform: platform::Get::new(&mut self.platform) }
+	}
+
+	/// Begins a "set" operation to set the clipboard's contents.
+	pub fn set(&mut self) -> Set<'_> {
+		Set { platform: platform::Set::new(&mut self.platform) }
+	}
+}
+
+/// A builder for an operation that gets a value from the clipboard.
+#[must_use]
+pub struct Get<'clipboard> {
+	pub(crate) platform: platform::Get<'clipboard>,
+}
+
+impl Get<'_> {
+	/// Completes the "get" operation by fetching UTF-8 text from the clipboard.
+	pub fn text(self) -> Result<String, Error> {
+		self.platform.text()
+	}
+
+	/// Completes the "get" operation by fetching image data from the clipboard and returning the
+	/// decoded pixels.
+	///
+	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
+	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
+	/// other application will be of a supported format.
+	#[cfg(feature = "image-data")]
+	pub fn image(self) -> Result<ImageData<'static>, Error> {
+		self.platform.image()
+	}
+}
+
+/// A builder for an operation that sets a value to the clipboard.
+#[must_use]
+pub struct Set<'clipboard> {
+	pub(crate) platform: platform::Set<'clipboard>,
+}
+
+impl Set<'_> {
+	/// Completes the "set" operation by placing text onto the clipboard. Any valid UTF-8 string
+	/// is accepted.
+	pub fn text(self, text: String) -> Result<(), Error> {
+		self.platform.text(text)
+	}
+
+	/// Completes the "set" operation by placing an image onto the clipboard.
+	///
+	/// The chosen output format, depending on the platform is the following:
+	///
+	/// - On macOS: `NSImage` object
+	/// - On Linux: PNG, under the atom `image/png`
+	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
+	#[cfg(feature = "image-data")]
+	pub fn image(self, image: ImageData) -> Result<(), Error> {
+		self.platform.image(image)
 	}
 }
 
@@ -186,7 +252,7 @@ fn all_tests() {
 		not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 	))]
 	{
-		use crate::{ClipboardExtLinux, LinuxClipboardKind};
+		use crate::{ClipboardExtLinux, LinuxClipboardKind, SetExtLinux};
 		let mut ctx = Clipboard::new().unwrap();
 
 		const TEXT1: &str = "I'm a little teapot,";
@@ -225,7 +291,7 @@ fn all_tests() {
 			}
 		});
 
-		ctx.set_text_wait("initial text".to_owned()).unwrap();
+		ctx.set().wait().text("initial text".to_owned()).unwrap();
 
 		assert!(was_replaced.load(atomic::Ordering::Acquire));
 
