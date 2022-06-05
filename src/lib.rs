@@ -264,7 +264,9 @@ fn all_tests() {
 		// The secondary clipboard is not available under wayland
 		if !cfg!(feature = "wayland-data-control") || std::env::var_os("WAYLAND_DISPLAY").is_none()
 		{
-			ctx.set().text_with_clipboard(TEXT3.to_string(), LinuxClipboardKind::Secondary).unwrap();
+			ctx.set()
+				.text_with_clipboard(TEXT3.to_string(), LinuxClipboardKind::Secondary)
+				.unwrap();
 		}
 
 		assert_eq!(TEXT1, &ctx.get().text_with_clipboard(LinuxClipboardKind::Clipboard).unwrap());

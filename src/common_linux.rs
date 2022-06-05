@@ -224,19 +224,19 @@ pub trait SetExtLinux {
 	///
 	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
 	/// return an error.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use arboard::{Clipboard, SetExtLinux, LinuxClipboardKind};
-    /// let mut ctx = Clipboard::new().unwrap();
-    ///
-    /// let clipboard = "This goes in the traditional (ex. Copy & Paste) clipboard.";
-    /// ctx.set().text_with_clipboard(clipboard.to_owned(), LinuxClipboardKind::Clipboard).unwrap();
-    ///
-    /// let primary = "This goes in the primary keyboard. It's typically used via middle mouse click.";
-    /// ctx.set().text_with_clipboard(primary.to_owned() , LinuxClipboardKind::Primary).unwrap();
-    /// ```
+	///
+	/// # Examples
+	///
+	/// ```
+	/// use arboard::{Clipboard, SetExtLinux, LinuxClipboardKind};
+	/// let mut ctx = Clipboard::new().unwrap();
+	///
+	/// let clipboard = "This goes in the traditional (ex. Copy & Paste) clipboard.";
+	/// ctx.set().text_with_clipboard(clipboard.to_owned(), LinuxClipboardKind::Clipboard).unwrap();
+	///
+	/// let primary = "This goes in the primary keyboard. It's typically used via middle mouse click.";
+	/// ctx.set().text_with_clipboard(primary.to_owned() , LinuxClipboardKind::Primary).unwrap();
+	/// ```
 	fn text_with_clipboard(self, text: String, selection: LinuxClipboardKind) -> Result<(), Error>;
 }
 
