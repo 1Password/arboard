@@ -57,6 +57,13 @@ pub fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 }
 
 /// Clipboard selection
+///
+/// Linux has a concept of clipboard "selections" which tend to be used in different contexts. This
+/// trait extension provides a way to get/set to a specific clipboard (the default
+/// [`Clipboard`](Self::Clipboard) being used for the common platform API).
+///
+/// See <https://specifications.freedesktop.org/clipboards-spec/clipboards-0.1.txt> for a better
+/// description of the different clipboards.
 #[derive(Copy, Clone, Debug)]
 pub enum LinuxClipboardKind {
 	/// Typically used selection for explicit cut/copy/paste actions (ie. windows/macos like
@@ -75,62 +82,6 @@ pub enum LinuxClipboardKind {
 	/// *On Wayland, this is not be available and operations using this variant will return an
 	/// error.*
 	Secondary,
-}
-
-/// Linux-specific extensions to the [`Clipboard`](crate::Clipboard) type.
-///
-/// # Clipboard selections
-///
-/// Linux has a concept of clipboard "selections" which tend to be used in different contexts. This
-/// trait extension provides a way to get/set to a specific clipboard (the default
-/// [LinuxClipboardKind::Clipboard] being used for the common platform API).
-///
-/// See https://specifications.freedesktop.org/clipboards-spec/clipboards-0.1.txt for a better
-/// description of the different clipboards.
-///
-/// # Examples
-///
-/// ```
-/// use arboard::{Clipboard, ClipboardExtLinux, LinuxClipboardKind};
-/// let mut ctx = Clipboard::new().unwrap();
-///
-/// ctx.set_text_with_clipboard(
-///     "This goes in the traditional (ex. Copy & Paste) clipboard.".to_string(),
-///     LinuxClipboardKind::Clipboard
-/// ).unwrap();
-///
-/// ctx.set_text_with_clipboard(
-///     "This goes in the primary keyboard. It's typically used via middle mouse click.".to_string(),
-///     LinuxClipboardKind::Primary
-/// ).unwrap();
-/// ```
-pub trait ClipboardExtLinux {
-	/// Places the text onto the selected clipboard. Any valid utf-8 string is accepted. If wayland
-	/// support is enabled and available, attempting to use the Secondary clipboard will return an
-	/// error.
-	fn set_text_with_clipboard(
-		&mut self,
-		text: String,
-		clipboard: LinuxClipboardKind,
-	) -> Result<(), Error>;
-
-	/// Fetches utf-8 text from the selected clipboard and returns it. If wayland support is enabled
-	/// and available, attempting to use the Secondary clipboard will return an error.
-	fn get_text_with_clipboard(&mut self, clipboard: LinuxClipboardKind) -> Result<String, Error>;
-}
-
-impl ClipboardExtLinux for super::Clipboard {
-	fn set_text_with_clipboard(
-		&mut self,
-		text: String,
-		selection: LinuxClipboardKind,
-	) -> Result<(), Error> {
-		self.set().text_with_clipboard(text, selection)
-	}
-
-	fn get_text_with_clipboard(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
-		self.get().text_with_clipboard(selection)
-	}
 }
 
 pub(crate) enum Clipboard {
@@ -273,6 +224,19 @@ pub trait SetExtLinux {
 	///
 	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
 	/// return an error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use arboard::{Clipboard, SetExtLinux, LinuxClipboardKind};
+    /// let mut ctx = Clipboard::new().unwrap();
+    ///
+    /// let clipboard = "This goes in the traditional (ex. Copy & Paste) clipboard.";
+    /// ctx.set().text_with_clipboard(clipboard.to_owned(), LinuxClipboardKind::Clipboard).unwrap();
+    ///
+    /// let primary = "This goes in the primary keyboard. It's typically used via middle mouse click.";
+    /// ctx.set().text_with_clipboard(primary.to_owned() , LinuxClipboardKind::Primary).unwrap();
+    /// ```
 	fn text_with_clipboard(self, text: String, selection: LinuxClipboardKind) -> Result<(), Error>;
 }
 
