@@ -59,8 +59,9 @@ pub fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 /// Clipboard selection
 ///
 /// Linux has a concept of clipboard "selections" which tend to be used in different contexts. This
-/// trait extension provides a way to get/set to a specific clipboard (the default
-/// [`Clipboard`](Self::Clipboard) being used for the common platform API).
+/// enum provides a way to get/set to a specific clipboard (the default
+/// [`Clipboard`](Self::Clipboard) being used for the common platform API). You can choose which
+/// clipboard to use with [`GetExtLinux::clipboard`] and [`SetExtLinux::clipboard`].
 ///
 /// See <https://specifications.freedesktop.org/clipboards-spec/clipboards-0.1.txt> for a better
 /// description of the different clipboards.
@@ -115,78 +116,73 @@ impl Clipboard {
 
 pub(crate) struct Get<'clipboard> {
 	clipboard: &'clipboard mut Clipboard,
+	selection: LinuxClipboardKind,
 }
 
 impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard }
+		Self { clipboard, selection: LinuxClipboardKind::Clipboard }
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
-		self.text_with_clipboard(LinuxClipboardKind::Clipboard)
-	}
-
-	fn text_with_clipboard(self, selection: LinuxClipboardKind) -> Result<String, Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_text(selection),
+			Clipboard::X11(clipboard) => clipboard.get_text(self.selection),
 			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.get_text(selection),
+			Clipboard::WlDataControl(clipboard) => clipboard.get_text(self.selection),
 		}
 	}
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_image(),
+			Clipboard::X11(clipboard) => clipboard.get_image(self.selection),
 			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.get_image(),
+			Clipboard::WlDataControl(clipboard) => clipboard.get_image(self.selection),
 		}
 	}
 }
 
 /// Linux-specific extensions to the [`Get`](super::Get) builder.
 pub trait GetExtLinux {
-	/// Fetches UTF-8 text from the selected clipboard and returns it.
+	/// Sets the clipboard the operation will retrieve data from.
 	///
 	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
 	/// return an error.
-	fn text_with_clipboard(self, selection: LinuxClipboardKind) -> Result<String, Error>;
+	fn clipboard(self, selection: LinuxClipboardKind) -> Self;
 }
 
 impl GetExtLinux for crate::Get<'_> {
-	fn text_with_clipboard(self, selection: LinuxClipboardKind) -> Result<String, Error> {
-		self.platform.text_with_clipboard(selection)
+	fn clipboard(mut self, selection: LinuxClipboardKind) -> Self {
+		self.platform.selection = selection;
+		self
 	}
 }
 
 pub(crate) struct Set<'clipboard> {
 	clipboard: &'clipboard mut Clipboard,
 	wait: bool,
+	selection: LinuxClipboardKind,
 }
 
 impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard, wait: false }
+		Self { clipboard, wait: false, selection: LinuxClipboardKind::Clipboard }
 	}
 
 	pub(crate) fn text(self, text: String) -> Result<(), Error> {
-		self.text_with_clipboard(text, LinuxClipboardKind::Clipboard)
-	}
-
-	fn text_with_clipboard(self, text: String, selection: LinuxClipboardKind) -> Result<(), Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_text(text, selection, self.wait),
+			Clipboard::X11(clipboard) => clipboard.set_text(text, self.selection, self.wait),
 			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.set_text(text, selection, self.wait),
+			Clipboard::WlDataControl(clipboard) => clipboard.set_text(text, self.selection, self.wait),
 		}
 	}
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, image: ImageData<'_>) -> Result<(), Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_image(image, self.wait),
+			Clipboard::X11(clipboard) => clipboard.set_image(image, self.selection, self.wait),
 			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.set_image(image, self.wait),
+			Clipboard::WlDataControl(clipboard) => clipboard.set_image(image, self.selection, self.wait),
 		}
 	}
 }
@@ -220,7 +216,7 @@ pub trait SetExtLinux {
 	/// [daemonize example]: https://github.com/1Password/arboard/blob/master/examples/daemonize.rs
 	fn wait(self) -> Self;
 
-	/// Places the text onto the selected clipboard. Any valid UTF-8 string is accepted.
+	/// Sets the clipboard the operation will store its data to.
 	///
 	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
 	/// return an error.
@@ -229,15 +225,18 @@ pub trait SetExtLinux {
 	///
 	/// ```
 	/// use arboard::{Clipboard, SetExtLinux, LinuxClipboardKind};
-	/// let mut ctx = Clipboard::new().unwrap();
+	/// # fn main() -> Result<(), arboard::Error> {
+	/// let mut ctx = Clipboard::new()?;
 	///
 	/// let clipboard = "This goes in the traditional (ex. Copy & Paste) clipboard.";
-	/// ctx.set().text_with_clipboard(clipboard.to_owned(), LinuxClipboardKind::Clipboard).unwrap();
+	/// ctx.set().clipboard(LinuxClipboardKind::Clipboard).text(clipboard.to_owned())?;
 	///
 	/// let primary = "This goes in the primary keyboard. It's typically used via middle mouse click.";
-	/// ctx.set().text_with_clipboard(primary.to_owned() , LinuxClipboardKind::Primary).unwrap();
+	/// ctx.set().clipboard(LinuxClipboardKind::Primary).text(primary.to_owned())?;
+	/// # Ok(())
+	/// # }
 	/// ```
-	fn text_with_clipboard(self, text: String, selection: LinuxClipboardKind) -> Result<(), Error>;
+	fn clipboard(self, selection: LinuxClipboardKind) -> Self;
 }
 
 impl SetExtLinux for crate::Set<'_> {
@@ -246,7 +245,8 @@ impl SetExtLinux for crate::Set<'_> {
 		self
 	}
 
-	fn text_with_clipboard(self, text: String, selection: LinuxClipboardKind) -> Result<(), Error> {
-		self.platform.text_with_clipboard(text, selection)
+	fn clipboard(mut self, selection: LinuxClipboardKind) -> Self {
+		self.platform.selection = selection;
+		self
 	}
 }

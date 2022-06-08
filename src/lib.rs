@@ -257,29 +257,24 @@ fn all_tests() {
 		const TEXT2: &str = "short and stout,";
 		const TEXT3: &str = "here is my handle";
 
-		ctx.set().text_with_clipboard(TEXT1.to_string(), LinuxClipboardKind::Clipboard).unwrap();
+		ctx.set().clipboard(LinuxClipboardKind::Clipboard).text(TEXT1.to_string()).unwrap();
 
-		ctx.set().text_with_clipboard(TEXT2.to_string(), LinuxClipboardKind::Primary).unwrap();
+		ctx.set().clipboard(LinuxClipboardKind::Primary).text(TEXT2.to_string()).unwrap();
 
 		// The secondary clipboard is not available under wayland
 		if !cfg!(feature = "wayland-data-control") || std::env::var_os("WAYLAND_DISPLAY").is_none()
 		{
-			ctx.set()
-				.text_with_clipboard(TEXT3.to_string(), LinuxClipboardKind::Secondary)
-				.unwrap();
+			ctx.set().clipboard(LinuxClipboardKind::Secondary).text(TEXT3.to_string()).unwrap();
 		}
 
-		assert_eq!(TEXT1, &ctx.get().text_with_clipboard(LinuxClipboardKind::Clipboard).unwrap());
+		assert_eq!(TEXT1, &ctx.get().clipboard(LinuxClipboardKind::Clipboard).text().unwrap());
 
-		assert_eq!(TEXT2, &ctx.get().text_with_clipboard(LinuxClipboardKind::Primary).unwrap());
+		assert_eq!(TEXT2, &ctx.get().clipboard(LinuxClipboardKind::Primary).text().unwrap());
 
 		// The secondary clipboard is not available under wayland
 		if !cfg!(feature = "wayland-data-control") || std::env::var_os("WAYLAND_DISPLAY").is_none()
 		{
-			assert_eq!(
-				TEXT3,
-				&ctx.get().text_with_clipboard(LinuxClipboardKind::Secondary).unwrap()
-			);
+			assert_eq!(TEXT3, &ctx.get().clipboard(LinuxClipboardKind::Secondary).text().unwrap());
 		}
 
 		let was_replaced = Arc::new(AtomicBool::new(false));

@@ -864,9 +864,9 @@ impl X11ClipboardContext {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub(crate) fn get_image(&self) -> Result<ImageData<'static>> {
+	pub(crate) fn get_image(&self, selection: LinuxClipboardKind) -> Result<ImageData<'static>> {
 		let formats = [self.inner.atoms.PNG_MIME];
-		let bytes = self.inner.read(&formats, LinuxClipboardKind::Clipboard)?.bytes;
+		let bytes = self.inner.read(&formats, selection)?.bytes;
 
 		let cursor = std::io::Cursor::new(&bytes);
 		let mut reader = image::io::Reader::new(cursor);
@@ -882,10 +882,15 @@ impl X11ClipboardContext {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub(crate) fn set_image(&self, image: ImageData, wait: bool) -> Result<()> {
+	pub(crate) fn set_image(
+		&self,
+		image: ImageData,
+		selection: LinuxClipboardKind,
+		wait: bool,
+	) -> Result<()> {
 		let encoded = encode_as_png(&image)?;
 		let data = ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME };
-		self.inner.write(data, LinuxClipboardKind::Clipboard, wait)
+		self.inner.write(data, selection, wait)
 	}
 }
 
