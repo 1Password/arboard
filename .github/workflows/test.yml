@@ -35,26 +35,30 @@ jobs:
           override: true
           components: clippy
       - uses: actions/checkout@v2
+
       - name: Run `cargo clippy` with no features
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose --no-default-features
+          args: --verbose --no-default-features -- -D warnings
+
       - name: Run `cargo clippy` with `image-data` feature
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose --no-default-features --features image-data
+          args: --verbose --no-default-features --features image-data -- -D warnings
+
       - name: Run `cargo clippy` with `wayland-data-control` feature
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose --no-default-features --features wayland-data-control
+          args: --verbose --no-default-features --features wayland-data-control -- -D warnings
+
       - name: Run `cargo clippy` with all features
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose --all-features
+          args: --verbose --all-features -- -D warnings
 
   test:
     needs: clippy
