@@ -16,37 +16,43 @@ pub use common::Error;
 #[cfg(feature = "image-data")]
 pub use common::ImageData;
 
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),))]
-pub(crate) mod common_linux;
+// Linux backends
 
 #[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),))]
-pub mod x11_clipboard;
+mod x11_clipboard;
 
 #[cfg(all(
 	unix,
 	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 	feature = "wayland-data-control"
 ))]
-pub mod wayland_data_control_clipboard;
+mod wayland_data_control_clipboard;
+
+// Platforms
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
+mod common_linux;
+#[cfg(all(
+	unix,
+	not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
+))]
+use common_linux as platform;
 
 #[cfg(windows)]
-pub mod windows_clipboard;
-
-#[cfg(target_os = "macos")]
-pub mod osx_clipboard;
-
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),))]
-type PlatformClipboard = common_linux::LinuxClipboard;
+mod windows_clipboard;
 #[cfg(windows)]
-type PlatformClipboard = windows_clipboard::WindowsClipboardContext;
+use windows_clipboard as platform;
+
 #[cfg(target_os = "macos")]
-type PlatformClipboard = osx_clipboard::OSXClipboardContext;
+mod osx_clipboard;
+#[cfg(target_os = "macos")]
+use osx_clipboard as platform;
 
 #[cfg(all(
 	unix,
 	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 ))]
-pub use common_linux::{ClipboardExtLinux, LinuxClipboardKind};
+pub use common_linux::{GetExtLinux, LinuxClipboardKind, SetExtLinux};
 
 /// The OS independent struct for accessing the clipboard.
 ///
@@ -60,23 +66,23 @@ pub use common_linux::{ClipboardExtLinux, LinuxClipboardKind};
 /// It is also valid to have multiple `Clipboards` on separate threads at once but note that
 /// executing multiple clipboard operations in parallel might fail with a `ClipboardOccupied` error.
 pub struct Clipboard {
-	pub(crate) platform: PlatformClipboard,
+	pub(crate) platform: platform::Clipboard,
 }
 
 impl Clipboard {
 	/// Creates an instance of the clipboard
 	pub fn new() -> Result<Self, Error> {
-		Ok(Clipboard { platform: PlatformClipboard::new()? })
+		Ok(Clipboard { platform: platform::Clipboard::new()? })
 	}
 
 	/// Fetches utf-8 text from the clipboard and returns it.
 	pub fn get_text(&mut self) -> Result<String, Error> {
-		self.platform.get_text()
+		self.get().text()
 	}
 
 	/// Places the text onto the clipboard. Any valid utf-8 string is accepted.
 	pub fn set_text(&mut self, text: String) -> Result<(), Error> {
-		self.platform.set_text(text)
+		self.set().text(text)
 	}
 
 	/// Fetches image data from the clipboard, and returns the decoded pixels.
@@ -86,7 +92,7 @@ impl Clipboard {
 	/// other application will be of a supported format.
 	#[cfg(feature = "image-data")]
 	pub fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
-		self.platform.get_image()
+		self.get().image()
 	}
 
 	/// Places an image to the clipboard.
@@ -98,7 +104,67 @@ impl Clipboard {
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
 	#[cfg(feature = "image-data")]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
-		self.platform.set_image(image)
+		self.set().image(image)
+	}
+
+	/// Begins a "get" operation to retrieve data from the clipboard.
+	pub fn get(&mut self) -> Get<'_> {
+		Get { platform: platform::Get::new(&mut self.platform) }
+	}
+
+	/// Begins a "set" operation to set the clipboard's contents.
+	pub fn set(&mut self) -> Set<'_> {
+		Set { platform: platform::Set::new(&mut self.platform) }
+	}
+}
+
+/// A builder for an operation that gets a value from the clipboard.
+#[must_use]
+pub struct Get<'clipboard> {
+	pub(crate) platform: platform::Get<'clipboard>,
+}
+
+impl Get<'_> {
+	/// Completes the "get" operation by fetching UTF-8 text from the clipboard.
+	pub fn text(self) -> Result<String, Error> {
+		self.platform.text()
+	}
+
+	/// Completes the "get" operation by fetching image data from the clipboard and returning the
+	/// decoded pixels.
+	///
+	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
+	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
+	/// other application will be of a supported format.
+	#[cfg(feature = "image-data")]
+	pub fn image(self) -> Result<ImageData<'static>, Error> {
+		self.platform.image()
+	}
+}
+
+/// A builder for an operation that sets a value to the clipboard.
+#[must_use]
+pub struct Set<'clipboard> {
+	pub(crate) platform: platform::Set<'clipboard>,
+}
+
+impl Set<'_> {
+	/// Completes the "set" operation by placing text onto the clipboard. Any valid UTF-8 string
+	/// is accepted.
+	pub fn text(self, text: String) -> Result<(), Error> {
+		self.platform.text(text)
+	}
+
+	/// Completes the "set" operation by placing an image onto the clipboard.
+	///
+	/// The chosen output format, depending on the platform is the following:
+	///
+	/// - On macOS: `NSImage` object
+	/// - On Linux: PNG, under the atom `image/png`
+	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
+	#[cfg(feature = "image-data")]
+	pub fn image(self, image: ImageData) -> Result<(), Error> {
+		self.platform.image(image)
 	}
 }
 
@@ -107,6 +173,8 @@ impl Clipboard {
 #[cfg(test)]
 #[test]
 fn all_tests() {
+	use std::{thread, time::Duration};
+
 	let _ = env_logger::builder().is_test(true).try_init();
 	{
 		let mut ctx = Clipboard::new().unwrap();
@@ -121,8 +189,7 @@ fn all_tests() {
 		// Give any external mechanism a generous amount of time to take over
 		// responsibility for the clipboard, in case that happens asynchronously
 		// (it appears that this is the case on X11 plus Mutter 3.34+, see #4)
-		use std::time::Duration;
-		std::thread::sleep(Duration::from_millis(100));
+		thread::sleep(Duration::from_millis(300));
 
 		let mut ctx = Clipboard::new().unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
@@ -178,31 +245,54 @@ fn all_tests() {
 		not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 	))]
 	{
-		use crate::{ClipboardExtLinux, LinuxClipboardKind};
+		use crate::{LinuxClipboardKind, SetExtLinux};
+		use std::sync::{
+			atomic::{self, AtomicBool},
+			Arc,
+		};
+
 		let mut ctx = Clipboard::new().unwrap();
 
 		const TEXT1: &str = "I'm a little teapot,";
 		const TEXT2: &str = "short and stout,";
 		const TEXT3: &str = "here is my handle";
 
-		ctx.set_text_with_clipboard(TEXT1.to_string(), LinuxClipboardKind::Clipboard).unwrap();
+		ctx.set().clipboard(LinuxClipboardKind::Clipboard).text(TEXT1.to_string()).unwrap();
 
-		ctx.set_text_with_clipboard(TEXT2.to_string(), LinuxClipboardKind::Primary).unwrap();
-
-		// The secondary clipboard is not available under wayland
-		if !cfg!(feature = "wayland-data-control") || std::env::var_os("WAYLAND_DISPLAY").is_none()
-		{
-			ctx.set_text_with_clipboard(TEXT3.to_string(), LinuxClipboardKind::Secondary).unwrap();
-		}
-
-		assert_eq!(TEXT1, &ctx.get_text_with_clipboard(LinuxClipboardKind::Clipboard).unwrap());
-
-		assert_eq!(TEXT2, &ctx.get_text_with_clipboard(LinuxClipboardKind::Primary).unwrap());
+		ctx.set().clipboard(LinuxClipboardKind::Primary).text(TEXT2.to_string()).unwrap();
 
 		// The secondary clipboard is not available under wayland
 		if !cfg!(feature = "wayland-data-control") || std::env::var_os("WAYLAND_DISPLAY").is_none()
 		{
-			assert_eq!(TEXT3, &ctx.get_text_with_clipboard(LinuxClipboardKind::Secondary).unwrap());
+			ctx.set().clipboard(LinuxClipboardKind::Secondary).text(TEXT3.to_string()).unwrap();
 		}
+
+		assert_eq!(TEXT1, &ctx.get().clipboard(LinuxClipboardKind::Clipboard).text().unwrap());
+
+		assert_eq!(TEXT2, &ctx.get().clipboard(LinuxClipboardKind::Primary).text().unwrap());
+
+		// The secondary clipboard is not available under wayland
+		if !cfg!(feature = "wayland-data-control") || std::env::var_os("WAYLAND_DISPLAY").is_none()
+		{
+			assert_eq!(TEXT3, &ctx.get().clipboard(LinuxClipboardKind::Secondary).text().unwrap());
+		}
+
+		let was_replaced = Arc::new(AtomicBool::new(false));
+
+		let setter = thread::spawn({
+			let was_replaced = was_replaced.clone();
+			move || {
+				thread::sleep(Duration::from_millis(100));
+				let mut ctx = Clipboard::new().unwrap();
+				ctx.set_text("replacement text".to_owned()).unwrap();
+				was_replaced.store(true, atomic::Ordering::Release);
+			}
+		});
+
+		ctx.set().wait().text("initial text".to_owned()).unwrap();
+
+		assert!(was_replaced.load(atomic::Ordering::Acquire));
+
+		setter.join().unwrap();
 	}
 }

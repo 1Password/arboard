@@ -8,6 +8,7 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
+use std::marker::PhantomData;
 #[cfg(feature = "image-data")]
 use std::{borrow::Cow, convert::TryInto, mem::size_of};
 
@@ -354,14 +355,24 @@ unsafe fn convert_bytes_to_u32s(bytes: &mut [u8]) -> ImageDataCow<'_> {
 	}
 }
 
-pub struct WindowsClipboardContext;
+pub(crate) struct Clipboard;
 
-impl WindowsClipboardContext {
+impl Clipboard {
 	pub(crate) fn new() -> Result<Self, Error> {
-		Ok(WindowsClipboardContext)
+		Ok(Self)
+	}
+}
+
+pub(crate) struct Get<'clipboard> {
+	clipboard: PhantomData<&'clipboard mut Clipboard>,
+}
+
+impl<'clipboard> Get<'clipboard> {
+	pub(crate) fn new(_clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { clipboard: PhantomData }
 	}
 
-	pub(crate) fn get_text(&mut self) -> Result<String, Error> {
+	pub(crate) fn text(self) -> Result<String, Error> {
 		const FORMAT: u32 = clipboard_win::formats::CF_UNICODETEXT;
 
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
@@ -406,17 +417,8 @@ impl WindowsClipboardContext {
 		String::from_utf16(&out[..bytes_read]).map_err(|_| Error::ConversionFailure)
 	}
 
-	pub(crate) fn set_text(&mut self, data: String) -> Result<(), Error> {
-		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
-			.map_err(|_| Error::ClipboardOccupied)?;
-
-		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
-			description: "Could not place the specified text to the clipboard".into(),
-		})
-	}
-
 	#[cfg(feature = "image-data")]
-	pub(crate) fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
+	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		const FORMAT: u32 = clipboard_win::formats::CF_DIBV5;
 
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
@@ -434,9 +436,28 @@ impl WindowsClipboardContext {
 
 		read_cf_dibv5(&data)
 	}
+}
+
+pub(crate) struct Set<'clipboard> {
+	clipboard: PhantomData<&'clipboard mut Clipboard>,
+}
+
+impl<'clipboard> Set<'clipboard> {
+	pub(crate) fn new(_clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { clipboard: PhantomData }
+	}
+
+	pub(crate) fn text(self, data: String) -> Result<(), Error> {
+		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
+			.map_err(|_| Error::ClipboardOccupied)?;
+
+		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
+			description: "Could not place the specified text to the clipboard".into(),
+		})
+	}
 
 	#[cfg(feature = "image-data")]
-	pub(crate) fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
+	pub(crate) fn image(self, image: ImageData) -> Result<(), Error> {
 		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
 			.map_err(|_| Error::ClipboardOccupied)?;
 

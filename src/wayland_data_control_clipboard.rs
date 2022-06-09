@@ -17,7 +17,7 @@ use crate::{common::ImageData, common_linux::encode_as_png};
 #[cfg(feature = "image-data")]
 const MIME_PNG: &str = "image/png";
 
-pub struct WaylandDataControlClipboardContext {}
+pub(crate) struct WaylandDataControlClipboardContext {}
 
 impl TryInto<copy::ClipboardType> for LinuxClipboardKind {
 	type Error = Error;
@@ -53,14 +53,7 @@ impl WaylandDataControlClipboardContext {
 		Ok(Self {})
 	}
 
-	pub fn get_text(&mut self) -> Result<String, Error> {
-		self.get_text_with_clipboard(LinuxClipboardKind::Clipboard)
-	}
-
-	pub(crate) fn get_text_with_clipboard(
-		&mut self,
-		selection: LinuxClipboardKind,
-	) -> Result<String, Error> {
+	pub(crate) fn get_text(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
 		use wl_clipboard_rs::paste::MimeType;
 
 		let result = get_contents(selection.try_into()?, Seat::Unspecified, MimeType::Text);
@@ -81,17 +74,15 @@ impl WaylandDataControlClipboardContext {
 		}
 	}
 
-	pub fn set_text(&mut self, text: String) -> Result<(), Error> {
-		self.set_text_with_clipboard(text, LinuxClipboardKind::Clipboard)
-	}
-
-	pub(crate) fn set_text_with_clipboard(
+	pub(crate) fn set_text(
 		&self,
 		text: String,
 		selection: LinuxClipboardKind,
+		wait: bool,
 	) -> Result<(), Error> {
 		use wl_clipboard_rs::copy::MimeType;
 		let mut opts = Options::new();
+		opts.foreground(wait);
 		opts.clipboard(selection.try_into()?);
 		let source = Source::Bytes(text.as_bytes().into());
 		opts.copy(source, MimeType::Text).map_err(|e| match e {
@@ -102,15 +93,15 @@ impl WaylandDataControlClipboardContext {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
+	pub(crate) fn get_image(
+		&mut self,
+		selection: LinuxClipboardKind,
+	) -> Result<ImageData<'static>, Error> {
 		use std::io::Cursor;
 		use wl_clipboard_rs::paste::MimeType;
 
-		let result = get_contents(
-			paste::ClipboardType::Regular,
-			Seat::Unspecified,
-			MimeType::Specific(MIME_PNG),
-		);
+		let result =
+			get_contents(selection.try_into()?, Seat::Unspecified, MimeType::Specific(MIME_PNG));
 		match result {
 			Ok((mut pipe, _mime_type)) => {
 				let mut buffer = vec![];
@@ -142,11 +133,18 @@ impl WaylandDataControlClipboardContext {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
+	pub(crate) fn set_image(
+		&mut self,
+		image: ImageData,
+		selection: LinuxClipboardKind,
+		wait: bool,
+	) -> Result<(), Error> {
 		use wl_clipboard_rs::copy::MimeType;
 
 		let image = encode_as_png(&image)?;
-		let opts = Options::new();
+		let mut opts = Options::new();
+		opts.foreground(wait);
+		opts.clipboard(selection.try_into()?);
 		let source = Source::Bytes(image.into());
 		opts.copy(source, MimeType::Specific(MIME_PNG.into())).map_err(into_unknown)?;
 		Ok(())
