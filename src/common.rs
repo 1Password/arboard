@@ -18,6 +18,7 @@ use thiserror::Error;
 /// that they give a short human-readable description of the error; however the documentation
 /// gives a more detailed explanation for each error kind.
 #[derive(Error)]
+#[non_exhaustive]
 pub enum Error {
 	/// The clipboard contents were not available in the requested format.
 	/// This could either be due to the clipboard being empty or the clipboard contents having
