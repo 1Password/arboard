@@ -16,43 +16,13 @@ pub use common::Error;
 #[cfg(feature = "image-data")]
 pub use common::ImageData;
 
-// Linux backends
-
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),))]
-mod x11_clipboard;
-
-#[cfg(all(
-	unix,
-	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
-	feature = "wayland-data-control"
-))]
-mod wayland_data_control_clipboard;
-
-// Platforms
-
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
-mod common_linux;
-#[cfg(all(
-	unix,
-	not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
-))]
-use common_linux as platform;
-
-#[cfg(windows)]
-mod windows_clipboard;
-#[cfg(windows)]
-use windows_clipboard as platform;
-
-#[cfg(target_os = "macos")]
-mod osx_clipboard;
-#[cfg(target_os = "macos")]
-use osx_clipboard as platform;
+mod platform;
 
 #[cfg(all(
 	unix,
 	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 ))]
-pub use common_linux::{GetExtLinux, LinuxClipboardKind, SetExtLinux};
+pub use platform::{GetExtLinux, LinuxClipboardKind, SetExtLinux};
 
 /// The OS independent struct for accessing the clipboard.
 ///

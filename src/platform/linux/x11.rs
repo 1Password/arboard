@@ -42,9 +42,12 @@ use x11rb::{
 	COPY_DEPTH_FROM_PARENT, COPY_FROM_PARENT, NONE,
 };
 
-use crate::{common::ScopeGuard, common_linux::into_unknown, Error, LinuxClipboardKind};
 #[cfg(feature = "image-data")]
-use crate::{common_linux::encode_as_png, ImageData};
+use super::encode_as_png;
+use super::{into_unknown, LinuxClipboardKind};
+#[cfg(feature = "image-data")]
+use crate::ImageData;
+use crate::{common::ScopeGuard, Error};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -98,7 +101,7 @@ enum ManagerHandoverState {
 }
 
 struct GlobalClipboard {
-	context: Arc<ClipboardContext>,
+	inner: Arc<Inner>,
 
 	/// Join handle to the thread which serves selection requests.
 	server_handle: JoinHandle<()>,
@@ -109,15 +112,15 @@ struct XContext {
 	win_id: u32,
 }
 
-struct ClipboardContext {
+struct Inner {
 	/// The context for the thread which serves clipboard read
 	/// requests coming to us.
 	server: XContext,
 	atoms: Atoms,
 
-	clipboard: Clipboard,
-	primary: Clipboard,
-	secondary: Clipboard,
+	clipboard: Selection,
+	primary: Selection,
+	secondary: Selection,
 
 	handover_state: Mutex<ManagerHandoverState>,
 	handover_cv: Condvar,
@@ -167,7 +170,7 @@ impl XContext {
 }
 
 #[derive(Default)]
-struct Clipboard {
+struct Selection {
 	data: RwLock<Option<ClipboardData>>,
 	/// Mutex around nothing to use with the below condvar.
 	mutex: Mutex<()>,
@@ -191,7 +194,7 @@ enum ReadSelNotifyResult {
 	EventNotRecognized,
 }
 
-impl ClipboardContext {
+impl Inner {
 	fn new() -> Result<Self> {
 		let server = XContext::new()?;
 		let atoms =
@@ -200,9 +203,9 @@ impl ClipboardContext {
 		Ok(Self {
 			server,
 			atoms,
-			clipboard: Clipboard::default(),
-			primary: Clipboard::default(),
-			secondary: Clipboard::default(),
+			clipboard: Selection::default(),
+			primary: Selection::default(),
+			secondary: Selection::default(),
 			handover_state: Mutex::new(ManagerHandoverState::Idle),
 			handover_cv: Condvar::new(),
 			serve_stopped: AtomicBool::new(false),
@@ -382,7 +385,7 @@ impl ClipboardContext {
 		}
 	}
 
-	fn clipboard_of(&self, selection: LinuxClipboardKind) -> &Clipboard {
+	fn clipboard_of(&self, selection: LinuxClipboardKind) -> &Selection {
 		match selection {
 			LinuxClipboardKind::Clipboard => &self.clipboard,
 			LinuxClipboardKind::Primary => &self.primary,
@@ -695,11 +698,8 @@ impl ClipboardContext {
 	}
 }
 
-fn serve_requests(context: Arc<ClipboardContext>) -> Result<(), Box<dyn std::error::Error>> {
-	fn handover_finished(
-		clip: &Arc<ClipboardContext>,
-		mut handover_state: MutexGuard<ManagerHandoverState>,
-	) {
+fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>> {
+	fn handover_finished(clip: &Arc<Inner>, mut handover_state: MutexGuard<ManagerHandoverState>) {
 		log::trace!("Finishing clipboard manager handover.");
 		*handover_state = ManagerHandoverState::Finished;
 
@@ -806,18 +806,18 @@ fn serve_requests(context: Arc<ClipboardContext>) -> Result<(), Box<dyn std::err
 	}
 }
 
-pub(crate) struct X11ClipboardContext {
-	inner: Arc<ClipboardContext>,
+pub(crate) struct Clipboard {
+	inner: Arc<Inner>,
 }
 
-impl X11ClipboardContext {
+impl Clipboard {
 	pub(crate) fn new() -> Result<Self> {
 		let mut global_cb = CLIPBOARD.lock();
 		if let Some(global_cb) = &*global_cb {
-			return Ok(Self { inner: Arc::clone(&global_cb.context) });
+			return Ok(Self { inner: Arc::clone(&global_cb.inner) });
 		}
 		// At this point we know that the clipboard does not exist.
-		let ctx = Arc::new(ClipboardContext::new()?);
+		let ctx = Arc::new(Inner::new()?);
 		let join_handle;
 		{
 			let ctx = Arc::clone(&ctx);
@@ -827,8 +827,7 @@ impl X11ClipboardContext {
 				}
 			});
 		}
-		*global_cb =
-			Some(GlobalClipboard { context: Arc::clone(&ctx), server_handle: join_handle });
+		*global_cb = Some(GlobalClipboard { inner: Arc::clone(&ctx), server_handle: join_handle });
 		Ok(Self { inner: ctx })
 	}
 
@@ -893,7 +892,7 @@ impl X11ClipboardContext {
 	}
 }
 
-impl Drop for X11ClipboardContext {
+impl Drop for Clipboard {
 	fn drop(&mut self) {
 		// There are always at least 3 owners:
 		// the global, the server thread, and one `Clipboard::inner`

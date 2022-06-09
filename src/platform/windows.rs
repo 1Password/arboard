@@ -30,10 +30,10 @@ use winapi::{
 	},
 };
 
-use super::common::Error;
+use crate::common::Error;
 
 #[cfg(feature = "image-data")]
-use super::common::{ImageData, ScopeGuard};
+use crate::common::{ImageData, ScopeGuard};
 
 const MAX_OPEN_ATTEMPTS: usize = 5;
 

@@ -2,20 +2,23 @@
 use std::{cell::RefCell, rc::Rc};
 
 #[cfg(feature = "wayland-data-control")]
-use crate::wayland_data_control_clipboard::WaylandDataControlClipboardContext;
-#[cfg(feature = "wayland-data-control")]
 use log::{info, warn};
 
+use crate::Error;
 #[cfg(feature = "image-data")]
 use crate::ImageData;
-use crate::{x11_clipboard::X11ClipboardContext, Error};
 
-pub fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
+mod x11;
+
+#[cfg(feature = "wayland-data-control")]
+mod wayland;
+
+fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
 	Error::Unknown { description: format!("{}", error) }
 }
 
 #[cfg(feature = "image-data")]
-pub fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
+fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 	/// This is a workaround for the PNGEncoder not having a `into_inner` like function
 	/// which would allow us to take back our Vec after the encoder finished encoding.
 	/// So instead we create this wrapper around an Rc Vec which implements `io::Write`
@@ -86,10 +89,10 @@ pub enum LinuxClipboardKind {
 }
 
 pub(crate) enum Clipboard {
-	X11(X11ClipboardContext),
+	X11(x11::Clipboard),
 
 	#[cfg(feature = "wayland-data-control")]
-	WlDataControl(WaylandDataControlClipboardContext),
+	WlDataControl(wayland::Clipboard),
 }
 
 impl Clipboard {
@@ -98,7 +101,7 @@ impl Clipboard {
 		{
 			if std::env::var_os("WAYLAND_DISPLAY").is_some() {
 				// Wayland is available
-				match WaylandDataControlClipboardContext::new() {
+				match wayland::Clipboard::new() {
 					Ok(clipboard) => {
 						info!("Successfully initialized the Wayland data control clipboard.");
 						return Ok( Self::WlDataControl(clipboard))
@@ -110,7 +113,7 @@ impl Clipboard {
 				}
 			}
 		}
-		Ok(Self::X11(X11ClipboardContext::new()?))
+		Ok(Self::X11(x11::Clipboard::new()?))
 	}
 }
 

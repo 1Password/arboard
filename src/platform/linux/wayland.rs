@@ -7,17 +7,17 @@ use wl_clipboard_rs::{
 	utils::is_primary_selection_supported,
 };
 
-use crate::{
-	common::Error,
-	common_linux::{into_unknown, LinuxClipboardKind},
-};
 #[cfg(feature = "image-data")]
-use crate::{common::ImageData, common_linux::encode_as_png};
+use super::encode_as_png;
+use super::{into_unknown, LinuxClipboardKind};
+use crate::common::Error;
+#[cfg(feature = "image-data")]
+use crate::common::ImageData;
 
 #[cfg(feature = "image-data")]
 const MIME_PNG: &str = "image/png";
 
-pub(crate) struct WaylandDataControlClipboardContext {}
+pub(crate) struct Clipboard {}
 
 impl TryInto<copy::ClipboardType> for LinuxClipboardKind {
 	type Error = Error;
@@ -43,7 +43,7 @@ impl TryInto<paste::ClipboardType> for LinuxClipboardKind {
 	}
 }
 
-impl WaylandDataControlClipboardContext {
+impl Clipboard {
 	#[allow(clippy::unnecessary_wraps)]
 	pub(crate) fn new() -> Result<Self, Error> {
 		// Check if it's possible to communicate with the wayland compositor
