@@ -159,3 +159,11 @@ impl<F: FnOnce()> Drop for ScopeGuard<F> {
 		}
 	}
 }
+
+/// Common trait for sealing platform extension traits.
+pub(crate) mod private {
+	pub trait Sealed {}
+
+	impl Sealed for crate::Get<'_> {}
+	impl Sealed for crate::Set<'_> {}
+}
