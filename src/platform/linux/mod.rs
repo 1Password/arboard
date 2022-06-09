@@ -4,9 +4,9 @@ use std::{cell::RefCell, rc::Rc};
 #[cfg(feature = "wayland-data-control")]
 use log::{info, warn};
 
-use crate::Error;
 #[cfg(feature = "image-data")]
 use crate::ImageData;
+use crate::{common::private, Error};
 
 mod x11;
 
@@ -146,7 +146,7 @@ impl<'clipboard> Get<'clipboard> {
 }
 
 /// Linux-specific extensions to the [`Get`](super::Get) builder.
-pub trait GetExtLinux {
+pub trait GetExtLinux: private::Sealed {
 	/// Sets the clipboard the operation will retrieve data from.
 	///
 	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
@@ -191,7 +191,7 @@ impl<'clipboard> Set<'clipboard> {
 }
 
 /// Linux specific extensions to the [`Set`](super::Set) builder.
-pub trait SetExtLinux {
+pub trait SetExtLinux: private::Sealed {
 	/// Whether to wait for the clipboard's contents to be replaced after setting it.
 	///
 	/// The Wayland and X11 clipboards work by having the clipboard content being, at any given
