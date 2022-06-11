@@ -8,9 +8,9 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use super::common::Error;
+use crate::common::Error;
 #[cfg(feature = "image-data")]
-use super::common::ImageData;
+use crate::common::ImageData;
 #[cfg(feature = "image-data")]
 use core_graphics::{
 	base::{kCGBitmapByteOrderDefault, kCGImageAlphaLast, kCGRenderingIntentDefault, CGFloat},

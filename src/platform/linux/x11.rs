@@ -42,9 +42,12 @@ use x11rb::{
 	COPY_DEPTH_FROM_PARENT, COPY_FROM_PARENT, NONE,
 };
 
-use crate::{common::ScopeGuard, common_linux::into_unknown, Error, LinuxClipboardKind};
 #[cfg(feature = "image-data")]
-use crate::{common_linux::encode_as_png, ImageData};
+use super::encode_as_png;
+use super::{into_unknown, LinuxClipboardKind};
+#[cfg(feature = "image-data")]
+use crate::ImageData;
+use crate::{common::ScopeGuard, Error};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -98,7 +101,7 @@ enum ManagerHandoverState {
 }
 
 struct GlobalClipboard {
-	context: Arc<ClipboardContext>,
+	inner: Arc<Inner>,
 
 	/// Join handle to the thread which serves selection requests.
 	server_handle: JoinHandle<()>,
@@ -109,15 +112,15 @@ struct XContext {
 	win_id: u32,
 }
 
-struct ClipboardContext {
+struct Inner {
 	/// The context for the thread which serves clipboard read
 	/// requests coming to us.
 	server: XContext,
 	atoms: Atoms,
 
-	clipboard: Clipboard,
-	primary: Clipboard,
-	secondary: Clipboard,
+	clipboard: Selection,
+	primary: Selection,
+	secondary: Selection,
 
 	handover_state: Mutex<ManagerHandoverState>,
 	handover_cv: Condvar,
@@ -167,7 +170,7 @@ impl XContext {
 }
 
 #[derive(Default)]
-struct Clipboard {
+struct Selection {
 	data: RwLock<Option<ClipboardData>>,
 	/// Mutex around nothing to use with the below condvar.
 	mutex: Mutex<()>,
@@ -191,7 +194,7 @@ enum ReadSelNotifyResult {
 	EventNotRecognized,
 }
 
-impl ClipboardContext {
+impl Inner {
 	fn new() -> Result<Self> {
 		let server = XContext::new()?;
 		let atoms =
@@ -200,9 +203,9 @@ impl ClipboardContext {
 		Ok(Self {
 			server,
 			atoms,
-			clipboard: Clipboard::default(),
-			primary: Clipboard::default(),
-			secondary: Clipboard::default(),
+			clipboard: Selection::default(),
+			primary: Selection::default(),
+			secondary: Selection::default(),
 			handover_state: Mutex::new(ManagerHandoverState::Idle),
 			handover_cv: Condvar::new(),
 			serve_stopped: AtomicBool::new(false),
@@ -228,24 +231,24 @@ impl ClipboardContext {
 		self.server.conn.flush().map_err(into_unknown)?;
 
 		// Just setting the data, and the `serve_requests` will take care of the rest.
-		let clipboard = self.clipboard_of(selection);
-		let mut data_guard = clipboard.data.write();
+		let selection = self.selection_of(selection);
+		let mut data_guard = selection.data.write();
 		*data_guard = Some(data);
 
 		// Lock the mutex to both ensure that no wakers of `data_changed` can wake us between
 		// dropping the `data_guard` and calling `wait[_for]` and that we don't we wake other
 		// threads in that position.
-		let mut guard = clipboard.mutex.lock();
+		let mut guard = selection.mutex.lock();
 
-		// Notify any existing waiting threads that we have changed the data in the clipboard.
+		// Notify any existing waiting threads that we have changed the data in the selection.
 		// It is important that the mutex is locked to prevent this notication getting lost.
-		clipboard.data_changed.notify_all();
+		selection.data_changed.notify_all();
 
 		if wait {
 			drop(data_guard);
 
 			// Wait for the clipboard's content to be changed.
-			clipboard.data_changed.wait(&mut guard);
+			selection.data_changed.wait(&mut guard);
 		}
 
 		Ok(())
@@ -257,7 +260,7 @@ impl ClipboardContext {
 	fn read(&self, formats: &[Atom], selection: LinuxClipboardKind) -> Result<ClipboardData> {
 		// if we are the current owner, we can get the current clipboard ourselves
 		if self.is_owner(selection)? {
-			let data = self.clipboard_of(selection).data.read();
+			let data = self.selection_of(selection).data.read();
 			if let Some(data) = &*data {
 				for format in formats {
 					if *format == data.format {
@@ -382,7 +385,7 @@ impl ClipboardContext {
 		}
 	}
 
-	fn clipboard_of(&self, selection: LinuxClipboardKind) -> &Clipboard {
+	fn selection_of(&self, selection: LinuxClipboardKind) -> &Selection {
 		match selection {
 			LinuxClipboardKind::Clipboard => &self.clipboard,
 			LinuxClipboardKind::Primary => &self.primary,
@@ -566,7 +569,7 @@ impl ClipboardContext {
 			let mut targets = Vec::with_capacity(10);
 			targets.push(self.atoms.TARGETS);
 			targets.push(self.atoms.SAVE_TARGETS);
-			let data = self.clipboard_of(selection).data.read();
+			let data = self.selection_of(selection).data.read();
 			if let Some(data) = &*data {
 				targets.push(data.format);
 				if data.format == self.atoms.UTF8_STRING {
@@ -591,7 +594,7 @@ impl ClipboardContext {
 			success = true;
 		} else {
 			trace!("Handling request for (probably) the clipboard contents.");
-			let data = self.clipboard_of(selection).data.read();
+			let data = self.selection_of(selection).data.read();
 			if let Some(data) = &*data {
 				if data.format == event.target {
 					self.server
@@ -651,7 +654,7 @@ impl ClipboardContext {
 			// We are not owning the clipboard, nothing to do.
 			return Ok(());
 		}
-		if self.clipboard_of(LinuxClipboardKind::Clipboard).data.read().is_none() {
+		if self.selection_of(LinuxClipboardKind::Clipboard).data.read().is_none() {
 			// If we don't have any data, there's nothing to do.
 			return Ok(());
 		}
@@ -695,11 +698,8 @@ impl ClipboardContext {
 	}
 }
 
-fn serve_requests(context: Arc<ClipboardContext>) -> Result<(), Box<dyn std::error::Error>> {
-	fn handover_finished(
-		clip: &Arc<ClipboardContext>,
-		mut handover_state: MutexGuard<ManagerHandoverState>,
-	) {
+fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>> {
+	fn handover_finished(clip: &Arc<Inner>, mut handover_state: MutexGuard<ManagerHandoverState>) {
 		log::trace!("Finishing clipboard manager handover.");
 		*handover_state = ManagerHandoverState::Finished;
 
@@ -732,8 +732,8 @@ fn serve_requests(context: Arc<ClipboardContext>) -> Result<(), Box<dyn std::err
 				trace!("Somebody else owns the clipboard now");
 
 				if let Some(selection) = context.kind_of(event.selection) {
-					let clipboard = context.clipboard_of(selection);
-					let mut data_guard = clipboard.data.write();
+					let selection = context.selection_of(selection);
+					let mut data_guard = selection.data.write();
 					*data_guard = None;
 
 					// It is important that this mutex is locked at the time of calling
@@ -741,8 +741,8 @@ fn serve_requests(context: Arc<ClipboardContext>) -> Result<(), Box<dyn std::err
 					// thread has unlocked its `data_guard` and is just about to sleep.
 					// It is also important that the RwLock is kept write-locked for the same
 					// reason.
-					let _guard = clipboard.mutex.lock();
-					clipboard.data_changed.notify_all();
+					let _guard = selection.mutex.lock();
+					selection.data_changed.notify_all();
 				}
 			}
 			Event::SelectionRequest(event) => {
@@ -806,18 +806,18 @@ fn serve_requests(context: Arc<ClipboardContext>) -> Result<(), Box<dyn std::err
 	}
 }
 
-pub(crate) struct X11ClipboardContext {
-	inner: Arc<ClipboardContext>,
+pub(crate) struct Clipboard {
+	inner: Arc<Inner>,
 }
 
-impl X11ClipboardContext {
+impl Clipboard {
 	pub(crate) fn new() -> Result<Self> {
 		let mut global_cb = CLIPBOARD.lock();
 		if let Some(global_cb) = &*global_cb {
-			return Ok(Self { inner: Arc::clone(&global_cb.context) });
+			return Ok(Self { inner: Arc::clone(&global_cb.inner) });
 		}
 		// At this point we know that the clipboard does not exist.
-		let ctx = Arc::new(ClipboardContext::new()?);
+		let ctx = Arc::new(Inner::new()?);
 		let join_handle;
 		{
 			let ctx = Arc::clone(&ctx);
@@ -827,8 +827,7 @@ impl X11ClipboardContext {
 				}
 			});
 		}
-		*global_cb =
-			Some(GlobalClipboard { context: Arc::clone(&ctx), server_handle: join_handle });
+		*global_cb = Some(GlobalClipboard { inner: Arc::clone(&ctx), server_handle: join_handle });
 		Ok(Self { inner: ctx })
 	}
 
@@ -893,7 +892,7 @@ impl X11ClipboardContext {
 	}
 }
 
-impl Drop for X11ClipboardContext {
+impl Drop for Clipboard {
 	fn drop(&mut self) {
 		// There are always at least 3 owners:
 		// the global, the server thread, and one `Clipboard::inner`
