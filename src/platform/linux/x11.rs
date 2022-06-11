@@ -231,24 +231,24 @@ impl Inner {
 		self.server.conn.flush().map_err(into_unknown)?;
 
 		// Just setting the data, and the `serve_requests` will take care of the rest.
-		let clipboard = self.clipboard_of(selection);
-		let mut data_guard = clipboard.data.write();
+		let selection = self.selection_of(selection);
+		let mut data_guard = selection.data.write();
 		*data_guard = Some(data);
 
 		// Lock the mutex to both ensure that no wakers of `data_changed` can wake us between
 		// dropping the `data_guard` and calling `wait[_for]` and that we don't we wake other
 		// threads in that position.
-		let mut guard = clipboard.mutex.lock();
+		let mut guard = selection.mutex.lock();
 
-		// Notify any existing waiting threads that we have changed the data in the clipboard.
+		// Notify any existing waiting threads that we have changed the data in the selection.
 		// It is important that the mutex is locked to prevent this notication getting lost.
-		clipboard.data_changed.notify_all();
+		selection.data_changed.notify_all();
 
 		if wait {
 			drop(data_guard);
 
 			// Wait for the clipboard's content to be changed.
-			clipboard.data_changed.wait(&mut guard);
+			selection.data_changed.wait(&mut guard);
 		}
 
 		Ok(())
@@ -260,7 +260,7 @@ impl Inner {
 	fn read(&self, formats: &[Atom], selection: LinuxClipboardKind) -> Result<ClipboardData> {
 		// if we are the current owner, we can get the current clipboard ourselves
 		if self.is_owner(selection)? {
-			let data = self.clipboard_of(selection).data.read();
+			let data = self.selection_of(selection).data.read();
 			if let Some(data) = &*data {
 				for format in formats {
 					if *format == data.format {
@@ -385,7 +385,7 @@ impl Inner {
 		}
 	}
 
-	fn clipboard_of(&self, selection: LinuxClipboardKind) -> &Selection {
+	fn selection_of(&self, selection: LinuxClipboardKind) -> &Selection {
 		match selection {
 			LinuxClipboardKind::Clipboard => &self.clipboard,
 			LinuxClipboardKind::Primary => &self.primary,
@@ -569,7 +569,7 @@ impl Inner {
 			let mut targets = Vec::with_capacity(10);
 			targets.push(self.atoms.TARGETS);
 			targets.push(self.atoms.SAVE_TARGETS);
-			let data = self.clipboard_of(selection).data.read();
+			let data = self.selection_of(selection).data.read();
 			if let Some(data) = &*data {
 				targets.push(data.format);
 				if data.format == self.atoms.UTF8_STRING {
@@ -594,7 +594,7 @@ impl Inner {
 			success = true;
 		} else {
 			trace!("Handling request for (probably) the clipboard contents.");
-			let data = self.clipboard_of(selection).data.read();
+			let data = self.selection_of(selection).data.read();
 			if let Some(data) = &*data {
 				if data.format == event.target {
 					self.server
@@ -654,7 +654,7 @@ impl Inner {
 			// We are not owning the clipboard, nothing to do.
 			return Ok(());
 		}
-		if self.clipboard_of(LinuxClipboardKind::Clipboard).data.read().is_none() {
+		if self.selection_of(LinuxClipboardKind::Clipboard).data.read().is_none() {
 			// If we don't have any data, there's nothing to do.
 			return Ok(());
 		}
@@ -732,8 +732,8 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 				trace!("Somebody else owns the clipboard now");
 
 				if let Some(selection) = context.kind_of(event.selection) {
-					let clipboard = context.clipboard_of(selection);
-					let mut data_guard = clipboard.data.write();
+					let selection = context.selection_of(selection);
+					let mut data_guard = selection.data.write();
 					*data_guard = None;
 
 					// It is important that this mutex is locked at the time of calling
@@ -741,8 +741,8 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 					// thread has unlocked its `data_guard` and is just about to sleep.
 					// It is also important that the RwLock is kept write-locked for the same
 					// reason.
-					let _guard = clipboard.mutex.lock();
-					clipboard.data_changed.notify_all();
+					let _guard = selection.mutex.lock();
+					selection.data_changed.notify_all();
 				}
 			}
 			Event::SelectionRequest(event) => {
