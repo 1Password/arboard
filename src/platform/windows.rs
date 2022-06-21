@@ -471,6 +471,24 @@ impl<'clipboard> Set<'clipboard> {
 	}
 }
 
+pub(crate) struct Clear<'clipboard> {
+	clipboard: PhantomData<&'clipboard mut Clipboard>,
+}
+
+impl<'clipboard> Clear<'clipboard> {
+	pub(crate) fn new(_clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { clipboard: PhantomData }
+	}
+
+	pub(crate) fn clear(self) -> Result<(), Error> {
+		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
+			.map_err(|_| Error::ClipboardOccupied)?;
+
+		clipboard_win::empty()
+			.map_err(|_| Error::Unknown { description: "failed to clear clipboard".into() })
+	}
+}
+
 #[cfg(all(test, feature = "image-data"))]
 mod tests {
 	use super::{rgba_to_win, win_to_rgba};
