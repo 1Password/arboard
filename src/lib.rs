@@ -24,6 +24,9 @@ mod platform;
 ))]
 pub use platform::{ClearExtLinux, GetExtLinux, LinuxClipboardKind, SetExtLinux};
 
+#[cfg(windows)]
+pub use platform::SetExtWindows;
+
 /// The OS independent struct for accessing the clipboard.
 ///
 /// Any number of `Clipboard` instances are allowed to exist at a single point in time. Note however

@@ -9,7 +9,7 @@ pub use linux::*;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub(crate) use windows::*;
+pub use windows::*;
 
 #[cfg(target_os = "macos")]
 mod osx;
