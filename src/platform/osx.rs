@@ -285,6 +285,21 @@ impl<'clipboard> Set<'clipboard> {
 	}
 }
 
+pub(crate) struct Clear<'clipboard> {
+	clipboard: &'clipboard mut Clipboard,
+}
+
+impl<'clipboard> Clear<'clipboard> {
+	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { clipboard }
+	}
+
+	pub(crate) fn clear(self) -> Result<(), Error> {
+		self.clipboard.clear();
+		Ok(())
+	}
+}
+
 /// Convenience function to get an Objective-C object from a
 /// specific class.
 fn object_class(class: &'static Class) -> Id<NSObject> {

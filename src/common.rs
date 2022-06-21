@@ -167,4 +167,5 @@ pub(crate) mod private {
 
 	impl Sealed for crate::Get<'_> {}
 	impl Sealed for crate::Set<'_> {}
+	impl Sealed for crate::Clear<'_> {}
 }

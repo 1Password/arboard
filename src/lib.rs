@@ -22,7 +22,7 @@ mod platform;
 	unix,
 	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
 ))]
-pub use platform::{GetExtLinux, LinuxClipboardKind, SetExtLinux};
+pub use platform::{ClearExtLinux, GetExtLinux, LinuxClipboardKind, SetExtLinux};
 
 /// The OS independent struct for accessing the clipboard.
 ///
@@ -75,6 +75,17 @@ impl Clipboard {
 	#[cfg(feature = "image-data")]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		self.set().image(image)
+	}
+
+	/// Clears the default clipboard for the platform of any contents that
+	/// may be present, regardless of the format.
+	pub fn clear_default(&mut self) -> Result<(), Error> {
+		self.clear().clear_any()
+	}
+
+	/// Begins a "clear" option to remove data from the clipboard.
+	pub fn clear(&mut self) -> Clear<'_> {
+		Clear { platform: platform::Clear::new(&mut self.platform) }
 	}
 
 	/// Begins a "get" operation to retrieve data from the clipboard.
@@ -138,6 +149,20 @@ impl Set<'_> {
 	}
 }
 
+/// A builder for an operation that clears the data from the clipboard.
+#[must_use]
+pub struct Clear<'clipboard> {
+	pub(crate) platform: platform::Clear<'clipboard>,
+}
+
+impl Clear<'_> {
+	/// Completes the "clear" operation by deleting any existing clipboard data,
+	/// regardless of the format.
+	pub fn clear_any(self) -> Result<(), Error> {
+		self.platform.clear()
+	}
+}
+
 /// All tests grouped in one because the windows clipboard cannot be open on
 /// multiple threads at once.
 #[cfg(test)]
@@ -169,6 +194,24 @@ fn all_tests() {
 		let text = "Some utf8: 🤓 ∑φ(n)<ε 🐔";
 		ctx.set_text(text.to_owned()).unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
+	}
+	{
+		let mut ctx = Clipboard::new().unwrap();
+		let text = "hello world";
+
+		ctx.set_text(text.into()).unwrap();
+		assert_eq!(ctx.get_text().unwrap(), text);
+
+		ctx.clear_default().unwrap();
+
+		match ctx.get_text() {
+			Ok(text) => assert!(text.is_empty()),
+			Err(Error::ContentNotAvailable) => {}
+			Err(e) => panic!("unexpected error: {}", e),
+		};
+
+		// confirm it is OK to clear when already empty.
+		ctx.clear_default().unwrap();
 	}
 	#[cfg(feature = "image-data")]
 	{
