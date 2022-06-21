@@ -355,11 +355,24 @@ unsafe fn convert_bytes_to_u32s(bytes: &mut [u8]) -> ImageDataCow<'_> {
 	}
 }
 
-pub(crate) struct Clipboard;
+pub(crate) struct Clipboard {
+	_inner: clipboard_win::Clipboard,
+
+	// The Windows clipboard can't be passed between threads when opened.
+	_marker: PhantomData<*const ()>,
+}
 
 impl Clipboard {
 	pub(crate) fn new() -> Result<Self, Error> {
-		Ok(Self)
+		// Attempt to open the clipboard multiple times. On Windows, its common for something else to temporarily
+		// be using it during attempts.
+		//
+		// For past work/evidence, see Firefox(https://searchfox.org/mozilla-central/source/widget/windows/nsClipboard.cpp#421) and
+		// Chromium(https://source.chromium.org/chromium/chromium/src/+/main:ui/base/clipboard/clipboard_win.cc;l=86).
+		let clipboard = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
+			.map_err(|_| Error::ClipboardOccupied)?;
+
+		Ok(Self { _inner: clipboard, _marker: PhantomData })
 	}
 }
 
@@ -374,9 +387,6 @@ impl<'clipboard> Get<'clipboard> {
 
 	pub(crate) fn text(self) -> Result<String, Error> {
 		const FORMAT: u32 = clipboard_win::formats::CF_UNICODETEXT;
-
-		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
-			.map_err(|_| Error::ClipboardOccupied)?;
 
 		// XXX: ToC/ToU race conditions are not possible because we are the sole owners of the clipboard currently.
 		if !clipboard_win::is_format_avail(FORMAT) {
@@ -421,9 +431,6 @@ impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		const FORMAT: u32 = clipboard_win::formats::CF_DIBV5;
 
-		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
-			.map_err(|_| Error::ClipboardOccupied)?;
-
 		if !clipboard_win::is_format_avail(FORMAT) {
 			return Err(Error::ContentNotAvailable);
 		}
@@ -455,9 +462,6 @@ impl<'clipboard> Set<'clipboard> {
 	}
 
 	pub(crate) fn text(self, data: String) -> Result<(), Error> {
-		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
-			.map_err(|_| Error::ClipboardOccupied)?;
-
 		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
 			description: "Could not place the specified text to the clipboard".into(),
 		})?;
@@ -493,9 +497,6 @@ impl<'clipboard> Set<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, image: ImageData) -> Result<(), Error> {
-		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
-			.map_err(|_| Error::ClipboardOccupied)?;
-
 		if let Err(e) = clipboard_win::raw::empty() {
 			return Err(Error::Unknown {
 				description: format!("Failed to empty the clipboard. Got error code: {}", e),
@@ -543,9 +544,6 @@ impl<'clipboard> Clear<'clipboard> {
 	}
 
 	pub(crate) fn clear(self) -> Result<(), Error> {
-		let _cb = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
-			.map_err(|_| Error::ClipboardOccupied)?;
-
 		clipboard_win::empty()
 			.map_err(|_| Error::Unknown { description: "failed to clear clipboard".into() })
 	}
