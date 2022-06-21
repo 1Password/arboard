@@ -30,7 +30,7 @@ use winapi::{
 	},
 };
 
-use crate::common::Error;
+use crate::common::{private, Error};
 
 #[cfg(feature = "image-data")]
 use crate::common::{ImageData, ScopeGuard};
@@ -440,11 +440,18 @@ impl<'clipboard> Get<'clipboard> {
 
 pub(crate) struct Set<'clipboard> {
 	clipboard: PhantomData<&'clipboard mut Clipboard>,
+	exclude_from_cloud: bool,
+	exclude_from_history: bool,
 }
 
 impl<'clipboard> Set<'clipboard> {
+	/// `set` should be called with the registered format and a DWORD value of 0.
+	///
+	/// See https://docs.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats#cloud-clipboard-and-clipboard-history-formats
+	const CLIPBOARD_EXCLUSION_DATA: &'static [u8] = &0u32.to_ne_bytes();
+
 	pub(crate) fn new(_clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard: PhantomData }
+		Self { clipboard: PhantomData, exclude_from_cloud: false, exclude_from_history: false }
 	}
 
 	pub(crate) fn text(self, data: String) -> Result<(), Error> {
@@ -453,7 +460,35 @@ impl<'clipboard> Set<'clipboard> {
 
 		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
 			description: "Could not place the specified text to the clipboard".into(),
-		})
+		})?;
+
+		// Clipboard exclusions are applied retroactively to the item that is currently in the clipboard.
+		// See the MS docs on `CLIPBOARD_EXCLUSION_DATA` for specifics. Once the item is added to the clipboard,
+		// tell Windows to remove it from cloud syncing and history.
+
+		if self.exclude_from_cloud {
+			if let Some(format) = clipboard_win::register_format("CanUploadToCloudClipboard") {
+				// We believe that it would be a logic error if this call failed, since we've validated the format is supported,
+				// we still have full ownership of the clipboard and aren't moving it to another thread, and this is a well-documented operation.
+				// Due to these reasons, `Error::Unknown` is used because we never expect the error path to be taken.
+				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
+					.map_err(|_| Error::Unknown {
+						description: "Failed to exclude data from cloud clipboard".into(),
+					})?;
+			}
+		}
+
+		if self.exclude_from_history {
+			if let Some(format) = clipboard_win::register_format("CanIncludeInClipboardHistory") {
+				// See above for reasoning about using `Error::Unknown`.
+				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
+					.map_err(|_| Error::Unknown {
+						description: "Failed to exclude data from clipboard history".into(),
+					})?;
+			}
+		}
+
+		Ok(())
 	}
 
 	#[cfg(feature = "image-data")]
@@ -468,6 +503,33 @@ impl<'clipboard> Set<'clipboard> {
 		};
 
 		add_cf_dibv5(image)
+	}
+}
+
+/// Windows-specific extensions to the [`Set`](super::Set) builder.
+pub trait SetExtWindows: private::Sealed {
+	/// Excludes the data which will be set on the clipboard from being uploaded to
+	/// the Windows 10/11 [cloud clipboard].
+	///
+	/// [cloud clipboard]: https://support.microsoft.com/en-us/windows/clipboard-in-windows-c436501e-985d-1c8d-97ea-fe46ddf338c6
+	fn exclude_from_cloud(self) -> Self;
+
+	/// Excludes the data which will be set on the clipboard from being added to
+	/// the system's [clipboard history] list.
+	///
+	/// [clipboard history]: https://support.microsoft.com/en-us/windows/get-help-with-clipboard-30375039-ce71-9fe4-5b30-21b7aab6b13f
+	fn exclude_from_history(self) -> Self;
+}
+
+impl SetExtWindows for crate::Set<'_> {
+	fn exclude_from_cloud(mut self) -> Self {
+		self.platform.exclude_from_cloud = true;
+		self
+	}
+
+	fn exclude_from_history(mut self) -> Self {
+		self.platform.exclude_from_history = true;
+		self
 	}
 }
 
