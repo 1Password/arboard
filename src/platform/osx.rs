@@ -18,18 +18,22 @@ use core_graphics::{
 	data_provider::{CGDataProvider, CustomData},
 	image::CGImage,
 };
-use objc::runtime::{Class, Object};
-#[cfg(feature = "image-data")]
-use objc::runtime::{BOOL, NO};
-use objc::{msg_send, sel, sel_impl};
-use objc_foundation::{INSArray, INSObject, INSString};
-use objc_foundation::{NSArray, NSDictionary, NSObject, NSString};
+use objc::{
+	msg_send,
+	runtime::{Class, Object},
+	sel, sel_impl,
+};
+use objc_foundation::{INSArray, INSObject, INSString, NSArray, NSDictionary, NSObject, NSString};
 use objc_id::{Id, Owned};
-use std::mem::transmute;
+use once_cell::sync::Lazy;
 
-// required to bring NSPasteboard into the path of the class-resolver
+// Required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
 extern "C" {}
+
+static NSSTRING_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSString").unwrap());
+#[cfg(feature = "image-data")]
+static NSIMAGE_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSImage").unwrap());
 
 /// Returns an NSImage object on success.
 #[cfg(feature = "image-data")]
@@ -45,7 +49,7 @@ fn image_from_pixels(
 		height: CGFloat,
 	}
 
-	#[derive(Debug, Clone)]
+	#[derive(Debug)]
 	struct PixelArray {
 		data: Vec<u8>,
 	}
@@ -60,10 +64,9 @@ fn image_from_pixels(
 	}
 
 	let colorspace = CGColorSpace::create_device_rgb();
-	let bitmap_info: u32 = kCGBitmapByteOrderDefault | kCGImageAlphaLast;
 	let pixel_data: Box<Box<dyn CustomData>> = Box::new(Box::new(PixelArray { data: pixels }));
 	let provider = unsafe { CGDataProvider::from_custom_data(pixel_data) };
-	let rendering_intent = kCGRenderingIntentDefault;
+
 	let cg_image = CGImage::new(
 		width,
 		height,
@@ -71,14 +74,13 @@ fn image_from_pixels(
 		32,
 		4 * width,
 		&colorspace,
-		bitmap_info,
+		kCGBitmapByteOrderDefault | kCGImageAlphaLast,
 		&provider,
 		false,
-		rendering_intent,
+		kCGRenderingIntentDefault,
 	);
 	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
-	let nsimage_class = Class::get("NSImage").ok_or("Class::get(\"NSImage\")")?;
-	let image: Id<NSObject> = unsafe { Id::from_ptr(msg_send![nsimage_class, alloc]) };
+	let image: Id<NSObject> = unsafe { Id::from_ptr(msg_send![*NSIMAGE_CLASS, alloc]) };
 	let () = unsafe { msg_send![image, initWithCGImage:cg_image size:size] };
 	Ok(image)
 }
@@ -89,17 +91,25 @@ pub(crate) struct Clipboard {
 
 impl Clipboard {
 	pub(crate) fn new() -> Result<Clipboard, Error> {
-		let cls = Class::get("NSPasteboard")
-			.ok_or(Error::Unknown { description: "Class::get(\"NSPasteboard\")".into() })?;
+		let cls = Class::get("NSPasteboard").expect("NSPasteboard not registered");
 		let pasteboard: *mut Object = unsafe { msg_send![cls, generalPasteboard] };
-		if pasteboard.is_null() {
-			return Err(Error::Unknown {
-				description: "NSPasteboard#generalPasteboard returned null".into(),
-			});
+
+		if !pasteboard.is_null() {
+			// SAFETY: `generalPasteboard` is not null and a valid object pointer.
+			let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
+			Ok(Clipboard { pasteboard })
+		} else {
+			// Rust only supports 10.7+, while `generalPasteboard` first appeared in 10.0, so this
+			// is unreachable in "normal apps". However in some edge cases, like running under
+			// launchd (in some modes) as a daemon, the clipboard object may be unavailable.
+			Err(Error::ClipboardNotSupported)
 		}
-		let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
-		Ok(Clipboard { pasteboard })
 	}
+
+	fn clear(&mut self) {
+		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
+	}
+
 	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn std::error::Error>> {
 	// 	let string_class: Id<NSObject> = {
 	// 		let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
@@ -161,102 +171,91 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
-		let string_class: Id<NSObject> = {
-			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
-			unsafe { transmute(cls) }
-		};
+		let string_class = object_class(*NSSTRING_CLASS);
 		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![string_class]);
 		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
+
 		let string_array: Id<NSArray<NSString>> = unsafe {
 			let obj: *mut NSArray<NSString> =
 				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
+
 			if obj.is_null() {
-				//return Err("pasteboard#readObjectsForClasses:options: returned null".into());
 				return Err(Error::ContentNotAvailable);
+			} else {
+				Id::from_ptr(obj)
 			}
-			Id::from_ptr(obj)
 		};
-		if string_array.count() == 0 {
-			//Err("pasteboard#readObjectsForClasses:options: returned empty".into())
-			Err(Error::ContentNotAvailable)
-		} else {
-			Ok(string_array[0].as_str().to_owned())
-		}
+
+		string_array
+			.first_object()
+			.map(|obj| obj.as_str().to_owned())
+			.ok_or(Error::ContentNotAvailable)
 	}
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		use std::io::Cursor;
 
-		let image_class: Id<NSObject> = {
-			let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
-			unsafe { transmute(cls) }
-		};
+		let image_class: Id<NSObject> = object_class(*NSIMAGE_CLASS);
 		let classes = vec![image_class];
 		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
 		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
+
 		let contents: Id<NSArray<NSObject>> = unsafe {
 			let obj: *mut NSArray<NSObject> =
 				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
+
 			if obj.is_null() {
 				return Err(Error::ContentNotAvailable);
+			} else {
+				Id::from_ptr(obj)
 			}
-			Id::from_ptr(obj)
 		};
-		let result;
-		if contents.count() == 0 {
-			result = Err(Error::ContentNotAvailable);
-		} else {
-			let obj = &contents[0];
-			if obj.is_kind_of(Class::get("NSImage").unwrap()) {
-				let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
-				let len: usize = unsafe { msg_send![tiff, length] };
-				let bytes: *const u8 = unsafe { msg_send![tiff, bytes] };
-				let slice = unsafe { std::slice::from_raw_parts(bytes, len) };
-				let data_cursor = Cursor::new(slice);
-				let reader = image::io::Reader::with_format(data_cursor, image::ImageFormat::Tiff);
-				let width;
-				let height;
-				let pixels;
-				match reader.decode() {
-					Ok(img) => {
-						let rgba = img.into_rgba8();
-						let (w, h) = rgba.dimensions();
-						width = w;
-						height = h;
-						pixels = rgba.into_raw();
-					}
-					Err(_) => return Err(Error::ConversionFailure),
-				};
-				let data = ImageData {
+
+		let obj = match contents.first_object() {
+			Some(obj) if obj.is_kind_of(*NSIMAGE_CLASS) => obj,
+			Some(_) | None => return Err(Error::ContentNotAvailable),
+		};
+
+		let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
+		let data = unsafe {
+			let len: usize = msg_send![tiff, length];
+			let bytes: *const u8 = msg_send![tiff, bytes];
+
+			Cursor::new(std::slice::from_raw_parts(bytes, len))
+		};
+		let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
+		match reader.decode() {
+			Ok(img) => {
+				let rgba = img.into_rgba8();
+				let (width, height) = rgba.dimensions();
+
+				Ok(ImageData {
 					width: width as usize,
 					height: height as usize,
-					bytes: pixels.into(),
-				};
-				result = Ok(data);
-			} else {
-				// let cls: &Class = unsafe { msg_send![obj, class] };
-				// println!("{}", cls.name());
-				result = Err(Error::ContentNotAvailable);
+					bytes: rgba.into_raw().into(),
+				})
 			}
+			Err(_) => Err(Error::ConversionFailure),
 		}
-		result
 	}
 }
 
 pub(crate) struct Set<'clipboard> {
-	pasteboard: &'clipboard Object,
+	clipboard: &'clipboard mut Clipboard,
 }
 
 impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { pasteboard: &*clipboard.pasteboard }
+		Self { clipboard }
 	}
 
 	pub(crate) fn text(self, data: String) -> Result<(), Error> {
+		self.clipboard.clear();
+
 		let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
-		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
-		let success: bool = unsafe { msg_send![self.pasteboard, writeObjects: string_array] };
+		let success: bool =
+			unsafe { msg_send![self.clipboard.pasteboard, writeObjects: string_array] };
 		if success {
 			Ok(())
 		} else {
@@ -269,24 +268,26 @@ impl<'clipboard> Set<'clipboard> {
 		let pixels = data.bytes.into();
 		let image = image_from_pixels(pixels, data.width, data.height)
 			.map_err(|_| Error::ConversionFailure)?;
+
+		self.clipboard.clear();
+
 		let objects: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![image]);
-		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
-		let success: BOOL = unsafe { msg_send![self.pasteboard, writeObjects: objects] };
-		if success == NO {
-			return Err(Error::Unknown {
+		let success: bool = unsafe { msg_send![self.clipboard.pasteboard, writeObjects: objects] };
+		if success {
+			Ok(())
+		} else {
+			Err(Error::Unknown {
 				description:
 					"Failed to write the image to the pasteboard (`writeObjects` returned NO)."
 						.into(),
-			});
+			})
 		}
-		Ok(())
 	}
 }
 
-// this is a convenience function that both cocoa-rs and
-//  glutin define, which seems to depend on the fact that
-//  Option::None has the same representation as a null pointer
-#[inline]
-fn class(name: &str) -> *mut Class {
-	unsafe { transmute(Class::get(name)) }
+/// Convenience function to get an Objective-C object from a
+/// specific class.
+fn object_class(class: &'static Class) -> Id<NSObject> {
+	// SAFETY: `Class` is a valid object and `Id` will not mutate it
+	unsafe { Id::from_ptr(class as *const Class as *mut NSObject) }
 }
