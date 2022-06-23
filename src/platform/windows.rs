@@ -164,17 +164,17 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 		header_size as isize
 	};
 
-	unsafe {
-		let image_bytes = dibv5.as_ptr().offset(pixel_data_start) as *const _;
-		let hdc = GetDC(std::ptr::null_mut());
-		let hbitmap = CreateDIBitmap(
+	
+		let image_bytes = unsafe { dibv5.as_ptr().offset(pixel_data_start) as *const _ };
+		let hdc = unsafe { GetDC(std::ptr::null_mut()) };
+		let hbitmap = unsafe { CreateDIBitmap(
 			hdc,
 			header as *const BITMAPV5HEADER as *const _,
 			CBM_INIT,
 			image_bytes,
 			header as *const BITMAPV5HEADER as *const _,
 			DIB_RGB_COLORS,
-		);
+		) };
 		if hbitmap.is_null() {
 			return Err(Error::Unknown {
 				description:
@@ -206,7 +206,7 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 			},
 		};
 
-		let result = GetDIBits(
+		let result = unsafe { GetDIBits(
 			hdc,
 			hbitmap,
 			0,
@@ -214,7 +214,7 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 			result_bytes.as_mut_ptr() as *mut _,
 			&mut output_header as *mut _,
 			DIB_RGB_COLORS,
-		);
+		) };
 		if result == 0 {
 			return Err(Error::Unknown {
 				description: "Could not get the bitmap bits, GetDIBits returned 0".into(),
@@ -224,14 +224,14 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 		if read_len > result_bytes.capacity() {
 			panic!("Segmentation fault. Read more bytes than allocated to pixel buffer");
 		}
-		result_bytes.set_len(read_len);
+		unsafe { result_bytes.set_len(read_len) };
 
-		let result_bytes = win_to_rgba(&mut result_bytes);
+		let result_bytes = unsafe { win_to_rgba(&mut result_bytes) };
 
 		let result =
 			ImageData { bytes: Cow::Owned(result_bytes), width: w as usize, height: h as usize };
 		Ok(result)
-	}
+	
 }
 
 /// Converts the RGBA (u8) pixel data into the bitmap-native ARGB (u32) format in-place
