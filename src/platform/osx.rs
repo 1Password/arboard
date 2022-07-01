@@ -81,7 +81,11 @@ fn image_from_pixels(
 	);
 	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
 	let image: Id<NSObject> = unsafe { Id::from_ptr(msg_send![*NSIMAGE_CLASS, alloc]) };
-	let () = unsafe { msg_send![image, initWithCGImage:cg_image size:size] };
+	#[allow(clippy::let_unit_value)]
+	{
+		let _: () = unsafe { msg_send![image, initWithCGImage:cg_image size:size] };
+	}
+
 	Ok(image)
 }
 
