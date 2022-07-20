@@ -930,7 +930,10 @@ impl Drop for Clipboard {
 						message = None;
 					}
 					if let Some(message) = message {
-						error!("The clipboard server thread panicked. Panic message: '{}'", message);
+						error!(
+							"The clipboard server thread panicked. Panic message: '{}'",
+							message,
+						);
 					} else {
 						error!("The clipboard server thread panicked.");
 					}
