@@ -26,6 +26,7 @@ use objc::{
 use objc_foundation::{INSArray, INSObject, INSString, NSArray, NSDictionary, NSObject, NSString};
 use objc_id::{Id, Owned};
 use once_cell::sync::Lazy;
+use std::borrow::Cow;
 
 // Required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
@@ -254,7 +255,7 @@ impl<'clipboard> Set<'clipboard> {
 		Self { clipboard }
 	}
 
-	pub(crate) fn text(self, data: String) -> Result<(), Error> {
+	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {
 		self.clipboard.clear();
 
 		let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);

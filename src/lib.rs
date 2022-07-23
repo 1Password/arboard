@@ -12,6 +12,8 @@ and conditions of the chosen license apply to this file.
 #![crate_type = "lib"]
 
 mod common;
+use std::borrow::Cow;
+
 pub use common::Error;
 #[cfg(feature = "image-data")]
 pub use common::ImageData;
@@ -54,7 +56,7 @@ impl Clipboard {
 	}
 
 	/// Places the text onto the clipboard. Any valid utf-8 string is accepted.
-	pub fn set_text(&mut self, text: String) -> Result<(), Error> {
+	pub fn set_text<'a, T: Into<Cow<'a, str>>>(&mut self, text: T) -> Result<(), Error> {
 		self.set().text(text)
 	}
 
@@ -135,7 +137,8 @@ pub struct Set<'clipboard> {
 impl Set<'_> {
 	/// Completes the "set" operation by placing text onto the clipboard. Any valid UTF-8 string
 	/// is accepted.
-	pub fn text(self, text: String) -> Result<(), Error> {
+	pub fn text<'a, T: Into<Cow<'a, str>>>(self, text: T) -> Result<(), Error> {
+		let text = text.into();
 		self.platform.text(text)
 	}
 
@@ -177,7 +180,7 @@ fn all_tests() {
 	{
 		let mut ctx = Clipboard::new().unwrap();
 		let text = "some string";
-		ctx.set_text(text.to_owned()).unwrap();
+		ctx.set_text(text).unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
 
 		// We also need to check that the content persists after the drop; this is
@@ -195,14 +198,14 @@ fn all_tests() {
 	{
 		let mut ctx = Clipboard::new().unwrap();
 		let text = "Some utf8: 🤓 ∑φ(n)<ε 🐔";
-		ctx.set_text(text.to_owned()).unwrap();
+		ctx.set_text(text).unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
 	}
 	{
 		let mut ctx = Clipboard::new().unwrap();
 		let text = "hello world";
 
-		ctx.set_text(text.into()).unwrap();
+		ctx.set_text(text).unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
 
 		ctx.clear_default().unwrap();
@@ -232,7 +235,7 @@ fn all_tests() {
 		ctx.set_image(img_data.clone()).unwrap();
 		assert!(matches!(ctx.get_text(), Err(Error::ContentNotAvailable)));
 
-		ctx.set_text("clipboard test".into()).unwrap();
+		ctx.set_text("clipboard test").unwrap();
 		assert!(matches!(ctx.get_image(), Err(Error::ContentNotAvailable)));
 
 		// Test if we get the same image that we put onto the clibboard

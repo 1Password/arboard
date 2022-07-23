@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 #[cfg(feature = "image-data")]
 use std::{cell::RefCell, rc::Rc};
 
@@ -172,7 +173,7 @@ impl<'clipboard> Set<'clipboard> {
 		Self { clipboard, wait: false, selection: LinuxClipboardKind::Clipboard }
 	}
 
-	pub(crate) fn text(self, text: String) -> Result<(), Error> {
+	pub(crate) fn text(self, text: Cow<'_, str>) -> Result<(), Error> {
 		match self.clipboard {
 			Clipboard::X11(clipboard) => clipboard.set_text(text, self.selection, self.wait),
 			#[cfg(feature = "wayland-data-control")]
@@ -267,7 +268,7 @@ impl<'clipboard> Clear<'clipboard> {
 	pub(crate) fn clear(self) -> Result<(), Error> {
 		let mut set = Set::new(self.clipboard);
 		set.selection = self.selection;
-		set.text(String::new())
+		set.text(Cow::Borrowed(""))
 	}
 }
 

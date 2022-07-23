@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::convert::TryInto;
 use std::io::Read;
 
@@ -76,7 +77,7 @@ impl Clipboard {
 
 	pub(crate) fn set_text(
 		&self,
-		text: String,
+		text: Cow<'_, str>,
 		selection: LinuxClipboardKind,
 		wait: bool,
 	) -> Result<(), Error> {
@@ -84,7 +85,7 @@ impl Clipboard {
 		let mut opts = Options::new();
 		opts.foreground(wait);
 		opts.clipboard(selection.try_into()?);
-		let source = Source::Bytes(text.as_bytes().into());
+		let source = Source::Bytes(text.into_owned().into_bytes().into_boxed_slice());
 		opts.copy(source, MimeType::Text).map_err(|e| match e {
 			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
 			other => into_unknown(other),
