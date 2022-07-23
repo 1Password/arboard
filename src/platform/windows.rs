@@ -8,9 +8,9 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use std::marker::PhantomData;
+use std::{borrow::Cow, marker::PhantomData};
 #[cfg(feature = "image-data")]
-use std::{borrow::Cow, convert::TryInto, mem::size_of};
+use std::{convert::TryInto, mem::size_of};
 
 use clipboard_win::Clipboard as SystemClipboard;
 
@@ -461,7 +461,7 @@ impl<'clipboard> Set<'clipboard> {
 		Self { clipboard: PhantomData, exclude_from_cloud: false, exclude_from_history: false }
 	}
 
-	pub(crate) fn text(self, data: String) -> Result<(), Error> {
+	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {
 		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
 			description: "Could not place the specified text to the clipboard".into(),
 		})?;

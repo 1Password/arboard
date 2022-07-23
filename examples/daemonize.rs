@@ -14,11 +14,11 @@ const DAEMONIZE_ARG: &str = "__internal_daemonize";
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 	#[cfg(target_os = "linux")]
 	if env::args().nth(1).as_deref() == Some(DAEMONIZE_ARG) {
-		Clipboard::new()?.set().wait().text("Hello, world!".into())?;
+		Clipboard::new()?.set().wait().text("Hello, world!")?;
 		return Ok(());
 	}
 
-	let _logger = SimpleLogger::new().init().unwrap();
+	SimpleLogger::new().init().unwrap();
 
 	if cfg!(target_os = "linux") {
 		process::Command::new(env::current_exe()?)
@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 			.current_dir("/")
 			.spawn()?;
 	} else {
-		Clipboard::new()?.set_text("Hello, world!".into())?;
+		Clipboard::new()?.set_text("Hello, world!")?;
 	}
 
 	Ok(())
