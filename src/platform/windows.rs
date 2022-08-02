@@ -37,6 +37,36 @@ use crate::common::{ImageData, ScopeGuard};
 
 const MAX_OPEN_ATTEMPTS: usize = 5;
 
+macro_rules! add_clipboard_exclusions {
+    ($obj: ident) => {
+		// Clipboard exclusions are applied retroactively to the item that is currently in the clipboard.
+		// See the MS docs on `CLIPBOARD_EXCLUSION_DATA` for specifics. Once the item is added to the clipboard,
+		// tell Windows to remove it from cloud syncing and history.
+
+		if $obj.exclude_from_cloud {
+			if let Some(format) = clipboard_win::register_format("CanUploadToCloudClipboard") {
+				// We believe that it would be a logic error if this call failed, since we've validated the format is supported,
+				// we still have full ownership of the clipboard and aren't moving it to another thread, and this is a well-documented operation.
+				// Due to these reasons, `Error::Unknown` is used because we never expect the error path to be taken.
+				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
+					.map_err(|_| Error::Unknown {
+						description: "Failed to exclude data from cloud clipboard".into(),
+					})?;
+			}
+		}
+
+		if $obj.exclude_from_history {
+			if let Some(format) = clipboard_win::register_format("CanIncludeInClipboardHistory") {
+				// See above for reasoning about using `Error::Unknown`.
+				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
+					.map_err(|_| Error::Unknown {
+						description: "Failed to exclude data from clipboard history".into(),
+					})?;
+			}
+		}
+    }
+}
+
 #[cfg(feature = "image-data")]
 fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 	use std::intrinsics::copy_nonoverlapping;
@@ -465,33 +495,24 @@ impl<'clipboard> Set<'clipboard> {
 		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
 			description: "Could not place the specified text to the clipboard".into(),
 		})?;
+		add_clipboard_exclusions!(self);
+		Ok(())
+	}
 
-		// Clipboard exclusions are applied retroactively to the item that is currently in the clipboard.
-		// See the MS docs on `CLIPBOARD_EXCLUSION_DATA` for specifics. Once the item is added to the clipboard,
-		// tell Windows to remove it from cloud syncing and history.
-
-		if self.exclude_from_cloud {
-			if let Some(format) = clipboard_win::register_format("CanUploadToCloudClipboard") {
-				// We believe that it would be a logic error if this call failed, since we've validated the format is supported,
-				// we still have full ownership of the clipboard and aren't moving it to another thread, and this is a well-documented operation.
-				// Due to these reasons, `Error::Unknown` is used because we never expect the error path to be taken.
-				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
-					.map_err(|_| Error::Unknown {
-						description: "Failed to exclude data from cloud clipboard".into(),
-					})?;
-			}
+	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
+		let alt = match alt {
+			Some(s) => s.into(),
+			None => String::new(),
+		};
+		clipboard_win::raw::set_string(&alt).map_err(|_| Error::Unknown {
+			description: "Could not place the specified text to the clipboard".into(),
+		})?;
+		if let Some(format) = clipboard_win::register_format("HTML Format") {
+			let html = wrap_html(&html);
+			clipboard_win::raw::set_without_clear(format.get(), &html.into_bytes())
+				.map_err(|e| Error::Unknown { description: e.to_string() })?;
 		}
-
-		if self.exclude_from_history {
-			if let Some(format) = clipboard_win::register_format("CanIncludeInClipboardHistory") {
-				// See above for reasoning about using `Error::Unknown`.
-				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
-					.map_err(|_| Error::Unknown {
-						description: "Failed to exclude data from clipboard history".into(),
-					})?;
-			}
-		}
-
+		add_clipboard_exclusions!(self);
 		Ok(())
 	}
 
@@ -547,6 +568,41 @@ impl<'clipboard> Clear<'clipboard> {
 		clipboard_win::empty()
 			.map_err(|_| Error::Unknown { description: "failed to clear clipboard".into() })
 	}
+}
+
+fn wrap_html(ctn: &str) -> String {
+	let h_version = "Version:0.9";
+	let h_start_html = "\r\nStartHTML:";
+	let h_end_html = "\r\nEndHTML:";
+	let h_start_frag = "\r\nStartFragment:";
+	let h_end_frag = "\r\nEndFragment:";
+	let c_start_frag = "\r\n<html>\r\n<body>\r\n<!--StartFragment-->\r\n";
+	let c_end_frag = "\r\n<!--EndFragment-->\r\n</body>\r\n</html>";
+	let h_len = h_version.len()
+		+ h_start_html.len()
+		+ 10 + h_end_html.len()
+		+ 10 + h_start_frag.len()
+		+ 10 + h_end_frag.len()
+		+ 10;
+	let n_start_html = h_len + 2;
+	let n_start_frag = h_len + c_start_frag.len();
+	let n_end_frag = n_start_frag + ctn.len();
+	let n_end_html = n_end_frag + c_end_frag.len();
+	format!(
+		"{}{}{:010}{}{:010}{}{:010}{}{:010}{}{}{}",
+		h_version,
+		h_start_html,
+		n_start_html,
+		h_end_html,
+		n_end_html,
+		h_start_frag,
+		n_start_frag,
+		h_end_frag,
+		n_end_frag,
+		c_start_frag,
+		ctn,
+		c_end_frag,
+	)
 }
 
 #[cfg(all(test, feature = "image-data"))]
