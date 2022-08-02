@@ -77,6 +77,8 @@ x11rb::atom_manager! {
 		TEXT,
 		TEXT_MIME_UNKNOWN: b"text/plain",
 
+		HTML: b"text/html",
+
 		PNG_MIME: b"image/png",
 
 		// This is just some random name for the property on our window, into which
@@ -172,7 +174,7 @@ impl XContext {
 
 #[derive(Default)]
 struct Selection {
-	data: RwLock<Option<ClipboardData>>,
+	data: RwLock<Option<Vec<ClipboardData>>>,
 	/// Mutex around nothing to use with the below condvar.
 	mutex: Mutex<()>,
 	/// A condvar that is notified when the contents of this clipboard are changed.
@@ -213,7 +215,12 @@ impl Inner {
 		})
 	}
 
-	fn write(&self, data: ClipboardData, selection: LinuxClipboardKind, wait: bool) -> Result<()> {
+	fn write(
+		&self,
+		data: &[ClipboardData],
+		selection: LinuxClipboardKind,
+		wait: bool,
+	) -> Result<()> {
 		if self.serve_stopped.load(Ordering::Relaxed) {
 			return Err(Error::Unknown {
                 description: "The clipboard handler thread seems to have stopped. Logging messages may reveal the cause. (See the `log` crate.)".into()
@@ -234,7 +241,7 @@ impl Inner {
 		// Just setting the data, and the `serve_requests` will take care of the rest.
 		let selection = self.selection_of(selection);
 		let mut data_guard = selection.data.write();
-		*data_guard = Some(data);
+		*data_guard = Some(data.to_vec());
 
 		// Lock the mutex to both ensure that no wakers of `data_changed` can wake us between
 		// dropping the `data_guard` and calling `wait[_for]` and that we don't we wake other
@@ -262,10 +269,12 @@ impl Inner {
 		// if we are the current owner, we can get the current clipboard ourselves
 		if self.is_owner(selection)? {
 			let data = self.selection_of(selection).data.read();
-			if let Some(data) = &*data {
-				for format in formats {
-					if *format == data.format {
-						return Ok(data.clone());
+			if let Some(data_list) = &*data {
+				for data in data_list {
+					for format in formats {
+						if *format == data.format {
+							return Ok(data.clone());
+						}
 					}
 				}
 			}
@@ -571,13 +580,15 @@ impl Inner {
 			targets.push(self.atoms.TARGETS);
 			targets.push(self.atoms.SAVE_TARGETS);
 			let data = self.selection_of(selection).data.read();
-			if let Some(data) = &*data {
-				targets.push(data.format);
-				if data.format == self.atoms.UTF8_STRING {
-					// When we are storing a UTF8 string,
-					// add all equivalent formats to the supported targets
-					targets.push(self.atoms.UTF8_MIME_0);
-					targets.push(self.atoms.UTF8_MIME_1);
+			if let Some(data_list) = &*data {
+				for data in data_list {
+					targets.push(data.format);
+					if data.format == self.atoms.UTF8_STRING {
+						// When we are storing a UTF8 string,
+						// add all equivalent formats to the supported targets
+						targets.push(self.atoms.UTF8_MIME_0);
+						targets.push(self.atoms.UTF8_MIME_1);
+					}
 				}
 			}
 			self.server
@@ -596,23 +607,24 @@ impl Inner {
 		} else {
 			trace!("Handling request for (probably) the clipboard contents.");
 			let data = self.selection_of(selection).data.read();
-			if let Some(data) = &*data {
-				if data.format == event.target {
-					self.server
-						.conn
-						.change_property8(
-							PropMode::REPLACE,
-							event.requestor,
-							event.property,
-							event.target,
-							&data.bytes,
-						)
-						.map_err(into_unknown)?;
-					self.server.conn.flush().map_err(into_unknown)?;
-					success = true;
-				} else {
-					success = false
-				}
+			if let Some(data_list) = &*data {
+				success = match data_list.iter().find(|d| d.format == event.target) {
+					Some(data) => {
+						self.server
+							.conn
+							.change_property8(
+								PropMode::REPLACE,
+								event.requestor,
+								event.property,
+								event.target,
+								&data.bytes,
+							)
+							.map_err(into_unknown)?;
+						self.server.conn.flush().map_err(into_unknown)?;
+						true
+					}
+					None => false,
+				};
 			} else {
 				// This must mean that we lost ownership of the data
 				// since the other side requested the selection.
@@ -857,11 +869,32 @@ impl Clipboard {
 		selection: LinuxClipboardKind,
 		wait: bool,
 	) -> Result<()> {
-		let data = ClipboardData {
+		let data = vec![ClipboardData {
 			bytes: message.into_owned().into_bytes(),
 			format: self.inner.atoms.UTF8_STRING,
-		};
-		self.inner.write(data, selection, wait)
+		}];
+		self.inner.write(&data, selection, wait)
+	}
+
+	pub(crate) fn set_html(
+		&self,
+		html: Cow<'_, str>,
+		alt: Option<Cow<'_, str>>,
+		selection: LinuxClipboardKind,
+		wait: bool,
+	) -> Result<()> {
+		let mut data = vec![];
+		if let Some(alt_text) = alt {
+			data.push(ClipboardData {
+				bytes: alt_text.into_owned().into_bytes(),
+				format: self.inner.atoms.UTF8_STRING,
+			});
+		}
+		data.push(ClipboardData {
+			bytes: html.into_owned().into_bytes(),
+			format: self.inner.atoms.HTML,
+		});
+		self.inner.write(&data, selection, wait)
 	}
 
 	#[cfg(feature = "image-data")]
@@ -890,8 +923,8 @@ impl Clipboard {
 		wait: bool,
 	) -> Result<()> {
 		let encoded = encode_as_png(&image)?;
-		let data = ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME };
-		self.inner.write(data, selection, wait)
+		let data = vec![ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME }];
+		self.inner.write(&data, selection, wait)
 	}
 }
 

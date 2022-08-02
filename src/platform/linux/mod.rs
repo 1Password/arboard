@@ -181,6 +181,14 @@ impl<'clipboard> Set<'clipboard> {
 		}
 	}
 
+	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.set_text(html, self.selection, self.wait),
+		}
+	}
+
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, image: ImageData<'_>) -> Result<(), Error> {
 		match self.clipboard {

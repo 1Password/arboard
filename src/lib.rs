@@ -60,6 +60,16 @@ impl Clipboard {
 		self.set().text(text)
 	}
 
+	/// Places the HTML as well as a plain-text alternative onto the clipboard.
+	/// Any valid utf-8 string is accepted.
+	pub fn set_html<'a, T: Into<Cow<'a, str>>>(
+		&mut self,
+		html: T,
+		alt_text: Option<T>,
+	) -> Result<(), Error> {
+		self.set().html(html, alt_text)
+	}
+
 	/// Fetches image data from the clipboard, and returns the decoded pixels.
 	///
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
@@ -140,6 +150,18 @@ impl Set<'_> {
 	pub fn text<'a, T: Into<Cow<'a, str>>>(self, text: T) -> Result<(), Error> {
 		let text = text.into();
 		self.platform.text(text)
+	}
+
+	/// Completes the "set" operation by placing HTML as well as a plain-text alternative onto the
+	/// clipboard. Any valid UTF-8 string is accepted.
+	pub fn html<'a, T: Into<Cow<'a, str>>>(
+		self,
+		html: T,
+		alt_text: Option<T>,
+	) -> Result<(), Error> {
+		let html = html.into();
+		let alt_text = alt_text.map(|e| e.into());
+		self.platform.html(html, alt_text)
 	}
 
 	/// Completes the "set" operation by placing an image onto the clipboard.
