@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.0 on 2022-19-09
+
+### Added
+- Support for clearing the clipboard.
+- Spport for excluding Windows clipboard data from cliboard history and OneDrive.
+- Support waiting for another process to read clipboard data before returning from
+a `write` call to a X11 and Wayland or clipboard
+
+### Changed
+- Updated `wl-clipboard-rs` to the version `0.6`.
+- Updated `x11rb` to the version `0.10`.
+- Cleaned up spelling in documentation
+- (Breaking) Functions that used to accept `String` now take `Into<Cow<'a>, str>` instead. 
+This avoids cloning the string more times then necessary on platforms that can.
+- (Breaking) `Error` is now marked as `#[non_exhaustive]`.
+- (Breaking) Removed all platform specific modules and clipboard structures from the public API.
+If you were using these directly, the recommended replacement is using `arboard::Clipboard` and 
+the new platform-specific extension traits instead.
+
 ## v2.1.1 on 2022-18-05
 
 ### Changed
