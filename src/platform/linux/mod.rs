@@ -185,7 +185,7 @@ impl<'clipboard> Set<'clipboard> {
 		match self.clipboard {
 			Clipboard::X11(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
 			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.set_text(html, self.selection, self.wait),
+			Clipboard::WlDataControl(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
 		}
 	}
 

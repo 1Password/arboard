@@ -1,7 +1,10 @@
 use arboard::Clipboard;
+use simple_logger::SimpleLogger;
 use std::{thread, time::Duration};
 
 fn main() {
+	SimpleLogger::new().init().unwrap();
+
 	let mut ctx = Clipboard::new().unwrap();
 
 	let text = "Hello, World!\n\
