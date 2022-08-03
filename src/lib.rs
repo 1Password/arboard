@@ -82,14 +82,14 @@ impl Clipboard {
 		self.set().image(image)
 	}
 
-	/// Clears the default clipboard for the platform of any contents that
-	/// may be present, regardless of the format.
-	pub fn clear_default(&mut self) -> Result<(), Error> {
-		self.clear().clear_any()
+	/// Clears any contents that may be present from the platform's default clipboard,
+	/// regardless of the format of the data.
+	pub fn clear(&mut self) -> Result<(), Error> {
+		self.clear_with().default()
 	}
 
 	/// Begins a "clear" option to remove data from the clipboard.
-	pub fn clear(&mut self) -> Clear<'_> {
+	pub fn clear_with(&mut self) -> Clear<'_> {
 		Clear { platform: platform::Clear::new(&mut self.platform) }
 	}
 
@@ -164,7 +164,7 @@ pub struct Clear<'clipboard> {
 impl Clear<'_> {
 	/// Completes the "clear" operation by deleting any existing clipboard data,
 	/// regardless of the format.
-	pub fn clear_any(self) -> Result<(), Error> {
+	pub fn default(self) -> Result<(), Error> {
 		self.platform.clear()
 	}
 }
@@ -208,7 +208,7 @@ fn all_tests() {
 		ctx.set_text(text).unwrap();
 		assert_eq!(ctx.get_text().unwrap(), text);
 
-		ctx.clear_default().unwrap();
+		ctx.clear().unwrap();
 
 		match ctx.get_text() {
 			Ok(text) => assert!(text.is_empty()),
@@ -217,7 +217,7 @@ fn all_tests() {
 		};
 
 		// confirm it is OK to clear when already empty.
-		ctx.clear_default().unwrap();
+		ctx.clear().unwrap();
 	}
 	#[cfg(feature = "image-data")]
 	{
