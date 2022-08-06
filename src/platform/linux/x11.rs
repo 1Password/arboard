@@ -242,7 +242,7 @@ impl Inner {
 		let mut guard = selection.mutex.lock();
 
 		// Notify any existing waiting threads that we have changed the data in the selection.
-		// It is important that the mutex is locked to prevent this notication getting lost.
+		// It is important that the mutex is locked to prevent this notification getting lost.
 		selection.data_changed.notify_all();
 
 		if wait {

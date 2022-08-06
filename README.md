@@ -10,7 +10,7 @@ This is a cross-platform library for interacting with the clipboard. It allows t
 
 The Linux implementation uses the X protocol by default for managing the clipboard but *fear not*  because Wayland works with the X11 protocol just as well. Furthermore this implementation uses the Clipboard selection (as opposed to the primary selection) and it sends the data to the clipboard manager when the application exits so that the data placed onto the clipboard with your application remains to be available after exiting. 
 
-There's also an optional wayland data control backend through the `wl-clipboard-rs` crate. This can be enabled using the `wayland-data-control` feature. When enabled this will be prioritized over the X11 backend, but if the initialization fails, the implementation falls back to using the X11 protocol automatically. Note that in my tests the wayland backend did not keep the clipboard contets after the process exited. (Although neither did the X11 backend on my Wayland setup).
+There's also an optional wayland data control backend through the `wl-clipboard-rs` crate. This can be enabled using the `wayland-data-control` feature. When enabled this will be prioritized over the X11 backend, but if the initialization fails, the implementation falls back to using the X11 protocol automatically. Note that in my tests the wayland backend did not keep the clipboard contents after the process exited. (Although neither did the X11 backend on my Wayland setup).
 
 ## Example
 
