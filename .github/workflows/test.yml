@@ -16,7 +16,7 @@ jobs:
           override: true
           components: rustfmt
       - uses: actions/checkout@v2
-      - name: Check formating
+      - name: Check formatting
         uses: actions-rs/cargo@v1
         with:
           command: fmt
