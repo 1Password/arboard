@@ -71,7 +71,7 @@ impl Clipboard {
 
 			Err(PasteError::PrimarySelectionUnsupported) => Err(Error::ClipboardNotSupported),
 
-			Err(err) => return Err(Error::Unknown { description: format!("{}", err) }),
+			Err(err) => Err(Error::Unknown { description: format!("{}", err) }),
 		}
 	}
 
@@ -129,7 +129,7 @@ impl Clipboard {
 				Err(Error::ContentNotAvailable)
 			}
 
-			Err(err) => return Err(Error::Unknown { description: format!("{}", err) }),
+			Err(err) => Err(Error::Unknown { description: format!("{}", err) }),
 		}
 	}
 
