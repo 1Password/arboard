@@ -43,7 +43,7 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 	}
 
 	let enc_output = RcBuffer { inner: Rc::new(RefCell::new(Vec::new())) };
-	let encoder = image::png::PngEncoder::new(enc_output.clone());
+	let encoder = image::codecs::png::PngEncoder::new(enc_output.clone());
 	encoder
 		.encode(
 			image.bytes.as_ref(),
