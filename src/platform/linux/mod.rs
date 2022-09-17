@@ -1,6 +1,4 @@
 use std::borrow::Cow;
-#[cfg(feature = "image-data")]
-use std::{cell::RefCell, rc::Rc};
 
 #[cfg(feature = "wayland-data-control")]
 use log::{info, warn};
@@ -22,30 +20,12 @@ fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
 fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 	use image::ImageEncoder as _;
 
-	/// This is a workaround for the PNGEncoder not having a `into_inner` like function
-	/// which would allow us to take back our Vec after the encoder finished encoding.
-	/// So instead we create this wrapper around an Rc Vec which implements `io::Write`
-	#[derive(Clone)]
-	struct RcBuffer {
-		inner: Rc<RefCell<Vec<u8>>>,
-	}
-	impl std::io::Write for RcBuffer {
-		fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-			self.inner.borrow_mut().extend_from_slice(buf);
-			Ok(buf.len())
-		}
-		fn flush(&mut self) -> std::io::Result<()> {
-			// Noop
-			Ok(())
-		}
-	}
-
 	if image.bytes.is_empty() || image.width == 0 || image.height == 0 {
 		return Err(Error::ConversionFailure);
 	}
 
-	let enc_output = RcBuffer { inner: Rc::new(RefCell::new(Vec::new())) };
-	let encoder = image::codecs::png::PngEncoder::new(enc_output.clone());
+	let mut png_bytes = Vec::new();
+	let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
 	encoder
 		.write_image(
 			image.bytes.as_ref(),
@@ -55,11 +35,7 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 		)
 		.map_err(|_| Error::ConversionFailure)?;
 
-	// The encoder must be destroyed by the time we get to `try_unwrap`, in order to
-	// be able to take the value from the `Rc`. This code is currently relying on the fact
-	// that the `write_image` function consumes its `self` parameter.
-	let bytes = Rc::try_unwrap(enc_output.inner).unwrap().into_inner();
-	Ok(bytes)
+	Ok(png_bytes)
 }
 
 /// Clipboard selection
