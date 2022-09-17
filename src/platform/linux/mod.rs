@@ -20,6 +20,8 @@ fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
 
 #[cfg(feature = "image-data")]
 fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
+	use image::ImageEncoder as _;
+
 	/// This is a workaround for the PNGEncoder not having a `into_inner` like function
 	/// which would allow us to take back our Vec after the encoder finished encoding.
 	/// So instead we create this wrapper around an Rc Vec which implements `io::Write`
@@ -45,7 +47,7 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 	let enc_output = RcBuffer { inner: Rc::new(RefCell::new(Vec::new())) };
 	let encoder = image::codecs::png::PngEncoder::new(enc_output.clone());
 	encoder
-		.encode(
+		.write_image(
 			image.bytes.as_ref(),
 			image.width as u32,
 			image.height as u32,
@@ -55,7 +57,7 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 
 	// The encoder must be destroyed by the time we get to `try_unwrap`, in order to
 	// be able to take the value from the `Rc`. This code is currently relying on the fact
-	// that the `encode` function consumes its `self` parameter.
+	// that the `write_image` function consumes its `self` parameter.
 	let bytes = Rc::try_unwrap(enc_output.inner).unwrap().into_inner();
 	Ok(bytes)
 }
