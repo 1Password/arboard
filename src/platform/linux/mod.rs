@@ -235,33 +235,47 @@ impl SetExtLinux for crate::Set<'_> {
 
 pub(crate) struct Clear<'clipboard> {
 	clipboard: &'clipboard mut Clipboard,
-	selection: LinuxClipboardKind,
 }
 
 impl<'clipboard> Clear<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard, selection: LinuxClipboardKind::Clipboard }
+		Self { clipboard }
 	}
 
 	pub(crate) fn clear(self) -> Result<(), Error> {
+		self.clear_inner(LinuxClipboardKind::Clipboard)
+	}
+
+	fn clear_inner(self, selection: LinuxClipboardKind) -> Result<(), Error> {
 		let mut set = Set::new(self.clipboard);
-		set.selection = self.selection;
+		set.selection = selection;
+
 		set.text(Cow::Borrowed(""))
 	}
 }
 
 /// Linux specific extensions to the [Clear] builder.
 pub trait ClearExtLinux: private::Sealed {
-	/// Sets the clipboard that will be cleared.
+	/// Performs the "clear" operation on the selected clipboard.
+	///
+	/// ### Example
+	///
+	/// ```no_run
+	/// # use arboard::Clipboard;
+	/// let mut clipboard = Clipboard::new()?;
+	///
+	/// clipboard
+	///     .clear_with()
+	///     .clipboard(LinuxClipboardKind::Secondary)?;
+	/// ```
 	///
 	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
 	/// return an error.
-	fn clipboard(self, selection: LinuxClipboardKind) -> Self;
+	fn clipboard(self, selection: LinuxClipboardKind) -> Result<(), Error>;
 }
 
 impl ClearExtLinux for crate::Clear<'_> {
-	fn clipboard(mut self, selection: LinuxClipboardKind) -> Self {
-		self.platform.selection = selection;
-		self
+	fn clipboard(self, selection: LinuxClipboardKind) -> Result<(), Error> {
+		self.platform.clear_inner(selection)
 	}
 }
