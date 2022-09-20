@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::{cell::RefCell, rc::Rc};
 
 #[cfg(feature = "wayland-data-control")]
-use log::{info, warn};
+use log::{trace, warn};
 
 #[cfg(feature = "image-data")]
 use crate::ImageData;
@@ -104,9 +104,9 @@ impl Clipboard {
 				// Wayland is available
 				match wayland::Clipboard::new() {
 					Ok(clipboard) => {
-						info!("Successfully initialized the Wayland data control clipboard.");
-						return Ok( Self::WlDataControl(clipboard))
-					},
+						trace!("Successfully initialized the Wayland data control clipboard.");
+						return Ok(Self::WlDataControl(clipboard));
+					}
 					Err(e) => warn!(
 						"Tried to initialize the wayland data control protocol clipboard, but failed. Falling back to the X11 clipboard protocol. The error was: {}",
 						e
