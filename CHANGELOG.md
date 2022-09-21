@@ -1,12 +1,18 @@
 # Changelog
 
+## 3.1 on 2022-20-09
+
+### Changed
+- Updated `image` to the version `0.24`.
+- Lowered Wayland clipboard initialization log level.
+
 ## 3.0 on 2022-19-09
 
 ### Added
 - Support for clearing the clipboard.
 - Spport for excluding Windows clipboard data from cliboard history and OneDrive.
-- Support waiting for another process to read clipboard data before returning from
-a `write` call to a X11 and Wayland or clipboard
+- Support waiting for another process to read clipboard data before returning
+from a `write` call to a X11 and Wayland or clipboard
 
 ### Changed
 - Updated `wl-clipboard-rs` to the version `0.6`.
