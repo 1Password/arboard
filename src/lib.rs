@@ -16,7 +16,7 @@ use std::borrow::Cow;
 
 pub use common::Error;
 #[cfg(feature = "image-data")]
-pub use common::ImageData;
+pub use common::{ImageData};
 
 mod platform;
 
