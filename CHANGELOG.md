@@ -24,6 +24,9 @@ This avoids cloning the string more times then necessary on platforms that can.
 - (Breaking) Removed all platform specific modules and clipboard structures from the public API.
 If you were using these directly, the recommended replacement is using `arboard::Clipboard` and 
 the new platform-specific extension traits instead.
+- (Breaking) On Windows, the clipboard is now opened once per call to `Clipboard::new()` instead of on
+each operation. This means that instances of `Clipboard` should be dropped once you're performed the
+needed operations to prevent other applications from working with it afterwards.
 
 ## v2.1.1 on 2022-18-05
 
