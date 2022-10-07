@@ -30,7 +30,10 @@ use std::borrow::Cow;
 
 // Required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
-extern "C" {}
+extern "C" {
+	static NSPasteboardTypeHTML: &'static Object;
+	static NSPasteboardTypeString: &'static Object;
+}
 
 static NSSTRING_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSString").unwrap());
 #[cfg(feature = "image-data")]
@@ -261,6 +264,27 @@ impl<'clipboard> Set<'clipboard> {
 		let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
 		let success: bool =
 			unsafe { msg_send![self.clipboard.pasteboard, writeObjects: string_array] };
+		if success {
+			Ok(())
+		} else {
+			Err(Error::Unknown { description: "NSPasteboard#writeObjects: returned false".into() })
+		}
+	}
+
+	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
+		self.clipboard.clear();
+		let html_nss = NSString::from_str(&html);
+		let mut success: bool = unsafe {
+			msg_send![self.clipboard.pasteboard, setString: html_nss forType:NSPasteboardTypeHTML]
+		};
+		if success {
+			if let Some(alt_text) = alt {
+				let alt_nss = NSString::from_str(&alt_text);
+				success = unsafe {
+					msg_send![self.clipboard.pasteboard, setString: alt_nss forType:NSPasteboardTypeString]
+				};
+			}
+		}
 		if success {
 			Ok(())
 		} else {
