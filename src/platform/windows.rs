@@ -479,7 +479,7 @@ impl<'clipboard> Set<'clipboard> {
 		})?;
 		if let Some(format) = clipboard_win::register_format("HTML Format") {
 			let html = wrap_html(&html);
-			clipboard_win::raw::set_without_clear(format.get(), &html.into_bytes())
+			clipboard_win::raw::set_without_clear(format.get(), html.as_bytes())
 				.map_err(|e| Error::Unknown { description: e.to_string() })?;
 		}
 		self.add_clipboard_exclusions()?;
