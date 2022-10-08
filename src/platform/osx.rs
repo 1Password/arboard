@@ -273,6 +273,21 @@ impl<'clipboard> Set<'clipboard> {
 
 	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
 		self.clipboard.clear();
+		// Text goes to the clipboard as UTF-8 but may be interpreted as Windows Latin 1.
+		// This wrapping forces it to be interpreted as UTF-8.
+		//
+		// See:
+		// https://bugzilla.mozilla.org/show_bug.cgi?id=466599
+		// https://bugs.chromium.org/p/chromium/issues/detail?id=11957
+		let html = format!(
+			r#"<html>
+				<head>
+					<meta http-equiv="content-type" content="text/html; charset=utf-8">
+				</head>
+				<body>{}</body>
+			</html>"#,
+			html
+		);
 		let html_nss = NSString::from_str(&html);
 		let mut success: bool = unsafe {
 			msg_send![self.clipboard.pasteboard, setString: html_nss forType:NSPasteboardTypeHTML]
