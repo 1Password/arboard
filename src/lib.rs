@@ -243,6 +243,27 @@ fn all_tests() {
 		// confirm it is OK to clear when already empty.
 		ctx.clear_default().unwrap();
 	}
+	{
+		let mut ctx = Clipboard::new().unwrap();
+		let html = "<b>hello</b> <i>world</i>!";
+
+		ctx.set_html(html, None).unwrap();
+
+		match ctx.get_text() {
+			Ok(text) => assert!(text.is_empty()),
+			Err(Error::ContentNotAvailable) => {}
+			Err(e) => panic!("unexpected error: {}", e),
+		};
+	}
+	{
+		let mut ctx = Clipboard::new().unwrap();
+
+		let html = "<b>hello</b> <i>world</i>!";
+		let alt_text = "hello world!";
+
+		ctx.set_html(html, Some(alt_text)).unwrap();
+		assert_eq!(ctx.get_text().unwrap(), alt_text);
+	}
 	#[cfg(feature = "image-data")]
 	{
 		let mut ctx = Clipboard::new().unwrap();
