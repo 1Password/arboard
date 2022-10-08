@@ -31,8 +31,8 @@ use std::borrow::Cow;
 // Required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
 extern "C" {
-	static NSPasteboardTypeHTML: &'static Object;
-	static NSPasteboardTypeString: &'static Object;
+	static NSPasteboardTypeHTML: *const Object;
+	static NSPasteboardTypeString: *const Object;
 }
 
 static NSSTRING_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSString").unwrap());
