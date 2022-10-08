@@ -37,36 +37,6 @@ use crate::common::{ImageData, ScopeGuard};
 
 const MAX_OPEN_ATTEMPTS: usize = 5;
 
-macro_rules! add_clipboard_exclusions {
-    ($obj: ident) => {
-		// Clipboard exclusions are applied retroactively to the item that is currently in the clipboard.
-		// See the MS docs on `CLIPBOARD_EXCLUSION_DATA` for specifics. Once the item is added to the clipboard,
-		// tell Windows to remove it from cloud syncing and history.
-
-		if $obj.exclude_from_cloud {
-			if let Some(format) = clipboard_win::register_format("CanUploadToCloudClipboard") {
-				// We believe that it would be a logic error if this call failed, since we've validated the format is supported,
-				// we still have full ownership of the clipboard and aren't moving it to another thread, and this is a well-documented operation.
-				// Due to these reasons, `Error::Unknown` is used because we never expect the error path to be taken.
-				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
-					.map_err(|_| Error::Unknown {
-						description: "Failed to exclude data from cloud clipboard".into(),
-					})?;
-			}
-		}
-
-		if $obj.exclude_from_history {
-			if let Some(format) = clipboard_win::register_format("CanIncludeInClipboardHistory") {
-				// See above for reasoning about using `Error::Unknown`.
-				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
-					.map_err(|_| Error::Unknown {
-						description: "Failed to exclude data from clipboard history".into(),
-					})?;
-			}
-		}
-    }
-}
-
 #[cfg(feature = "image-data")]
 fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 	use std::intrinsics::copy_nonoverlapping;
@@ -495,7 +465,7 @@ impl<'clipboard> Set<'clipboard> {
 		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
 			description: "Could not place the specified text to the clipboard".into(),
 		})?;
-		add_clipboard_exclusions!(self);
+		self.add_clipboard_exclusions()?;
 		Ok(())
 	}
 
@@ -512,7 +482,7 @@ impl<'clipboard> Set<'clipboard> {
 			clipboard_win::raw::set_without_clear(format.get(), &html.into_bytes())
 				.map_err(|e| Error::Unknown { description: e.to_string() })?;
 		}
-		add_clipboard_exclusions!(self);
+		self.add_clipboard_exclusions()?;
 		Ok(())
 	}
 
@@ -525,6 +495,36 @@ impl<'clipboard> Set<'clipboard> {
 		};
 
 		add_cf_dibv5(image)
+	}
+
+	fn add_clipboard_exclusions(&self) -> Result<(), Error> {
+		// Clipboard exclusions are applied retroactively to the item that is currently in the clipboard.
+		// See the MS docs on `CLIPBOARD_EXCLUSION_DATA` for specifics. Once the item is added to the clipboard,
+		// tell Windows to remove it from cloud syncing and history.
+
+		if self.exclude_from_cloud {
+			if let Some(format) = clipboard_win::register_format("CanUploadToCloudClipboard") {
+				// We believe that it would be a logic error if this call failed, since we've validated the format is supported,
+				// we still have full ownership of the clipboard and aren't moving it to another thread, and this is a well-documented operation.
+				// Due to these reasons, `Error::Unknown` is used because we never expect the error path to be taken.
+				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
+					.map_err(|_| Error::Unknown {
+						description: "Failed to exclude data from cloud clipboard".into(),
+					})?;
+			}
+		}
+
+		if self.exclude_from_history {
+			if let Some(format) = clipboard_win::register_format("CanIncludeInClipboardHistory") {
+				// See above for reasoning about using `Error::Unknown`.
+				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
+					.map_err(|_| Error::Unknown {
+						description: "Failed to exclude data from clipboard history".into(),
+					})?;
+			}
+		}
+
+		Ok(())
 	}
 }
 
