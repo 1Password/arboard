@@ -112,18 +112,13 @@ impl Clipboard {
 					MimeSource { source: alt_source, mime_type: MimeType::Text },
 					MimeSource { source: html_source, mime_type: html_mime },
 				])
-				.map_err(|e| match e {
-					CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
-					other => into_unknown(other),
-				})?;
 			}
-			None => {
-				opts.copy(html_source, html_mime).map_err(|e| match e {
-					CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
-					other => into_unknown(other),
-				})?;
-			}
-		};
+			None => opts.copy(html_source, html_mime),
+		}
+		.map_err(|e| match e {
+			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
+			other => into_unknown(other),
+		})?;
 		Ok(())
 	}
 
