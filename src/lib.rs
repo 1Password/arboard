@@ -153,7 +153,9 @@ impl Set<'_> {
 	}
 
 	/// Completes the "set" operation by placing HTML as well as a plain-text alternative onto the
-	/// clipboard. Any valid UTF-8 string is accepted.
+	/// clipboard.
+	///
+	/// Any valid UTF-8 string is accepted.
 	pub fn html<'a, T: Into<Cow<'a, str>>>(
 		self,
 		html: T,
