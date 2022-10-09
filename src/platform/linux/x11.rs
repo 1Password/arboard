@@ -217,7 +217,7 @@ impl Inner {
 
 	fn write(
 		&self,
-		data: &[ClipboardData],
+		data: Vec<ClipboardData>,
 		selection: LinuxClipboardKind,
 		wait: bool,
 	) -> Result<()> {
@@ -241,7 +241,7 @@ impl Inner {
 		// Just setting the data, and the `serve_requests` will take care of the rest.
 		let selection = self.selection_of(selection);
 		let mut data_guard = selection.data.write();
-		*data_guard = Some(data.to_vec());
+		*data_guard = Some(data);
 
 		// Lock the mutex to both ensure that no wakers of `data_changed` can wake us between
 		// dropping the `data_guard` and calling `wait[_for]` and that we don't we wake other
@@ -873,7 +873,7 @@ impl Clipboard {
 			bytes: message.into_owned().into_bytes(),
 			format: self.inner.atoms.UTF8_STRING,
 		}];
-		self.inner.write(&data, selection, wait)
+		self.inner.write(data, selection, wait)
 	}
 
 	pub(crate) fn set_html(
@@ -894,7 +894,7 @@ impl Clipboard {
 			bytes: html.into_owned().into_bytes(),
 			format: self.inner.atoms.HTML,
 		});
-		self.inner.write(&data, selection, wait)
+		self.inner.write(data, selection, wait)
 	}
 
 	#[cfg(feature = "image-data")]
@@ -924,7 +924,7 @@ impl Clipboard {
 	) -> Result<()> {
 		let encoded = encode_as_png(&image)?;
 		let data = vec![ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME }];
-		self.inner.write(&data, selection, wait)
+		self.inner.write(data, selection, wait)
 	}
 }
 
