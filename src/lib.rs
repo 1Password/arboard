@@ -61,6 +61,7 @@ impl Clipboard {
 	}
 
 	/// Places the HTML as well as a plain-text alternative onto the clipboard.
+	///
 	/// Any valid utf-8 string is accepted.
 	pub fn set_html<'a, T: Into<Cow<'a, str>>>(
 		&mut self,
