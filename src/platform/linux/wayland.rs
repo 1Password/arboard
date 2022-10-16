@@ -3,7 +3,7 @@ use std::convert::TryInto;
 use std::io::Read;
 
 use wl_clipboard_rs::{
-	copy::{self, Error as CopyError, Options, Source},
+	copy::{self, Error as CopyError, MimeSource, MimeType, Options, Source},
 	paste::{self, get_contents, Error as PasteError, Seat},
 	utils::is_primary_selection_supported,
 };
@@ -81,12 +81,41 @@ impl Clipboard {
 		selection: LinuxClipboardKind,
 		wait: bool,
 	) -> Result<(), Error> {
-		use wl_clipboard_rs::copy::MimeType;
 		let mut opts = Options::new();
 		opts.foreground(wait);
 		opts.clipboard(selection.try_into()?);
 		let source = Source::Bytes(text.into_owned().into_bytes().into_boxed_slice());
 		opts.copy(source, MimeType::Text).map_err(|e| match e {
+			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
+			other => into_unknown(other),
+		})?;
+		Ok(())
+	}
+
+	pub(crate) fn set_html(
+		&self,
+		html: Cow<'_, str>,
+		alt: Option<Cow<'_, str>>,
+		selection: LinuxClipboardKind,
+		wait: bool,
+	) -> Result<(), Error> {
+		let html_mime = MimeType::Specific(String::from("text/html"));
+		let mut opts = Options::new();
+		opts.foreground(wait);
+		opts.clipboard(selection.try_into()?);
+		let html_source = Source::Bytes(html.into_owned().into_bytes().into_boxed_slice());
+		match alt {
+			Some(alt_text) => {
+				let alt_source =
+					Source::Bytes(alt_text.into_owned().into_bytes().into_boxed_slice());
+				opts.copy_multi(vec![
+					MimeSource { source: alt_source, mime_type: MimeType::Text },
+					MimeSource { source: html_source, mime_type: html_mime },
+				])
+			}
+			None => opts.copy(html_source, html_mime),
+		}
+		.map_err(|e| match e {
 			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
 			other => into_unknown(other),
 		})?;
@@ -140,8 +169,6 @@ impl Clipboard {
 		selection: LinuxClipboardKind,
 		wait: bool,
 	) -> Result<(), Error> {
-		use wl_clipboard_rs::copy::MimeType;
-
 		let image = encode_as_png(&image)?;
 		let mut opts = Options::new();
 		opts.foreground(wait);

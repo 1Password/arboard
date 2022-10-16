@@ -60,6 +60,17 @@ impl Clipboard {
 		self.set().text(text)
 	}
 
+	/// Places the HTML as well as a plain-text alternative onto the clipboard.
+	///
+	/// Any valid utf-8 string is accepted.
+	pub fn set_html<'a, T: Into<Cow<'a, str>>>(
+		&mut self,
+		html: T,
+		alt_text: Option<T>,
+	) -> Result<(), Error> {
+		self.set().html(html, alt_text)
+	}
+
 	/// Fetches image data from the clipboard, and returns the decoded pixels.
 	///
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
@@ -142,6 +153,20 @@ impl Set<'_> {
 		self.platform.text(text)
 	}
 
+	/// Completes the "set" operation by placing HTML as well as a plain-text alternative onto the
+	/// clipboard.
+	///
+	/// Any valid UTF-8 string is accepted.
+	pub fn html<'a, T: Into<Cow<'a, str>>>(
+		self,
+		html: T,
+		alt_text: Option<T>,
+	) -> Result<(), Error> {
+		let html = html.into();
+		let alt_text = alt_text.map(|e| e.into());
+		self.platform.html(html, alt_text)
+	}
+
 	/// Completes the "set" operation by placing an image onto the clipboard.
 	///
 	/// The chosen output format, depending on the platform is the following:
@@ -218,6 +243,27 @@ fn all_tests() {
 
 		// confirm it is OK to clear when already empty.
 		ctx.clear().unwrap();
+	}
+	{
+		let mut ctx = Clipboard::new().unwrap();
+		let html = "<b>hello</b> <i>world</i>!";
+
+		ctx.set_html(html, None).unwrap();
+
+		match ctx.get_text() {
+			Ok(text) => assert!(text.is_empty()),
+			Err(Error::ContentNotAvailable) => {}
+			Err(e) => panic!("unexpected error: {}", e),
+		};
+	}
+	{
+		let mut ctx = Clipboard::new().unwrap();
+
+		let html = "<b>hello</b> <i>world</i>!";
+		let alt_text = "hello world!";
+
+		ctx.set_html(html, Some(alt_text)).unwrap();
+		assert_eq!(ctx.get_text().unwrap(), alt_text);
 	}
 	#[cfg(feature = "image-data")]
 	{

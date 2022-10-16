@@ -465,7 +465,39 @@ impl<'clipboard> Set<'clipboard> {
 		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
 			description: "Could not place the specified text to the clipboard".into(),
 		})?;
+		self.add_clipboard_exclusions()?;
+		Ok(())
+	}
 
+	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
+		let alt = match alt {
+			Some(s) => s.into(),
+			None => String::new(),
+		};
+		clipboard_win::raw::set_string(&alt).map_err(|_| Error::Unknown {
+			description: "Could not place the specified text to the clipboard".into(),
+		})?;
+		if let Some(format) = clipboard_win::register_format("HTML Format") {
+			let html = wrap_html(&html);
+			clipboard_win::raw::set_without_clear(format.get(), html.as_bytes())
+				.map_err(|e| Error::Unknown { description: e.to_string() })?;
+		}
+		self.add_clipboard_exclusions()?;
+		Ok(())
+	}
+
+	#[cfg(feature = "image-data")]
+	pub(crate) fn image(self, image: ImageData) -> Result<(), Error> {
+		if let Err(e) = clipboard_win::raw::empty() {
+			return Err(Error::Unknown {
+				description: format!("Failed to empty the clipboard. Got error code: {}", e),
+			});
+		};
+
+		add_cf_dibv5(image)
+	}
+
+	fn add_clipboard_exclusions(&self) -> Result<(), Error> {
 		// Clipboard exclusions are applied retroactively to the item that is currently in the clipboard.
 		// See the MS docs on `CLIPBOARD_EXCLUSION_DATA` for specifics. Once the item is added to the clipboard,
 		// tell Windows to remove it from cloud syncing and history.
@@ -493,17 +525,6 @@ impl<'clipboard> Set<'clipboard> {
 		}
 
 		Ok(())
-	}
-
-	#[cfg(feature = "image-data")]
-	pub(crate) fn image(self, image: ImageData) -> Result<(), Error> {
-		if let Err(e) = clipboard_win::raw::empty() {
-			return Err(Error::Unknown {
-				description: format!("Failed to empty the clipboard. Got error code: {}", e),
-			});
-		};
-
-		add_cf_dibv5(image)
 	}
 }
 
@@ -547,6 +568,41 @@ impl<'clipboard> Clear<'clipboard> {
 		clipboard_win::empty()
 			.map_err(|_| Error::Unknown { description: "failed to clear clipboard".into() })
 	}
+}
+
+fn wrap_html(ctn: &str) -> String {
+	let h_version = "Version:0.9";
+	let h_start_html = "\r\nStartHTML:";
+	let h_end_html = "\r\nEndHTML:";
+	let h_start_frag = "\r\nStartFragment:";
+	let h_end_frag = "\r\nEndFragment:";
+	let c_start_frag = "\r\n<html>\r\n<body>\r\n<!--StartFragment-->\r\n";
+	let c_end_frag = "\r\n<!--EndFragment-->\r\n</body>\r\n</html>";
+	let h_len = h_version.len()
+		+ h_start_html.len()
+		+ 10 + h_end_html.len()
+		+ 10 + h_start_frag.len()
+		+ 10 + h_end_frag.len()
+		+ 10;
+	let n_start_html = h_len + 2;
+	let n_start_frag = h_len + c_start_frag.len();
+	let n_end_frag = n_start_frag + ctn.len();
+	let n_end_html = n_end_frag + c_end_frag.len();
+	format!(
+		"{}{}{:010}{}{:010}{}{:010}{}{:010}{}{}{}",
+		h_version,
+		h_start_html,
+		n_start_html,
+		h_end_html,
+		n_end_html,
+		h_start_frag,
+		n_start_frag,
+		h_end_frag,
+		n_end_frag,
+		c_start_frag,
+		ctn,
+		c_end_frag,
+	)
 }
 
 #[cfg(all(test, feature = "image-data"))]
