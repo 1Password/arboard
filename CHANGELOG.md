@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.1 on 2022-17-10
+
+### Added
+- Implemented the ability to set HTML on the clipboard
+
+### Changed
+- Updated minimum `clipboard-win` version to `4.4`.
+- Updated `wl-clipboard-rs` to the version `0.7`.
+
 ## 3.1 on 2022-20-09
 
 ### Changed
