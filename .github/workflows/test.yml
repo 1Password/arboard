@@ -107,7 +107,7 @@ jobs:
     steps:
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: nightly
+          toolchain: nightly-2022-10-15
           override: true
           components: miri
 
@@ -118,4 +118,4 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: miri
-          args: test windows_clipboard --features image-data
+          args: test windows --features image-data
