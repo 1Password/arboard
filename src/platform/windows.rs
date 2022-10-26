@@ -12,8 +12,6 @@ use std::{borrow::Cow, marker::PhantomData};
 #[cfg(feature = "image-data")]
 use std::{convert::TryInto, mem::size_of};
 
-use clipboard_win::Clipboard as SystemClipboard;
-
 #[cfg(feature = "image-data")]
 use winapi::{
 	shared::minwindef::DWORD,
@@ -35,10 +33,8 @@ use crate::common::{private, Error};
 #[cfg(feature = "image-data")]
 use crate::common::{ImageData, ScopeGuard};
 
-const MAX_OPEN_ATTEMPTS: usize = 5;
-
 #[cfg(feature = "image-data")]
-fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
+fn add_cf_dibv5(_open_clipboard: OpenClipboard, image: ImageData) -> Result<(), Error> {
 	use std::intrinsics::copy_nonoverlapping;
 	use winapi::um::{
 		winbase::{GlobalAlloc, GHND},
@@ -46,7 +42,7 @@ fn add_cf_dibv5(image: ImageData) -> Result<(), Error> {
 		winuser::CF_DIBV5,
 	};
 
-	let header_size = std::mem::size_of::<BITMAPV5HEADER>();
+	let header_size = size_of::<BITMAPV5HEADER>();
 	let header = BITMAPV5HEADER {
 		bV5Size: header_size as u32,
 		bV5Width: image.width as LONG,
@@ -355,38 +351,87 @@ unsafe fn convert_bytes_to_u32s(bytes: &mut [u8]) -> ImageDataCow<'_> {
 	}
 }
 
-pub(crate) struct Clipboard {
-	_inner: clipboard_win::Clipboard,
+/// A shim clipboard type that can have operations performed with it, but
+/// does not represent an open clipboard itself.
+///
+/// Windows only allows one thread on the entire system to have the clipboard
+/// open at once, so we have to open it very sparingly or risk causing the rest
+/// of the system to be unresponsive. Instead, the clipboard is opened for
+/// every operation and then closed afterwards.
+pub(crate) struct Clipboard(());
 
-	// The Windows clipboard can't be passed between threads when opened.
+// The other platforms have `Drop` implementation on their
+// clipboard, so Windows should too for consistently.
+impl Drop for Clipboard {
+	fn drop(&mut self) {}
+}
+
+struct OpenClipboard<'clipboard> {
+	_inner: clipboard_win::Clipboard,
+	// The Windows clipboard can not be sent between threads once
+	// open.
 	_marker: PhantomData<*const ()>,
+	_for_shim: &'clipboard mut Clipboard,
 }
 
 impl Clipboard {
+	const DEFAULT_OPEN_ATTEMPTS: usize = 5;
+
 	pub(crate) fn new() -> Result<Self, Error> {
+		Ok(Self(()))
+	}
+
+	fn open(&mut self) -> Result<OpenClipboard, Error> {
 		// Attempt to open the clipboard multiple times. On Windows, its common for something else to temporarily
 		// be using it during attempts.
 		//
 		// For past work/evidence, see Firefox(https://searchfox.org/mozilla-central/source/widget/windows/nsClipboard.cpp#421) and
 		// Chromium(https://source.chromium.org/chromium/chromium/src/+/main:ui/base/clipboard/clipboard_win.cc;l=86).
-		let clipboard = SystemClipboard::new_attempts(MAX_OPEN_ATTEMPTS)
-			.map_err(|_| Error::ClipboardOccupied)?;
+		//
+		// Note: This does not use `Clipboard::new_attempts` because its implementation sleeps for `0ms`, which can
+		// cause race conditions between closing/opening the clipboard in single-threaded apps.
+		let mut attempts = Self::DEFAULT_OPEN_ATTEMPTS;
+		let clipboard = loop {
+			match clipboard_win::Clipboard::new() {
+				Ok(this) => break Ok(this),
+				Err(err) => match attempts {
+					0 => break Err(err),
+					_ => attempts -= 1,
+				},
+			}
 
-		Ok(Self { _inner: clipboard, _marker: PhantomData })
+			// The default value matches Chromium's implementation, but could be tweaked later.
+			// Safety: This is safe to call with any integer.
+			unsafe { winapi::um::synchapi::Sleep(5) };
+		}
+		.map_err(|_| Error::ClipboardOccupied)?;
+
+		Ok(OpenClipboard { _inner: clipboard, _marker: PhantomData, _for_shim: self })
 	}
 }
 
+// Note: In all of the builders, a clipboard opening result is stored.
+// This is done for a few reasons:
+// 1. consistently with the other platforms which can have an occupied clipboard.
+// 	It is better if the operation fails at the most similar place on all platforms.
+// 2. `{Get, Set, Clear}::new()` don't return a `Result`. Windows is the only case that
+// 	needs this kind of handling, so it doesn't need to affect the other APIs.
+// 3. Due to how the clipboard works on Windows, we need to open it for every operation
+// and keep it open until its finished. This approach allows RAII to still be applicable.
+
 pub(crate) struct Get<'clipboard> {
-	clipboard: PhantomData<&'clipboard mut Clipboard>,
+	clipboard: Result<OpenClipboard<'clipboard>, Error>,
 }
 
 impl<'clipboard> Get<'clipboard> {
-	pub(crate) fn new(_clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard: PhantomData }
+	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { clipboard: clipboard.open() }
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
 		const FORMAT: u32 = clipboard_win::formats::CF_UNICODETEXT;
+
+		let _clipboard_assertion = self.clipboard?;
 
 		// XXX: ToC/ToU race conditions are not possible because we are the sole owners of the clipboard currently.
 		if !clipboard_win::is_format_avail(FORMAT) {
@@ -431,6 +476,8 @@ impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		const FORMAT: u32 = clipboard_win::formats::CF_DIBV5;
 
+		let _clipboard_assertion = self.clipboard?;
+
 		if !clipboard_win::is_format_avail(FORMAT) {
 			return Err(Error::ContentNotAvailable);
 		}
@@ -446,30 +493,29 @@ impl<'clipboard> Get<'clipboard> {
 }
 
 pub(crate) struct Set<'clipboard> {
-	clipboard: PhantomData<&'clipboard mut Clipboard>,
+	clipboard: Result<OpenClipboard<'clipboard>, Error>,
 	exclude_from_cloud: bool,
 	exclude_from_history: bool,
 }
 
 impl<'clipboard> Set<'clipboard> {
-	/// `set` should be called with the registered format and a DWORD value of 0.
-	///
-	/// See https://docs.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats#cloud-clipboard-and-clipboard-history-formats
-	const CLIPBOARD_EXCLUSION_DATA: &'static [u8] = &0u32.to_ne_bytes();
-
-	pub(crate) fn new(_clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard: PhantomData, exclude_from_cloud: false, exclude_from_history: false }
+	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { clipboard: clipboard.open(), exclude_from_cloud: false, exclude_from_history: false }
 	}
 
 	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {
+		let open_clipboard = self.clipboard?;
+
 		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
 			description: "Could not place the specified text to the clipboard".into(),
 		})?;
-		self.add_clipboard_exclusions()?;
-		Ok(())
+
+		add_clipboard_exclusions(open_clipboard, self.exclude_from_cloud, self.exclude_from_history)
 	}
 
 	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
+		let open_clipboard = self.clipboard?;
+
 		let alt = match alt {
 			Some(s) => s.into(),
 			None => String::new(),
@@ -477,55 +523,69 @@ impl<'clipboard> Set<'clipboard> {
 		clipboard_win::raw::set_string(&alt).map_err(|_| Error::Unknown {
 			description: "Could not place the specified text to the clipboard".into(),
 		})?;
+
 		if let Some(format) = clipboard_win::register_format("HTML Format") {
 			let html = wrap_html(&html);
 			clipboard_win::raw::set_without_clear(format.get(), html.as_bytes())
 				.map_err(|e| Error::Unknown { description: e.to_string() })?;
 		}
-		self.add_clipboard_exclusions()?;
-		Ok(())
+
+		add_clipboard_exclusions(open_clipboard, self.exclude_from_cloud, self.exclude_from_history)
 	}
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, image: ImageData) -> Result<(), Error> {
+		let open_clipboard = self.clipboard?;
+
 		if let Err(e) = clipboard_win::raw::empty() {
 			return Err(Error::Unknown {
 				description: format!("Failed to empty the clipboard. Got error code: {}", e),
 			});
 		};
 
-		add_cf_dibv5(image)
+		add_cf_dibv5(open_clipboard, image)
+	}
+}
+
+fn add_clipboard_exclusions(
+	_open_clipboard: OpenClipboard<'_>,
+	exclude_from_cloud: bool,
+	exclude_from_history: bool,
+) -> Result<(), Error> {
+	/// `set` should be called with the registered format and a DWORD value of 0.
+	///
+	/// See https://docs.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats#cloud-clipboard-and-clipboard-history-formats
+	const CLIPBOARD_EXCLUSION_DATA: &[u8] = &0u32.to_ne_bytes();
+
+	// Clipboard exclusions are applied retroactively to the item that is currently in the clipboard.
+	// See the MS docs on `CLIPBOARD_EXCLUSION_DATA` for specifics. Once the item is added to the clipboard,
+	// tell Windows to remove it from cloud syncing and history.
+
+	if exclude_from_cloud {
+		if let Some(format) = clipboard_win::register_format("CanUploadToCloudClipboard") {
+			// We believe that it would be a logic error if this call failed, since we've validated the format is supported,
+			// we still have full ownership of the clipboard and aren't moving it to another thread, and this is a well-documented operation.
+			// Due to these reasons, `Error::Unknown` is used because we never expect the error path to be taken.
+			clipboard_win::raw::set_without_clear(format.get(), CLIPBOARD_EXCLUSION_DATA).map_err(
+				|_| Error::Unknown {
+					description: "Failed to exclude data from cloud clipboard".into(),
+				},
+			)?;
+		}
 	}
 
-	fn add_clipboard_exclusions(&self) -> Result<(), Error> {
-		// Clipboard exclusions are applied retroactively to the item that is currently in the clipboard.
-		// See the MS docs on `CLIPBOARD_EXCLUSION_DATA` for specifics. Once the item is added to the clipboard,
-		// tell Windows to remove it from cloud syncing and history.
-
-		if self.exclude_from_cloud {
-			if let Some(format) = clipboard_win::register_format("CanUploadToCloudClipboard") {
-				// We believe that it would be a logic error if this call failed, since we've validated the format is supported,
-				// we still have full ownership of the clipboard and aren't moving it to another thread, and this is a well-documented operation.
-				// Due to these reasons, `Error::Unknown` is used because we never expect the error path to be taken.
-				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
-					.map_err(|_| Error::Unknown {
-						description: "Failed to exclude data from cloud clipboard".into(),
-					})?;
-			}
+	if exclude_from_history {
+		if let Some(format) = clipboard_win::register_format("CanIncludeInClipboardHistory") {
+			// See above for reasoning about using `Error::Unknown`.
+			clipboard_win::raw::set_without_clear(format.get(), CLIPBOARD_EXCLUSION_DATA).map_err(
+				|_| Error::Unknown {
+					description: "Failed to exclude data from clipboard history".into(),
+				},
+			)?;
 		}
-
-		if self.exclude_from_history {
-			if let Some(format) = clipboard_win::register_format("CanIncludeInClipboardHistory") {
-				// See above for reasoning about using `Error::Unknown`.
-				clipboard_win::raw::set_without_clear(format.get(), Self::CLIPBOARD_EXCLUSION_DATA)
-					.map_err(|_| Error::Unknown {
-						description: "Failed to exclude data from clipboard history".into(),
-					})?;
-			}
-		}
-
-		Ok(())
 	}
+
+	Ok(())
 }
 
 /// Windows-specific extensions to the [`Set`](super::Set) builder.
@@ -556,15 +616,16 @@ impl SetExtWindows for crate::Set<'_> {
 }
 
 pub(crate) struct Clear<'clipboard> {
-	clipboard: PhantomData<&'clipboard mut Clipboard>,
+	clipboard: Result<OpenClipboard<'clipboard>, Error>,
 }
 
 impl<'clipboard> Clear<'clipboard> {
-	pub(crate) fn new(_clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard: PhantomData }
+	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { clipboard: clipboard.open() }
 	}
 
 	pub(crate) fn clear(self) -> Result<(), Error> {
+		let _clipboard_assertion = self.clipboard?;
 		clipboard_win::empty()
 			.map_err(|_| Error::Unknown { description: "failed to clear clipboard".into() })
 	}
