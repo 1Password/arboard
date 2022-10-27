@@ -588,7 +588,7 @@ fn add_clipboard_exclusions(
 	Ok(())
 }
 
-/// Windows-specific extensions to the [`Set`](super::Set) builder.
+/// Windows-specific extensions to the [`Set`](crate::Set) builder.
 pub trait SetExtWindows: private::Sealed {
 	/// Excludes the data which will be set on the clipboard from being uploaded to
 	/// the Windows 10/11 [cloud clipboard].
