@@ -8,9 +8,6 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-#![crate_name = "arboard"]
-#![crate_type = "lib"]
-
 mod common;
 use std::borrow::Cow;
 
@@ -33,13 +30,34 @@ pub use platform::SetExtWindows;
 ///
 /// Any number of `Clipboard` instances are allowed to exist at a single point in time. Note however
 /// that all `Clipboard`s must be 'dropped' before the program exits. In most scenarios this happens
-/// automatically but there are frameworks (for example `winit`) that take over the execution
+/// automatically but there are frameworks (for example, `winit`) that take over the execution
 /// and where the objects don't get dropped when the application exits. In these cases you have to
 /// make sure the object is dropped by taking ownership of it in a confined scope when detecting
 /// that your application is about to quit.
 ///
-/// It is also valid to have multiple `Clipboards` on separate threads at once but note that
+/// It is also valid to have these multiple `Clipboards` on separate threads at once but note that
 /// executing multiple clipboard operations in parallel might fail with a `ClipboardOccupied` error.
+///
+/// # Platform-specific behavior
+///
+/// `arboard` does its best to abstract over different platforms, but sometimes the platform-specific
+/// behavior leaks through unsolvably. These differences, depending on which platforms are being targeted,
+/// may affect your app's clipboard architecture (ex, opening and closing a [Clipboard] every time
+/// or keeping one open in some application/global state).
+///
+/// ## Linux
+///
+/// Using either Wayland and X11, the clipboard and its content is "hosted" inside of the application
+/// that last put data onto it. This means that when the last `Clipboard` instance is dropped, the contents
+/// may become unavailable to other apps. See [SetExtLinux] for more details.
+///
+/// ## Windows
+///
+/// The clipboard on Windows is a global object, which may only be opened on one thread at once.
+/// This means that `arboard` only truly opens the clipboard during each operation to ensure that
+/// multiple `Clipboard`'s may exist at once. This also means that attempting operations in parallel
+/// has a high likelyhood to return an error instead.
+#[allow(rustdoc::broken_intra_doc_links)]
 pub struct Clipboard {
 	pub(crate) platform: platform::Clipboard,
 }
@@ -197,167 +215,207 @@ impl Clear<'_> {
 /// All tests grouped in one because the windows clipboard cannot be open on
 /// multiple threads at once.
 #[cfg(test)]
-#[test]
-fn all_tests() {
-	use std::{thread, time::Duration};
+mod tests {
+	use super::*;
+	use std::{sync::Arc, thread, time::Duration};
 
-	let _ = env_logger::builder().is_test(true).try_init();
-	{
-		let mut ctx = Clipboard::new().unwrap();
-		let text = "some string";
-		ctx.set_text(text).unwrap();
-		assert_eq!(ctx.get_text().unwrap(), text);
-
-		// We also need to check that the content persists after the drop; this is
-		// especially important on X11
-		drop(ctx);
-
-		// Give any external mechanism a generous amount of time to take over
-		// responsibility for the clipboard, in case that happens asynchronously
-		// (it appears that this is the case on X11 plus Mutter 3.34+, see #4)
-		thread::sleep(Duration::from_millis(300));
-
-		let mut ctx = Clipboard::new().unwrap();
-		assert_eq!(ctx.get_text().unwrap(), text);
-	}
-	{
-		let mut ctx = Clipboard::new().unwrap();
-		let text = "Some utf8: 🤓 ∑φ(n)<ε 🐔";
-		ctx.set_text(text).unwrap();
-		assert_eq!(ctx.get_text().unwrap(), text);
-	}
-	{
-		let mut ctx = Clipboard::new().unwrap();
-		let text = "hello world";
-
-		ctx.set_text(text).unwrap();
-		assert_eq!(ctx.get_text().unwrap(), text);
-
-		ctx.clear().unwrap();
-
-		match ctx.get_text() {
-			Ok(text) => assert!(text.is_empty()),
-			Err(Error::ContentNotAvailable) => {}
-			Err(e) => panic!("unexpected error: {}", e),
-		};
-
-		// confirm it is OK to clear when already empty.
-		ctx.clear().unwrap();
-	}
-	{
-		let mut ctx = Clipboard::new().unwrap();
-		let html = "<b>hello</b> <i>world</i>!";
-
-		ctx.set_html(html, None).unwrap();
-
-		match ctx.get_text() {
-			Ok(text) => assert!(text.is_empty()),
-			Err(Error::ContentNotAvailable) => {}
-			Err(e) => panic!("unexpected error: {}", e),
-		};
-	}
-	{
-		let mut ctx = Clipboard::new().unwrap();
-
-		let html = "<b>hello</b> <i>world</i>!";
-		let alt_text = "hello world!";
-
-		ctx.set_html(html, Some(alt_text)).unwrap();
-		assert_eq!(ctx.get_text().unwrap(), alt_text);
-	}
-	#[cfg(feature = "image-data")]
-	{
-		let mut ctx = Clipboard::new().unwrap();
-		#[rustfmt::skip]
-		let bytes = [
-			255, 100, 100, 255,
-			100, 255, 100, 100,
-			100, 100, 255, 100,
-			0, 0, 0, 255,
-		];
-		let img_data = ImageData { width: 2, height: 2, bytes: bytes.as_ref().into() };
-
-		// Make sure that setting one format overwrites the other.
-		ctx.set_image(img_data.clone()).unwrap();
-		assert!(matches!(ctx.get_text(), Err(Error::ContentNotAvailable)));
-
-		ctx.set_text("clipboard test").unwrap();
-		assert!(matches!(ctx.get_image(), Err(Error::ContentNotAvailable)));
-
-		// Test if we get the same image that we put onto the clibboard
-		ctx.set_image(img_data.clone()).unwrap();
-		let got = ctx.get_image().unwrap();
-		assert_eq!(img_data.bytes, got.bytes);
-
-		#[rustfmt::skip]
-		let big_bytes = vec![
-			255, 100, 100, 255,
-			100, 255, 100, 100,
-			100, 100, 255, 100,
-
-			0, 1, 2, 255,
-			0, 1, 2, 255,
-			0, 1, 2, 255,
-		];
-		let bytes_cloned = big_bytes.clone();
-		let big_img_data = ImageData { width: 3, height: 2, bytes: big_bytes.into() };
-		ctx.set_image(big_img_data).unwrap();
-		let got = ctx.get_image().unwrap();
-		assert_eq!(bytes_cloned.as_slice(), got.bytes.as_ref());
-	}
-	#[cfg(all(
-		unix,
-		not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
-	))]
-	{
-		use crate::{LinuxClipboardKind, SetExtLinux};
-		use std::sync::{
-			atomic::{self, AtomicBool},
-			Arc,
-		};
-
-		let mut ctx = Clipboard::new().unwrap();
-
-		const TEXT1: &str = "I'm a little teapot,";
-		const TEXT2: &str = "short and stout,";
-		const TEXT3: &str = "here is my handle";
-
-		ctx.set().clipboard(LinuxClipboardKind::Clipboard).text(TEXT1.to_string()).unwrap();
-
-		ctx.set().clipboard(LinuxClipboardKind::Primary).text(TEXT2.to_string()).unwrap();
-
-		// The secondary clipboard is not available under wayland
-		if !cfg!(feature = "wayland-data-control") || std::env::var_os("WAYLAND_DISPLAY").is_none()
+	#[test]
+	fn all_tests() {
+		let _ = env_logger::builder().is_test(true).try_init();
 		{
-			ctx.set().clipboard(LinuxClipboardKind::Secondary).text(TEXT3.to_string()).unwrap();
+			let mut ctx = Clipboard::new().unwrap();
+			let text = "some string";
+			ctx.set_text(text).unwrap();
+			assert_eq!(ctx.get_text().unwrap(), text);
+
+			// We also need to check that the content persists after the drop; this is
+			// especially important on X11
+			drop(ctx);
+
+			// Give any external mechanism a generous amount of time to take over
+			// responsibility for the clipboard, in case that happens asynchronously
+			// (it appears that this is the case on X11 plus Mutter 3.34+, see #4)
+			thread::sleep(Duration::from_millis(300));
+
+			let mut ctx = Clipboard::new().unwrap();
+			assert_eq!(ctx.get_text().unwrap(), text);
 		}
-
-		assert_eq!(TEXT1, &ctx.get().clipboard(LinuxClipboardKind::Clipboard).text().unwrap());
-
-		assert_eq!(TEXT2, &ctx.get().clipboard(LinuxClipboardKind::Primary).text().unwrap());
-
-		// The secondary clipboard is not available under wayland
-		if !cfg!(feature = "wayland-data-control") || std::env::var_os("WAYLAND_DISPLAY").is_none()
 		{
-			assert_eq!(TEXT3, &ctx.get().clipboard(LinuxClipboardKind::Secondary).text().unwrap());
+			let mut ctx = Clipboard::new().unwrap();
+			let text = "Some utf8: 🤓 ∑φ(n)<ε 🐔";
+			ctx.set_text(text).unwrap();
+			assert_eq!(ctx.get_text().unwrap(), text);
 		}
+		{
+			let mut ctx = Clipboard::new().unwrap();
+			let text = "hello world";
 
-		let was_replaced = Arc::new(AtomicBool::new(false));
+			ctx.set_text(text).unwrap();
+			assert_eq!(ctx.get_text().unwrap(), text);
 
-		let setter = thread::spawn({
-			let was_replaced = was_replaced.clone();
-			move || {
-				thread::sleep(Duration::from_millis(100));
-				let mut ctx = Clipboard::new().unwrap();
-				ctx.set_text("replacement text".to_owned()).unwrap();
-				was_replaced.store(true, atomic::Ordering::Release);
+			ctx.clear().unwrap();
+
+			match ctx.get_text() {
+				Ok(text) => assert!(text.is_empty()),
+				Err(Error::ContentNotAvailable) => {}
+				Err(e) => panic!("unexpected error: {}", e),
+			};
+
+			// confirm it is OK to clear when already empty.
+			ctx.clear().unwrap();
+		}
+		{
+			let mut ctx = Clipboard::new().unwrap();
+			let html = "<b>hello</b> <i>world</i>!";
+
+			ctx.set_html(html, None).unwrap();
+
+			match ctx.get_text() {
+				Ok(text) => assert!(text.is_empty()),
+				Err(Error::ContentNotAvailable) => {}
+				Err(e) => panic!("unexpected error: {}", e),
+			};
+		}
+		{
+			let mut ctx = Clipboard::new().unwrap();
+
+			let html = "<b>hello</b> <i>world</i>!";
+			let alt_text = "hello world!";
+
+			ctx.set_html(html, Some(alt_text)).unwrap();
+			assert_eq!(ctx.get_text().unwrap(), alt_text);
+		}
+		#[cfg(feature = "image-data")]
+		{
+			let mut ctx = Clipboard::new().unwrap();
+			#[rustfmt::skip]
+			let bytes = [
+				255, 100, 100, 255,
+				100, 255, 100, 100,
+				100, 100, 255, 100,
+				0, 0, 0, 255,
+			];
+			let img_data = ImageData { width: 2, height: 2, bytes: bytes.as_ref().into() };
+
+			// Make sure that setting one format overwrites the other.
+			ctx.set_image(img_data.clone()).unwrap();
+			assert!(matches!(ctx.get_text(), Err(Error::ContentNotAvailable)));
+
+			ctx.set_text("clipboard test").unwrap();
+			assert!(matches!(ctx.get_image(), Err(Error::ContentNotAvailable)));
+
+			// Test if we get the same image that we put onto the clibboard
+			ctx.set_image(img_data.clone()).unwrap();
+			let got = ctx.get_image().unwrap();
+			assert_eq!(img_data.bytes, got.bytes);
+
+			#[rustfmt::skip]
+			let big_bytes = vec![
+				255, 100, 100, 255,
+				100, 255, 100, 100,
+				100, 100, 255, 100,
+
+				0, 1, 2, 255,
+				0, 1, 2, 255,
+				0, 1, 2, 255,
+			];
+			let bytes_cloned = big_bytes.clone();
+			let big_img_data = ImageData { width: 3, height: 2, bytes: big_bytes.into() };
+			ctx.set_image(big_img_data).unwrap();
+			let got = ctx.get_image().unwrap();
+			assert_eq!(bytes_cloned.as_slice(), got.bytes.as_ref());
+		}
+		#[cfg(all(
+			unix,
+			not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+		))]
+		{
+			use crate::{LinuxClipboardKind, SetExtLinux};
+			use std::sync::atomic::{self, AtomicBool};
+
+			let mut ctx = Clipboard::new().unwrap();
+
+			const TEXT1: &str = "I'm a little teapot,";
+			const TEXT2: &str = "short and stout,";
+			const TEXT3: &str = "here is my handle";
+
+			ctx.set().clipboard(LinuxClipboardKind::Clipboard).text(TEXT1.to_string()).unwrap();
+
+			ctx.set().clipboard(LinuxClipboardKind::Primary).text(TEXT2.to_string()).unwrap();
+
+			// The secondary clipboard is not available under wayland
+			if !cfg!(feature = "wayland-data-control")
+				|| std::env::var_os("WAYLAND_DISPLAY").is_none()
+			{
+				ctx.set().clipboard(LinuxClipboardKind::Secondary).text(TEXT3.to_string()).unwrap();
 			}
-		});
 
-		ctx.set().wait().text("initial text".to_owned()).unwrap();
+			assert_eq!(TEXT1, &ctx.get().clipboard(LinuxClipboardKind::Clipboard).text().unwrap());
 
-		assert!(was_replaced.load(atomic::Ordering::Acquire));
+			assert_eq!(TEXT2, &ctx.get().clipboard(LinuxClipboardKind::Primary).text().unwrap());
 
-		setter.join().unwrap();
+			// The secondary clipboard is not available under wayland
+			if !cfg!(feature = "wayland-data-control")
+				|| std::env::var_os("WAYLAND_DISPLAY").is_none()
+			{
+				assert_eq!(
+					TEXT3,
+					&ctx.get().clipboard(LinuxClipboardKind::Secondary).text().unwrap()
+				);
+			}
+
+			let was_replaced = Arc::new(AtomicBool::new(false));
+
+			let setter = thread::spawn({
+				let was_replaced = was_replaced.clone();
+				move || {
+					thread::sleep(Duration::from_millis(100));
+					let mut ctx = Clipboard::new().unwrap();
+					ctx.set_text("replacement text".to_owned()).unwrap();
+					was_replaced.store(true, atomic::Ordering::Release);
+				}
+			});
+
+			ctx.set().wait().text("initial text".to_owned()).unwrap();
+
+			assert!(was_replaced.load(atomic::Ordering::Acquire));
+
+			setter.join().unwrap();
+		}
+	}
+
+	// The cross-platform abstraction should allow any number of clipboards
+	// to be open at once without issue, as documented under [Clipboard].
+	#[test]
+	fn multiple_clipboards_at_once() {
+		const THREAD_COUNT: usize = 100;
+
+		let mut handles = Vec::with_capacity(THREAD_COUNT);
+		let barrier = Arc::new(std::sync::Barrier::new(THREAD_COUNT));
+
+		for _ in 0..THREAD_COUNT {
+			let barrier = barrier.clone();
+			handles.push(thread::spawn(move || {
+				// As long as the clipboard isn't used multiple times at once, multiple instances
+				// are perfectly fine.
+				let _ctx = Clipboard::new().unwrap();
+
+				thread::sleep(Duration::from_millis(10));
+
+				barrier.wait();
+			}));
+		}
+
+		for thread_handle in handles {
+			thread_handle.join().unwrap();
+		}
+	}
+
+	#[test]
+	fn clipboard_trait_consistently() {
+		fn assert_send_sync<T: Send + Sync + 'static>() {}
+
+		assert_send_sync::<Clipboard>();
+		assert!(std::mem::needs_drop::<Clipboard>());
 	}
 }
