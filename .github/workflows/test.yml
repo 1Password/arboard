@@ -40,25 +40,25 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose --no-default-features -- -D warnings
+          args: --verbose --no-default-features -- -D warnings -D clippy::dbg_macro
 
       - name: Run `cargo clippy` with `image-data` feature
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose --no-default-features --features image-data -- -D warnings
+          args: --verbose --no-default-features --features image-data -- -D warnings -D clippy::dbg_macro
 
       - name: Run `cargo clippy` with `wayland-data-control` feature
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose --no-default-features --features wayland-data-control -- -D warnings
+          args: --verbose --no-default-features --features wayland-data-control -- -D warnings -D clippy::dbg_macro
 
       - name: Run `cargo clippy` with all features
         uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --verbose --all-features -- -D warnings
+          args: --verbose --all-features -- -D warnings -D clippy::dbg_macro
 
   test:
     needs: clippy

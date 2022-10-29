@@ -136,15 +136,11 @@ impl Clipboard {
 			Ok((mut pipe, _mime_type)) => {
 				let mut buffer = vec![];
 				pipe.read_to_end(&mut buffer).map_err(into_unknown)?;
-				dbg!(&buffer);
 				let image = image::io::Reader::new(Cursor::new(buffer))
 					.with_guessed_format()
 					.map_err(|_| Error::ConversionFailure)?
 					.decode()
-					.map_err(|e| {
-						dbg!(e);
-						Error::ConversionFailure
-					})?;
+					.map_err(|_| Error::ConversionFailure)?;
 				let image = image.into_rgba8();
 
 				Ok(ImageData {
