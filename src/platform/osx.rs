@@ -179,7 +179,7 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
-		let string_class = object_class(*NSSTRING_CLASS);
+		let string_class = object_class(&NSSTRING_CLASS);
 		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![string_class]);
 		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
 
@@ -204,7 +204,7 @@ impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		use std::io::Cursor;
 
-		let image_class: Id<NSObject> = object_class(*NSIMAGE_CLASS);
+		let image_class: Id<NSObject> = object_class(&NSIMAGE_CLASS);
 		let classes = vec![image_class];
 		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
 		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
@@ -221,7 +221,7 @@ impl<'clipboard> Get<'clipboard> {
 		};
 
 		let obj = match contents.first_object() {
-			Some(obj) if obj.is_kind_of(*NSIMAGE_CLASS) => obj,
+			Some(obj) if obj.is_kind_of(&NSIMAGE_CLASS) => obj,
 			Some(_) | None => return Err(Error::ContentNotAvailable),
 		};
 
