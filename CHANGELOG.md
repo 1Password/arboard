@@ -5,6 +5,8 @@
 ### Changed
 - The Windows clipboard now behaves consistently with the other
 platform implementations again.
+- Significantly improve cross-platform documentation of `Clipboard`.
+- Remove lingering uses of the dbg! macro in the Wayland backend.
 
 ## 3.1.1 on 2022-17-10
 
