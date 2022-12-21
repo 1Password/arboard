@@ -122,6 +122,22 @@ impl<'clipboard> Get<'clipboard> {
 			Clipboard::WlDataControl(clipboard) => clipboard.get_image(self.selection),
 		}
 	}
+
+	pub(crate) fn formats(self) -> Result<Vec<String>, Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.get_formats(self.selection),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.get_formats(self.selection),
+		}
+	}
+
+	pub(crate) fn bytes(self, format: &[u8]) -> Result<Vec<u8>, Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.get_bytes(self.selection, format.into()),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.get_bytes(self.selection, format.into()),
+		}
+	}
 }
 
 /// Linux-specific extensions to the [`Get`](super::Get) builder.
@@ -164,6 +180,16 @@ impl<'clipboard> Set<'clipboard> {
 			Clipboard::X11(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
+		}
+	}
+
+	pub(crate) fn bytes(self, bytes: Cow<'_, [u8]>, format: Cow<'_, [u8]>) -> Result<(), Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => {
+				clipboard.set_bytes(bytes, format, self.selection, self.wait)
+			}
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.set_bytes(bytes, self.selection, self.wait),
 		}
 	}
 

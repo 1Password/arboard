@@ -54,6 +54,14 @@ impl Clipboard {
 		Ok(Self {})
 	}
 
+	pub(crate) fn get_formats(&mut self, selection: LinuxClipboardKind) -> Result<Vec<String>, Error> {
+		todo!()
+	}
+
+	pub(crate) fn get_bytes(&mut self, selection: LinuxClipboardKind, format: &[u8]) -> Result<Vec<String>, Error> {
+		todo!()
+	}
+
 	pub(crate) fn get_text(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
 		use wl_clipboard_rs::paste::MimeType;
 
@@ -90,6 +98,15 @@ impl Clipboard {
 			other => into_unknown(other),
 		})?;
 		Ok(())
+	}
+
+	pub(crate) fn set_bytes(
+		&self, bytes: Cow<'_, Vec<u8>>,
+		format: Cow<'_, [u8]>,
+		selection: LinuxClipboardKind,
+		wait: bool,
+	) -> Result<()> {
+		todo!()
 	}
 
 	pub(crate) fn set_html(
