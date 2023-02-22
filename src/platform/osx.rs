@@ -20,7 +20,8 @@ use core_graphics::{
 };
 use objc::{
 	msg_send,
-	runtime::{Class, Object},
+	rc::autoreleasepool,
+	runtime::{Class, Object, BOOL, NO},
 	sel, sel_impl,
 };
 use objc_foundation::{INSArray, INSObject, INSString, NSArray, NSDictionary, NSObject, NSString};
@@ -179,25 +180,23 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
-		let string_class = object_class(&NSSTRING_CLASS);
-		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![string_class]);
-		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
+		autoreleasepool(|| unsafe {
+			let types: *mut NSArray<*mut NSString> = msg_send![self.pasteboard, types];
+			let has_str: BOOL = msg_send![types, containsObject: NSPasteboardTypeString];
 
-		let string_array: Id<NSArray<NSString>> = unsafe {
-			let obj: *mut NSArray<NSString> =
-				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
-
-			if obj.is_null() {
+			if has_str == NO {
 				return Err(Error::ContentNotAvailable);
-			} else {
-				Id::from_ptr(obj)
 			}
-		};
 
-		string_array
-			.first_object()
-			.map(|obj| obj.as_str().to_owned())
-			.ok_or(Error::ContentNotAvailable)
+			let text: *mut NSString =
+				msg_send![self.pasteboard, stringForType: NSPasteboardTypeString];
+
+			if text.is_null() {
+				return Err(Error::ContentNotAvailable);
+			}
+
+			Ok((*text).as_str().to_owned())
+		})
 	}
 
 	#[cfg(feature = "image-data")]
@@ -225,13 +224,17 @@ impl<'clipboard> Get<'clipboard> {
 			Some(_) | None => return Err(Error::ContentNotAvailable),
 		};
 
-		let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
-		let data = unsafe {
+		let data = autoreleasepool(|| unsafe {
+			let tiff: Id<NSArray<NSObject>> = {
+				let obj: *mut NSArray<NSObject> = msg_send![obj, TIFFRepresentation];
+				Id::from_ptr(obj)
+			};
 			let len: usize = msg_send![tiff, length];
 			let bytes: *const u8 = msg_send![tiff, bytes];
 
 			Cursor::new(std::slice::from_raw_parts(bytes, len))
-		};
+		});
+
 		let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
 		match reader.decode() {
 			Ok(img) => {

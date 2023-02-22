@@ -226,6 +226,7 @@ mod tests {
 			let mut ctx = Clipboard::new().unwrap();
 			let text = "some string";
 			ctx.set_text(text).unwrap();
+			println!("text: {:?}", ctx.get_text().unwrap());
 			assert_eq!(ctx.get_text().unwrap(), text);
 
 			// We also need to check that the content persists after the drop; this is
