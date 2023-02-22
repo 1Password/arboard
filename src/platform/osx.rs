@@ -36,7 +36,7 @@ extern "C" {
 	static NSPasteboardTypeString: *const Object;
 }
 
-static NSSTRING_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSString").unwrap());
+// static NSSTRING_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSString").unwrap());
 #[cfg(feature = "image-data")]
 static NSIMAGE_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSImage").unwrap());
 
