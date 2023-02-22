@@ -283,12 +283,7 @@ impl<'clipboard> Set<'clipboard> {
 		// https://bugzilla.mozilla.org/show_bug.cgi?id=466599
 		// https://bugs.chromium.org/p/chromium/issues/detail?id=11957
 		let html = format!(
-			r#"<html>
-				<head>
-					<meta http-equiv="content-type" content="text/html; charset=utf-8">
-				</head>
-				<body>{}</body>
-			</html>"#,
+			r#"<html><head><meta http-equiv="content-type" content="text/html; charset=utf-8"></head><body>{}</body></html>"#,
 			html
 		);
 		let html_nss = NSString::from_str(&html);
