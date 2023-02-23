@@ -202,53 +202,50 @@ impl<'clipboard> Get<'clipboard> {
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		use std::io::Cursor;
+		autoreleasepool(|| unsafe {
+			let image_class: Id<NSObject> = object_class(&NSIMAGE_CLASS);
+			let classes = vec![image_class];
+			let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
+			let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
 
-		let image_class: Id<NSObject> = object_class(&NSIMAGE_CLASS);
-		let classes = vec![image_class];
-		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
-		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
+			let contents: Id<NSArray<NSObject>> = {
+				let obj: *mut NSArray<NSObject> =
+					msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
 
-		let contents: Id<NSArray<NSObject>> = unsafe {
-			let obj: *mut NSArray<NSObject> =
-				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
-
-			if obj.is_null() {
-				return Err(Error::ContentNotAvailable);
-			} else {
-				Id::from_ptr(obj)
-			}
-		};
-
-		let obj = match contents.first_object() {
-			Some(obj) if obj.is_kind_of(&NSIMAGE_CLASS) => obj,
-			Some(_) | None => return Err(Error::ContentNotAvailable),
-		};
-
-		let data = autoreleasepool(|| unsafe {
-			let tiff: Id<NSArray<NSObject>> = {
-				let obj: *mut NSArray<NSObject> = msg_send![obj, TIFFRepresentation];
-				Id::from_ptr(obj)
+				if obj.is_null() {
+					return Err(Error::ContentNotAvailable);
+				} else {
+					Id::from_ptr(obj)
+				}
 			};
-			let len: usize = msg_send![tiff, length];
-			let bytes: *const u8 = msg_send![tiff, bytes];
 
-			Cursor::new(std::slice::from_raw_parts(bytes, len))
-		});
+			let obj = match contents.first_object() {
+				Some(obj) if obj.is_kind_of(&NSIMAGE_CLASS) => obj,
+				Some(_) | None => return Err(Error::ContentNotAvailable),
+			};
 
-		let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
-		match reader.decode() {
-			Ok(img) => {
-				let rgba = img.into_rgba8();
-				let (width, height) = rgba.dimensions();
+			let data = {
+				let tiff: &NSArray<NSObject> = msg_send![obj, TIFFRepresentation];
+				let len: usize = msg_send![tiff, length];
+				let bytes: *const u8 = msg_send![tiff, bytes];
+				Cursor::new(std::slice::from_raw_parts(bytes, len))
+			};
 
-				Ok(ImageData {
-					width: width as usize,
-					height: height as usize,
-					bytes: rgba.into_raw().into(),
-				})
+			let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
+			match reader.decode() {
+				Ok(img) => {
+					let rgba = img.into_rgba8();
+					let (width, height) = rgba.dimensions();
+
+					Ok(ImageData {
+						width: width as usize,
+						height: height as usize,
+						bytes: rgba.into_raw().into(),
+					})
+				}
+				Err(_) => Err(Error::ConversionFailure),
 			}
-			Err(_) => Err(Error::ConversionFailure),
-		}
+		})
 	}
 }
 
