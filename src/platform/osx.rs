@@ -24,8 +24,12 @@ use objc::{
 	runtime::{Class, Object, BOOL, NO},
 	sel, sel_impl,
 };
-use objc_foundation::{INSArray, INSObject, INSString, NSArray, NSDictionary, NSObject, NSString};
-use objc_id::{Id, Owned};
+use objc_foundation::{INSArray, INSString, NSArray, NSString};
+#[cfg(feature = "image-data")]
+use objc_foundation::{INSObject, NSDictionary, NSObject};
+use objc_id::Id;
+#[cfg(feature = "image-data")]
+use objc_id::Owned;
 use once_cell::sync::Lazy;
 use std::borrow::Cow;
 
@@ -36,7 +40,8 @@ extern "C" {
 	static NSPasteboardTypeString: *const Object;
 }
 
-// static NSSTRING_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSString").unwrap());
+#[allow(unused)]
+static NSSTRING_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSString").unwrap());
 #[cfg(feature = "image-data")]
 static NSIMAGE_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSImage").unwrap());
 
@@ -341,6 +346,7 @@ impl<'clipboard> Clear<'clipboard> {
 
 /// Convenience function to get an Objective-C object from a
 /// specific class.
+#[cfg(feature = "image-data")]
 fn object_class(class: &'static Class) -> Id<NSObject> {
 	// SAFETY: `Class` is a valid object and `Id` will not mutate it
 	unsafe { Id::from_ptr(class as *const Class as *mut NSObject) }
