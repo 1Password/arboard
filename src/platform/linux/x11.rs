@@ -18,9 +18,9 @@ use std::{
 	collections::{hash_map::Entry, HashMap},
 	sync::{
 		atomic::{AtomicBool, Ordering},
-		Arc,
+		mpsc, Arc,
 	},
-	thread::JoinHandle,
+	thread::{self, JoinHandle},
 	thread_local,
 	time::{Duration, Instant},
 	usize,
@@ -134,8 +134,14 @@ struct Inner {
 impl XContext {
 	fn new() -> Result<Self> {
 		// create a new connection to an X11 server
-		let (conn, screen_num): (RustConnection, _) =
-			RustConnection::connect(None).map_err(into_unknown)?;
+		// with a timeout on connecting to the socket in case of hangage
+		let (tx, rx) = mpsc::channel();
+		thread::spawn(move || {
+			tx.send(RustConnection::connect(None)).ok(); // disregard error sending on channel as main thread has timed out.
+		});
+		let patient_conn = rx.recv_timeout(SHORT_TIMEOUT_DUR).map_err(into_unknown)?;
+		let (conn, screen_num): (RustConnection, _) = patient_conn.map_err(into_unknown)?;
+
 		let screen = conn
 			.setup()
 			.roots
