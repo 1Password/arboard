@@ -19,7 +19,12 @@ mod platform;
 
 #[cfg(all(
 	unix,
-	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+	not(any(
+		target_os = "macos",
+		target_os = "ios",
+		target_os = "android",
+		target_os = "emscripten"
+	)),
 ))]
 pub use platform::{ClearExtLinux, GetExtLinux, LinuxClipboardKind, SetExtLinux};
 
@@ -94,7 +99,7 @@ impl Clipboard {
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
 	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
 	/// other application will be of a supported format.
-	#[cfg(feature = "image-data")]
+	#[cfg(all(feature = "image-data", not(target_os = "ios")))]
 	pub fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
 		self.get().image()
 	}
@@ -106,7 +111,7 @@ impl Clipboard {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
-	#[cfg(feature = "image-data")]
+	#[cfg(all(feature = "image-data", not(target_os = "ios")))]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		self.set().image(image)
 	}
@@ -151,7 +156,7 @@ impl Get<'_> {
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
 	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
 	/// other application will be of a supported format.
-	#[cfg(feature = "image-data")]
+	#[cfg(all(feature = "image-data", not(target_os = "ios")))]
 	pub fn image(self) -> Result<ImageData<'static>, Error> {
 		self.platform.image()
 	}
@@ -192,7 +197,7 @@ impl Set<'_> {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
-	#[cfg(feature = "image-data")]
+	#[cfg(all(feature = "image-data", not(target_os = "ios")))]
 	pub fn image(self, image: ImageData) -> Result<(), Error> {
 		self.platform.image(image)
 	}
@@ -285,7 +290,7 @@ mod tests {
 			ctx.set_html(html, Some(alt_text)).unwrap();
 			assert_eq!(ctx.get_text().unwrap(), alt_text);
 		}
-		#[cfg(feature = "image-data")]
+		#[cfg(all(feature = "image-data", not(target_os = "ios")))]
 		{
 			let mut ctx = Clipboard::new().unwrap();
 			#[rustfmt::skip]
@@ -327,7 +332,12 @@ mod tests {
 		}
 		#[cfg(all(
 			unix,
-			not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+			not(any(
+				target_os = "macos",
+				target_os = "ios",
+				target_os = "android",
+				target_os = "emscripten"
+			)),
 		))]
 		{
 			use crate::{LinuxClipboardKind, SetExtLinux};
