@@ -126,7 +126,10 @@ impl Clipboard {
 		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
 		#[cfg(target_os = "ios")]
 		let _: () = unsafe {
-			msg_send![self.pasteboard, setItems: NSArray::from_vec(Vec::<Id<NSString>>::new())]
+			msg_send![
+				self.pasteboard,
+				setItems: NSArray::<NSDictionary<NSString, NSObject>>::from_vec(Vec::new())
+			]
 		};
 	}
 
