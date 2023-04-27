@@ -99,7 +99,7 @@ impl Clipboard {
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
 	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
 	/// other application will be of a supported format.
-	#[cfg(all(feature = "image-data", not(target_os = "ios")))]
+	#[cfg(feature = "image-data")]
 	pub fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
 		self.get().image()
 	}
@@ -111,7 +111,7 @@ impl Clipboard {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
-	#[cfg(all(feature = "image-data", not(target_os = "ios")))]
+	#[cfg(feature = "image-data")]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		self.set().image(image)
 	}
@@ -156,7 +156,7 @@ impl Get<'_> {
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
 	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
 	/// other application will be of a supported format.
-	#[cfg(all(feature = "image-data", not(target_os = "ios")))]
+	#[cfg(feature = "image-data")]
 	pub fn image(self) -> Result<ImageData<'static>, Error> {
 		self.platform.image()
 	}
@@ -197,7 +197,7 @@ impl Set<'_> {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
-	#[cfg(all(feature = "image-data", not(target_os = "ios")))]
+	#[cfg(feature = "image-data")]
 	pub fn image(self, image: ImageData) -> Result<(), Error> {
 		self.platform.image(image)
 	}
@@ -290,7 +290,7 @@ mod tests {
 			ctx.set_html(html, Some(alt_text)).unwrap();
 			assert_eq!(ctx.get_text().unwrap(), alt_text);
 		}
-		#[cfg(all(feature = "image-data", not(target_os = "ios")))]
+		#[cfg(feature = "image-data")]
 		{
 			let mut ctx = Clipboard::new().unwrap();
 			#[rustfmt::skip]

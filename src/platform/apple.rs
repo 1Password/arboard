@@ -36,17 +36,26 @@ extern "C" {
 	static NSPasteboardTypeString: *const Object;
 }
 
+#[cfg(target_os = "ios")]
+#[link(name = "UIKit", kind = "framework")]
+extern "C" {
+	fn UIImagePNGRepresentation(ui_image: *const Object) -> *const Object;
+}
+
 #[cfg(target_os = "macos")]
 const PASTEBOARD_CLASS: &str = "NSPasteboard";
 #[cfg(target_os = "ios")]
 const PASTEBOARD_CLASS: &str = "UIPasteboard";
 
+#[cfg(target_os = "macos")]
 static NSSTRING_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSString").unwrap());
-#[cfg(feature = "image-data")]
-static NSIMAGE_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSImage").unwrap());
+#[cfg(all(feature = "image-data", target_os = "macos"))]
+static IMAGE_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSImage").unwrap());
+#[cfg(all(feature = "image-data", target_os = "ios"))]
+static IMAGE_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("UIImage").unwrap());
 
 /// Returns an NSImage object on success.
-#[cfg(all(feature = "image-data", target_os = "macos"))]
+#[cfg(feature = "image-data")]
 fn image_from_pixels(
 	pixels: Vec<u8>,
 	width: usize,
@@ -89,11 +98,19 @@ fn image_from_pixels(
 		false,
 		kCGRenderingIntentDefault,
 	);
-	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
-	let image: Id<NSObject> = unsafe { Id::from_ptr(msg_send![*NSIMAGE_CLASS, alloc]) };
+
+	let image: Id<NSObject> = unsafe { Id::from_ptr(msg_send![*IMAGE_CLASS, alloc]) };
 	#[allow(clippy::let_unit_value)]
 	{
-		let _: () = unsafe { msg_send![image, initWithCGImage:cg_image size:size] };
+		#[cfg(target_os = "macos")]
+		{
+			let size = NSSize { width: width as CGFloat, height: height as CGFloat };
+			let _: () = unsafe { msg_send![image, initWithCGImage:cg_image size:size] };
+		}
+		#[cfg(target_os = "ios")]
+		{
+			let _: () = unsafe { msg_send![image, initWithCGImage: cg_image] };
+		}
 	}
 
 	Ok(image)
@@ -227,11 +244,44 @@ impl<'clipboard> Get<'clipboard> {
 			.ok_or(Error::ContentNotAvailable)
 	}
 
+	#[cfg(all(feature = "image-data", target_os = "ios"))]
+	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
+		use std::io::Cursor;
+
+		let ui_image: *mut NSObject = unsafe { msg_send![self.pasteboard, image] };
+
+		if ui_image.is_null() {
+			return Err(Error::ContentNotAvailable);
+		}
+
+		let data = unsafe { UIImagePNGRepresentation(ui_image as _) };
+		let data = unsafe {
+			let len: usize = msg_send![data, length];
+			let bytes: *const u8 = msg_send![data, bytes];
+
+			Cursor::new(std::slice::from_raw_parts(bytes, len))
+		};
+		let reader = image::io::Reader::with_format(data, image::ImageFormat::Png);
+		match reader.decode() {
+			Ok(img) => {
+				let rgba = img.into_rgba8();
+				let (width, height) = rgba.dimensions();
+
+				Ok(ImageData {
+					width: width as usize,
+					height: height as usize,
+					bytes: rgba.into_raw().into(),
+				})
+			}
+			Err(_) => Err(Error::ConversionFailure),
+		}
+	}
+
 	#[cfg(all(feature = "image-data", target_os = "macos"))]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		use std::io::Cursor;
 
-		let image_class: Id<NSObject> = object_class(&NSIMAGE_CLASS);
+		let image_class: Id<NSObject> = object_class(&IMAGE_CLASS);
 		let classes = vec![image_class];
 		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
 		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
@@ -248,7 +298,7 @@ impl<'clipboard> Get<'clipboard> {
 		};
 
 		let obj = match contents.first_object() {
-			Some(obj) if obj.is_kind_of(&NSIMAGE_CLASS) => obj,
+			Some(obj) if obj.is_kind_of(&IMAGE_CLASS) => obj,
 			Some(_) | None => return Err(Error::ContentNotAvailable),
 		};
 
@@ -356,7 +406,7 @@ impl<'clipboard> Set<'clipboard> {
 		}
 	}
 
-	#[cfg(all(feature = "image-data", target_os = "macos"))]
+	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, data: ImageData) -> Result<(), Error> {
 		let pixels = data.bytes.into();
 		let image = image_from_pixels(pixels, data.width, data.height)
@@ -365,7 +415,15 @@ impl<'clipboard> Set<'clipboard> {
 		self.clipboard.clear();
 
 		let objects: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![image]);
+
+		#[cfg(target_os = "macos")]
 		let success: bool = unsafe { msg_send![self.clipboard.pasteboard, writeObjects: objects] };
+		#[cfg(target_os = "ios")]
+		let success: bool = unsafe {
+			let _: () = msg_send![self.clipboard.pasteboard, setImages: objects];
+			true
+		};
+
 		if success {
 			Ok(())
 		} else {
@@ -395,6 +453,7 @@ impl<'clipboard> Clear<'clipboard> {
 
 /// Convenience function to get an Objective-C object from a
 /// specific class.
+#[cfg(target_os = "macos")]
 fn object_class(class: &'static Class) -> Id<NSObject> {
 	// SAFETY: `Class` is a valid object and `Id` will not mutate it
 	unsafe { Id::from_ptr(class as *const Class as *mut NSObject) }
