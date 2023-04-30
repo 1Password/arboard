@@ -269,12 +269,15 @@ pub trait ClearExtLinux: private::Sealed {
 	/// ### Example
 	///
 	/// ```no_run
-	/// # use arboard::Clipboard;
+	/// # use arboard::{ Clipboard, LinuxClipboardKind, ClearExtLinux, Error };
+	/// # fn main() -> Result<(), Error> {
 	/// let mut clipboard = Clipboard::new()?;
 	///
 	/// clipboard
 	///     .clear_with()
 	///     .clipboard(LinuxClipboardKind::Secondary)?;
+	/// # Ok(())
+	/// # }
 	/// ```
 	///
 	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
