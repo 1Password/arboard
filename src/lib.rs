@@ -19,7 +19,12 @@ mod platform;
 
 #[cfg(all(
 	unix,
-	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+	not(any(
+		target_os = "macos",
+		target_os = "ios",
+		target_os = "android",
+		target_os = "emscripten"
+	)),
 ))]
 pub use platform::{ClearExtLinux, GetExtLinux, LinuxClipboardKind, SetExtLinux};
 
@@ -327,7 +332,12 @@ mod tests {
 		}
 		#[cfg(all(
 			unix,
-			not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
+			not(any(
+				target_os = "macos",
+				target_os = "ios",
+				target_os = "android",
+				target_os = "emscripten"
+			)),
 		))]
 		{
 			use crate::{LinuxClipboardKind, SetExtLinux};
