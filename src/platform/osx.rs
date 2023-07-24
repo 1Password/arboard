@@ -84,10 +84,12 @@ fn image_from_pixels(
 		kCGRenderingIntentDefault,
 	);
 	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
-	let image: Id<NSObject> = unsafe { Id::from_ptr(msg_send![*NSIMAGE_CLASS, alloc]) };
+	// Take ownership of the newly allocated object, which has an existing retain count.
+	let image: Id<NSObject> = unsafe { Id::from_retained_ptr(msg_send![*NSIMAGE_CLASS, alloc]) };
 	#[allow(clippy::let_unit_value)]
 	{
-		let _: () = unsafe { msg_send![image, initWithCGImage:cg_image size:size] };
+		// Note: `initWithCGImage` expects a reference (`CGImageRef`), not an actual object.
+		let _: () = unsafe { msg_send![image, initWithCGImage: &*cg_image size:size] };
 	}
 
 	Ok(image)
@@ -262,8 +264,10 @@ impl<'clipboard> Set<'clipboard> {
 		self.clipboard.clear();
 
 		let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
-		let success: bool =
-			unsafe { msg_send![self.clipboard.pasteboard, writeObjects: string_array] };
+		// Make sure that we pass a pointer to the system and not the array object itself. Otherwise,
+		// the system won't free it because the API doesn't give it ownership of the data. This results in
+		// a memory leak because Rust can never run its destructor.
+		let success = unsafe { msg_send![self.clipboard.pasteboard, writeObjects: &*string_array] };
 		if success {
 			Ok(())
 		} else {
@@ -284,14 +288,16 @@ impl<'clipboard> Set<'clipboard> {
 			html
 		);
 		let html_nss = NSString::from_str(&html);
+		// Make sure that we pass a pointer to the string and not the object itself.
 		let mut success: bool = unsafe {
-			msg_send![self.clipboard.pasteboard, setString: html_nss forType:NSPasteboardTypeHTML]
+			msg_send![self.clipboard.pasteboard, setString: &*html_nss forType:NSPasteboardTypeHTML]
 		};
 		if success {
 			if let Some(alt_text) = alt {
 				let alt_nss = NSString::from_str(&alt_text);
+				// Similar to the primary string, we only want a pointer here too.
 				success = unsafe {
-					msg_send![self.clipboard.pasteboard, setString: alt_nss forType:NSPasteboardTypeString]
+					msg_send![self.clipboard.pasteboard, setString: &*alt_nss forType:NSPasteboardTypeString]
 				};
 			}
 		}
@@ -310,8 +316,9 @@ impl<'clipboard> Set<'clipboard> {
 
 		self.clipboard.clear();
 
-		let objects: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![image]);
-		let success: bool = unsafe { msg_send![self.clipboard.pasteboard, writeObjects: objects] };
+		let image_array: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![image]);
+		// Make sure that we pass a pointer to the system and not the array object itself.
+		let success = unsafe { msg_send![self.clipboard.pasteboard, writeObjects: &*image_array] };
 		if success {
 			Ok(())
 		} else {
