@@ -11,7 +11,7 @@ edition = "2018"
 
 [features]
 default = ["image-data"]
-image-data = ["core-graphics", "image", "winapi/minwindef", "winapi/wingdi", "winapi/winnt"]
+image-data = ["core-graphics", "once_cell", "image", "winapi/minwindef", "winapi/wingdi", "winapi/winnt"]
 wayland-data-control = ["wl-clipboard-rs"]
 
 [dependencies]
@@ -34,7 +34,7 @@ log = "0.4"
 objc = "0.2"
 objc_id = "0.1"
 objc-foundation = "0.1"
-once_cell = "1"
+once_cell = { version = "1", optional = true }
 core-graphics = { version = "0.22", optional = true }
 image = { version = "0.24", optional = true, default-features = false, features = ["tiff"] }
 

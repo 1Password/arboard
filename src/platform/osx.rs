@@ -20,22 +20,25 @@ use core_graphics::{
 };
 use objc::{
 	msg_send,
+	rc::autoreleasepool,
 	runtime::{Class, Object},
 	sel, sel_impl,
 };
-use objc_foundation::{INSArray, INSObject, INSString, NSArray, NSDictionary, NSObject, NSString};
+use objc_foundation::{INSArray, INSFastEnumeration, INSString, NSArray, NSObject, NSString};
 use objc_id::{Id, Owned};
+#[cfg(feature = "image-data")]
 use once_cell::sync::Lazy;
-use std::borrow::Cow;
+use std::{borrow::Cow, ptr::NonNull};
 
 // Required to bring NSPasteboard into the path of the class-resolver
 #[link(name = "AppKit", kind = "framework")]
 extern "C" {
 	static NSPasteboardTypeHTML: *const Object;
 	static NSPasteboardTypeString: *const Object;
+	#[cfg(feature = "image-data")]
+	static NSPasteboardTypeTIFF: *const Object;
 }
 
-static NSSTRING_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSString").unwrap());
 #[cfg(feature = "image-data")]
 static NSIMAGE_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSImage").unwrap());
 
@@ -181,73 +184,72 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
-		let string_class = object_class(&NSSTRING_CLASS);
-		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![string_class]);
-		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
+		// XXX: There does not appear to be an alternative for obtaining text without the need for
+		// autorelease behavior.
+		autoreleasepool(|| {
+			// XXX: We explicitly use `pasteboardItems` and not `stringForType` since the latter will concat
+			// multiple strings, if present, into one and return it instead of reading just the first which is `arboard`'s
+			// historical behavior.
+			let contents: Option<NonNull<NSArray<NSObject>>> =
+				unsafe { msg_send![self.pasteboard, pasteboardItems] };
 
-		let string_array: Id<NSArray<NSString>> = unsafe {
-			let obj: *mut NSArray<NSString> =
-				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
+			let contents = contents.map(|c| unsafe { c.as_ref() }).ok_or_else(|| {
+				Error::Unknown { description: String::from("NSPasteboard#pasteboardItems errored") }
+			})?;
 
-			if obj.is_null() {
-				return Err(Error::ContentNotAvailable);
-			} else {
-				Id::from_ptr(obj)
+			for item in contents.enumerator() {
+				let maybe_str: Option<NonNull<NSString>> =
+					unsafe { msg_send![item, stringForType:NSPasteboardTypeString] };
+
+				match maybe_str {
+					Some(string) => {
+						let string: Id<NSString, Owned> = unsafe { Id::from_ptr(string.as_ptr()) };
+						return Ok(string.as_str().to_owned());
+					}
+					None => continue,
+				}
 			}
-		};
 
-		string_array
-			.first_object()
-			.map(|obj| obj.as_str().to_owned())
-			.ok_or(Error::ContentNotAvailable)
+			Err(Error::ContentNotAvailable)
+		})
 	}
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
+		use objc_foundation::NSData;
 		use std::io::Cursor;
 
-		let image_class: Id<NSObject> = object_class(&NSIMAGE_CLASS);
-		let classes = vec![image_class];
-		let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
-		let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
+		// XXX: There does not appear to be an alternative for obtaining images without the need for
+		// autorelease behavior.
+		let image = autoreleasepool(|| {
+			let obj: Option<NonNull<NSData>> =
+				unsafe { msg_send![self.pasteboard, dataForType: NSPasteboardTypeTIFF] };
 
-		let contents: Id<NSArray<NSObject>> = unsafe {
-			let obj: *mut NSArray<NSObject> =
-				msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
-
-			if obj.is_null() {
-				return Err(Error::ContentNotAvailable);
+			let image_data: Id<NSData> = if let Some(obj) = obj {
+				unsafe { Id::from_ptr(obj.as_ptr()) }
 			} else {
-				Id::from_ptr(obj)
-			}
-		};
+				return Err(Error::ContentNotAvailable);
+			};
 
-		let obj = match contents.first_object() {
-			Some(obj) if obj.is_kind_of(&NSIMAGE_CLASS) => obj,
-			Some(_) | None => return Err(Error::ContentNotAvailable),
-		};
+			let data = unsafe {
+				let len: usize = msg_send![&*image_data, length];
+				let bytes: *const u8 = msg_send![&*image_data, bytes];
 
-		let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
-		let data = unsafe {
-			let len: usize = msg_send![tiff, length];
-			let bytes: *const u8 = msg_send![tiff, bytes];
+				Cursor::new(std::slice::from_raw_parts(bytes, len))
+			};
 
-			Cursor::new(std::slice::from_raw_parts(bytes, len))
-		};
-		let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
-		match reader.decode() {
-			Ok(img) => {
-				let rgba = img.into_rgba8();
-				let (width, height) = rgba.dimensions();
+			let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
+			reader.decode().map_err(|_| Error::ConversionFailure)
+		})?;
 
-				Ok(ImageData {
-					width: width as usize,
-					height: height as usize,
-					bytes: rgba.into_raw().into(),
-				})
-			}
-			Err(_) => Err(Error::ConversionFailure),
-		}
+		let rgba = image.into_rgba8();
+		let (width, height) = rgba.dimensions();
+
+		Ok(ImageData {
+			width: width as usize,
+			height: height as usize,
+			bytes: rgba.into_raw().into(),
+		})
 	}
 }
 
@@ -344,11 +346,4 @@ impl<'clipboard> Clear<'clipboard> {
 		self.clipboard.clear();
 		Ok(())
 	}
-}
-
-/// Convenience function to get an Objective-C object from a
-/// specific class.
-fn object_class(class: &'static Class) -> Id<NSObject> {
-	// SAFETY: `Class` is a valid object and `Id` will not mutate it
-	unsafe { Id::from_ptr(class as *const Class as *mut NSObject) }
 }
