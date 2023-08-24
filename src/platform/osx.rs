@@ -227,14 +227,14 @@ impl<'clipboard> Get<'clipboard> {
 			Some(_) | None => return Err(Error::ContentNotAvailable),
 		};
 
-		let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
+		let png: &NSArray<NSObject> = unsafe { msg_send![obj, PNGRepresentation] };
 		let data = unsafe {
-			let len: usize = msg_send![tiff, length];
-			let bytes: *const u8 = msg_send![tiff, bytes];
+			let len: usize = msg_send![png, length];
+			let bytes: *const u8 = msg_send![png, bytes];
 
 			Cursor::new(std::slice::from_raw_parts(bytes, len))
 		};
-		let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
+		let reader = image::io::Reader::with_format(data, image::ImageFormat::Png);
 		match reader.decode() {
 			Ok(img) => {
 				let rgba = img.into_rgba8();

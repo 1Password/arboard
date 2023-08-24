@@ -11,8 +11,8 @@ edition = "2018"
 
 [features]
 default = ["image-data"]
-image-data = ["core-graphics", "image", "winapi/minwindef", "winapi/wingdi", "winapi/winnt"]
-wayland-data-control = ["wl-clipboard-rs"]
+image-data = ["dep:core-graphics", "dep:image", "winapi/minwindef", "winapi/wingdi", "winapi/winnt"]
+wayland-data-control = ["dep:wl-clipboard-rs"]
 
 [dependencies]
 thiserror = "1.0"
@@ -36,7 +36,7 @@ objc_id = "0.1"
 objc-foundation = "0.1"
 once_cell = "1"
 core-graphics = { version = "0.22", optional = true }
-image = { version = "0.24", optional = true, default-features = false, features = ["tiff"] }
+image = { version = "0.24", optional = true, default-features = false, features = ["png"] }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
 log = "0.4"
