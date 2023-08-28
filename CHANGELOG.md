@@ -1,6 +1,18 @@
 # Changelog
 
-## 3.2.0
+## 3.2.1 on 2023-28-11
+
+### Fixed
+- Removed all leaks from the macOS clipboard code. Previously, both the `get` and `set` methods leaked data.
+- Fixed documentation examples so that they compile on Linux.
+- Removed extra whitespace macOS's HTML copying template. This caused unexpected behavior in some apps.
+
+### Changed
+- Added a timeout when connecting to the X11 server on UNIX platforms. In situations where the X11 socket is present but unusable, the clipboard
+  initialization will no longer hang indefinitely.
+- Removed macOS-specific dependency on the `once_cell` crate.
+
+## 3.2.0 on 2022-04-11
 
 ### Changed
 - The Windows clipboard now behaves consistently with the other
