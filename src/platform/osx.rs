@@ -26,8 +26,6 @@ use objc::{
 };
 use objc_foundation::{INSArray, INSFastEnumeration, INSString, NSArray, NSObject, NSString};
 use objc_id::{Id, Owned};
-#[cfg(feature = "image-data")]
-use once_cell::sync::Lazy;
 use std::{borrow::Cow, ptr::NonNull};
 
 // Required to bring NSPasteboard into the path of the class-resolver
@@ -38,9 +36,6 @@ extern "C" {
 	#[cfg(feature = "image-data")]
 	static NSPasteboardTypeTIFF: *const Object;
 }
-
-#[cfg(feature = "image-data")]
-static NSIMAGE_CLASS: Lazy<&Class> = Lazy::new(|| Class::get("NSImage").unwrap());
 
 /// Returns an NSImage object on success.
 #[cfg(feature = "image-data")]
@@ -87,8 +82,9 @@ fn image_from_pixels(
 		kCGRenderingIntentDefault,
 	);
 	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
+	let nsimage_class = objc::class!(NSImage);
 	// Take ownership of the newly allocated object, which has an existing retain count.
-	let image: Id<NSObject> = unsafe { Id::from_retained_ptr(msg_send![*NSIMAGE_CLASS, alloc]) };
+	let image: Id<NSObject> = unsafe { Id::from_retained_ptr(msg_send![nsimage_class, alloc]) };
 	#[allow(clippy::let_unit_value)]
 	{
 		// Note: `initWithCGImage` expects a reference (`CGImageRef`), not an actual object.
