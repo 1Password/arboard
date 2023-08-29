@@ -29,7 +29,6 @@ dependencies = [
  "objc",
  "objc-foundation",
  "objc_id",
- "once_cell",
  "parking_lot",
  "simple_logger",
  "thiserror",
