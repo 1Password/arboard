@@ -273,8 +273,7 @@ fn flip_v(image: ImageData) -> ImageData<'static> {
 	let mut bytes = image.bytes.into_owned();
 
 	let rowsize = w * 4; // each pixel is 4 bytes
-	let mut tmp_a = Vec::new();
-	tmp_a.resize(rowsize, 0);
+	let mut tmp_a = vec![0; rowsize];
 	// I believe this could be done safely with `as_chunks_mut`, but that's not stable yet
 	for a_row_id in 0..(h / 2) {
 		let b_row_id = h - a_row_id - 1;
