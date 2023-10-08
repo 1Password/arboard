@@ -675,12 +675,12 @@ mod tests {
 	#[test]
 	fn check_win_to_rgba_conversion() {
 		let mut data = DATA;
-		unsafe { win_to_rgba(&mut data) };
+		let _converted = unsafe { win_to_rgba(&mut data) };
 	}
 
 	#[test]
 	fn check_rgba_to_win_conversion() {
 		let mut data = DATA;
-		unsafe { rgba_to_win(&mut data) };
+		let _converted = unsafe { rgba_to_win(&mut data) };
 	}
 }
