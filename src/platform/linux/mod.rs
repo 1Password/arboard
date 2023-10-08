@@ -269,7 +269,7 @@ pub trait ClearExtLinux: private::Sealed {
 	/// ### Example
 	///
 	/// ```no_run
-	/// # use arboard::{ Clipboard, LinuxClipboardKind, ClearExtLinux, Error };
+	/// # use arboard::{Clipboard, LinuxClipboardKind, ClearExtLinux, Error};
 	/// # fn main() -> Result<(), Error> {
 	/// let mut clipboard = Clipboard::new()?;
 	///
