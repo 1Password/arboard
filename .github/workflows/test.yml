@@ -107,7 +107,7 @@ jobs:
     steps:
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: nightly-2022-10-15
+          toolchain: nightly-2023-10-08
           override: true
           components: miri
 
