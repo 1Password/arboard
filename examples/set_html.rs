@@ -1,9 +1,8 @@
 use arboard::Clipboard;
-use simple_logger::SimpleLogger;
 use std::{thread, time::Duration};
 
 fn main() {
-	SimpleLogger::new().init().unwrap();
+	env_logger::init();
 	let mut ctx = Clipboard::new().unwrap();
 
 	let html = r#"<h1>Hello, World!</h1>

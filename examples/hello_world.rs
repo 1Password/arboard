@@ -1,8 +1,7 @@
 use arboard::Clipboard;
-use simple_logger::SimpleLogger;
 
 fn main() {
-	SimpleLogger::new().init().unwrap();
+	env_logger::init();
 	let mut clipboard = Clipboard::new().unwrap();
 	println!("Clipboard text was: {:?}", clipboard.get_text());
 
