@@ -139,7 +139,9 @@ impl XContext {
 		thread::spawn(move || {
 			tx.send(RustConnection::connect(None)).ok(); // disregard error sending on channel as main thread has timed out.
 		});
-		let patient_conn = rx.recv_timeout(SHORT_TIMEOUT_DUR).map_err(into_unknown)?;
+		let patient_conn = rx.recv_timeout(SHORT_TIMEOUT_DUR).map_err(|_| Error::Unknown {
+			description: String::from("X11 server connection timed out because it was unreachable"),
+		})?;
 		let (conn, screen_num): (RustConnection, _) = patient_conn.map_err(into_unknown)?;
 
 		let screen = conn
