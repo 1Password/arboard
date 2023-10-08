@@ -4,7 +4,6 @@
 use arboard::Clipboard;
 #[cfg(target_os = "linux")]
 use arboard::SetExtLinux;
-use simple_logger::SimpleLogger;
 use std::{env, error::Error, process};
 
 // An argument that can be passed into the program to signal that it should daemonize itself. This
@@ -18,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 		return Ok(());
 	}
 
-	SimpleLogger::new().init().unwrap();
+	env_logger::init();
 
 	if cfg!(target_os = "linux") {
 		process::Command::new(env::current_exe()?)
