@@ -1,9 +1,16 @@
 # Changelog
 
-## Unreleased
+## 3.3.0 on 2023-20-11
+
+### Added
 - Add support for `ExcludeClipboardContentFromMonitorProcessing` on Windows platforms.
 
-## 3.2.1 on 2023-28-11
+### Changed
+- Improved timeout error messaging.
+- Update `wl-clipboard-rs` to `0.8`.
+- Update `x11rb` to `0.12`.
+
+## 3.2.1 on 2023-29-08
 
 ### Fixed
 - Removed all leaks from the macOS clipboard code. Previously, both the `get` and `set` methods leaked data.
@@ -32,13 +39,13 @@ platform implementations again.
 - Updated minimum `clipboard-win` version to `4.4`.
 - Updated `wl-clipboard-rs` to the version `0.7`.
 
-## 3.1 on 2022-20-09
+## 3.1.0 on 2022-20-09
 
 ### Changed
 - Updated `image` to the version `0.24`.
 - Lowered Wayland clipboard initialization log level.
 
-## 3.0 on 2022-19-09
+## 3.0.0 on 2022-19-09
 
 ### Added
 - Support for clearing the clipboard.
