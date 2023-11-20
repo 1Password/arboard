@@ -493,13 +493,19 @@ impl<'clipboard> Get<'clipboard> {
 
 pub(crate) struct Set<'clipboard> {
 	clipboard: Result<OpenClipboard<'clipboard>, Error>,
+	exclude_from_monitoring: bool,
 	exclude_from_cloud: bool,
 	exclude_from_history: bool,
 }
 
 impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard: clipboard.open(), exclude_from_cloud: false, exclude_from_history: false }
+		Self {
+			clipboard: clipboard.open(),
+			exclude_from_monitoring: false,
+			exclude_from_cloud: false,
+			exclude_from_history: false,
+		}
 	}
 
 	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {
@@ -509,7 +515,12 @@ impl<'clipboard> Set<'clipboard> {
 			description: "Could not place the specified text to the clipboard".into(),
 		})?;
 
-		add_clipboard_exclusions(open_clipboard, self.exclude_from_cloud, self.exclude_from_history)
+		add_clipboard_exclusions(
+			open_clipboard,
+			self.exclude_from_monitoring,
+			self.exclude_from_cloud,
+			self.exclude_from_history,
+		)
 	}
 
 	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
@@ -529,7 +540,12 @@ impl<'clipboard> Set<'clipboard> {
 				.map_err(|e| Error::Unknown { description: e.to_string() })?;
 		}
 
-		add_clipboard_exclusions(open_clipboard, self.exclude_from_cloud, self.exclude_from_history)
+		add_clipboard_exclusions(
+			open_clipboard,
+			self.exclude_from_monitoring,
+			self.exclude_from_cloud,
+			self.exclude_from_history,
+		)
 	}
 
 	#[cfg(feature = "image-data")]
@@ -548,6 +564,7 @@ impl<'clipboard> Set<'clipboard> {
 
 fn add_clipboard_exclusions(
 	_open_clipboard: OpenClipboard<'_>,
+	exclude_from_monitoring: bool,
 	exclude_from_cloud: bool,
 	exclude_from_history: bool,
 ) -> Result<(), Error> {
@@ -556,9 +573,23 @@ fn add_clipboard_exclusions(
 	/// See https://docs.microsoft.com/en-us/windows/win32/dataxchg/clipboard-formats#cloud-clipboard-and-clipboard-history-formats
 	const CLIPBOARD_EXCLUSION_DATA: &[u8] = &0u32.to_ne_bytes();
 
-	// Clipboard exclusions are applied retroactively to the item that is currently in the clipboard.
+	// Clipboard exclusions are applied retroactively (we still have the clipboard lock) to the item that is currently in the clipboard.
 	// See the MS docs on `CLIPBOARD_EXCLUSION_DATA` for specifics. Once the item is added to the clipboard,
 	// tell Windows to remove it from cloud syncing and history.
+
+	if exclude_from_monitoring {
+		if let Some(format) =
+			clipboard_win::register_format("ExcludeClipboardContentFromMonitorProcessing")
+		{
+			// The documentation states "place any data on the clipboard in this format to prevent...", and using the zero bytes
+			// like the others for consistency works.
+			clipboard_win::raw::set_without_clear(format.get(), CLIPBOARD_EXCLUSION_DATA).map_err(
+				|_| Error::Unknown {
+					description: "Failed to exclude data from clipboard monitoring".into(),
+				},
+			)?;
+		}
+	}
 
 	if exclude_from_cloud {
 		if let Some(format) = clipboard_win::register_format("CanUploadToCloudClipboard") {
@@ -589,6 +620,12 @@ fn add_clipboard_exclusions(
 
 /// Windows-specific extensions to the [`Set`](crate::Set) builder.
 pub trait SetExtWindows: private::Sealed {
+	/// Exclude the data which will be set on the clipboard from being processed
+	/// at all, either in the local clipboard history or getting uploaded to the cloud.
+	///
+	/// If this is set, it is not recommended to call [exclude_from_cloud](SetExtWindows::exclude_from_cloud) or [exclude_from_history](SetExtWindows::exclude_from_history).
+	fn exclude_from_monitoring(self) -> Self;
+
 	/// Excludes the data which will be set on the clipboard from being uploaded to
 	/// the Windows 10/11 [cloud clipboard].
 	///
@@ -603,6 +640,11 @@ pub trait SetExtWindows: private::Sealed {
 }
 
 impl SetExtWindows for crate::Set<'_> {
+	fn exclude_from_monitoring(mut self) -> Self {
+		self.platform.exclude_from_monitoring = true;
+		self
+	}
+
 	fn exclude_from_cloud(mut self) -> Self {
 		self.platform.exclude_from_cloud = true;
 		self
