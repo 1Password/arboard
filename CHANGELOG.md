@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- Add support for `ExcludeClipboardContentFromMonitorProcessing` on Windows platforms.
+
 ## 3.2.1 on 2023-28-11
 
 ### Fixed
