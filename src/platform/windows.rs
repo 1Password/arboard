@@ -8,7 +8,7 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use std::{borrow::Cow, marker::PhantomData};
+use std::{borrow::Cow, marker::PhantomData, thread, time::Duration};
 #[cfg(feature = "image-data")]
 use std::{convert::TryInto, mem::size_of};
 
@@ -400,8 +400,7 @@ impl Clipboard {
 			}
 
 			// The default value matches Chromium's implementation, but could be tweaked later.
-			// Safety: This is safe to call with any integer.
-			unsafe { winapi::um::synchapi::Sleep(5) };
+			thread::sleep(Duration::from_millis(5));
 		}
 		.map_err(|_| Error::ClipboardOccupied)?;
 
