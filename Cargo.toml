@@ -7,7 +7,7 @@ repository = "https://github.com/1Password/arboard"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["clipboard", "image"]
-edition = "2018"
+edition = "2021"
 rust-version = "1.61"
 
 [features]
