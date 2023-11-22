@@ -9,6 +9,7 @@
 - Improved timeout error messaging.
 - Update `wl-clipboard-rs` to `0.8`.
 - Update `x11rb` to `0.12`.
+- `arboard`'s MSRV is now 1.61.
 
 ## 3.2.1 on 2023-29-08
 

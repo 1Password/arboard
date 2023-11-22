@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["clipboard", "image"]
 edition = "2018"
+rust-version = "1.61"
 
 [features]
 default = ["image-data"]
