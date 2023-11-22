@@ -553,7 +553,7 @@ impl<'clipboard> Set<'clipboard> {
 
 		if let Err(e) = clipboard_win::raw::empty() {
 			return Err(Error::Unknown {
-				description: format!("Failed to empty the clipboard. Got error code: {}", e),
+				description: format!("Failed to empty the clipboard. Got error code: {e}"),
 			});
 		};
 

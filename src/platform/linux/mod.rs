@@ -13,7 +13,7 @@ mod x11;
 mod wayland;
 
 fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
-	Error::Unknown { description: format!("{}", error) }
+	Error::Unknown { description: error.to_string() }
 }
 
 #[cfg(feature = "image-data")]
