@@ -162,6 +162,11 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 	unsafe {
 		let image_bytes = dibv5.as_ptr().offset(pixel_data_start) as *const _;
 		let hdc = GetDC(HWND(std::ptr::null::<c_void>() as _));
+		if hdc.is_invalid() {
+			return Err(Error::Unknown {
+				description: "Failed to get the device context. GetDC returned null".into(),
+			});
+		}
 
 		let hbitmap = CreateDIBitmap(
 			hdc,
