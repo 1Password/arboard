@@ -10,21 +10,18 @@ and conditions of the chosen license apply to this file.
 
 use std::{borrow::Cow, marker::PhantomData, thread, time::Duration};
 #[cfg(feature = "image-data")]
-use std::{convert::TryInto, mem::size_of};
+use std::{convert::TryInto, ffi::c_void, mem::size_of};
 
 #[cfg(feature = "image-data")]
-use winapi::{
-	shared::minwindef::DWORD,
-	um::{
-		errhandlingapi::GetLastError,
-		winbase::{GlobalLock, GlobalUnlock},
-		wingdi::{
-			CreateDIBitmap, DeleteObject, GetDIBits, LCS_sRGB, BITMAPINFO, BITMAPINFOHEADER,
-			BITMAPV5HEADER, BI_RGB, CBM_INIT, DIB_RGB_COLORS, LCS_GM_IMAGES, PROFILE_EMBEDDED,
-			PROFILE_LINKED, RGBQUAD,
-		},
-		winnt::LONG,
-		winuser::{GetDC, SetClipboardData},
+use windows::Win32::{
+	Foundation::HWND,
+	Graphics::Gdi::{
+		CreateDIBitmap, DeleteObject, GetDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
+		BITMAPV5HEADER, BI_RGB, CBM_INIT, DIB_RGB_COLORS, LCS_GM_IMAGES, RGBQUAD,
+	},
+	System::{
+		DataExchange::SetClipboardData,
+		Memory::{GlobalLock, GlobalUnlock},
 	},
 };
 
@@ -36,21 +33,28 @@ use crate::common::{ImageData, ScopeGuard};
 #[cfg(feature = "image-data")]
 fn add_cf_dibv5(_open_clipboard: OpenClipboard, image: ImageData) -> Result<(), Error> {
 	use std::intrinsics::copy_nonoverlapping;
-	use winapi::um::{
-		winbase::{GlobalAlloc, GHND},
-		wingdi::BI_BITFIELDS,
-		winuser::CF_DIBV5,
+	use windows::Win32::{
+		Graphics::Gdi::{BI_BITFIELDS, HGDIOBJ},
+		System::{
+			Memory::{GlobalAlloc, GHND},
+			Ole::CF_DIBV5,
+		},
 	};
+
+	// This constant is missing in windows-rs
+	// https://github.com/microsoft/windows-rs/issues/2711
+	#[allow(non_upper_case_globals)]
+	const LCS_sRGB: u32 = 0x7352_4742;
 
 	let header_size = size_of::<BITMAPV5HEADER>();
 	let header = BITMAPV5HEADER {
 		bV5Size: header_size as u32,
-		bV5Width: image.width as LONG,
-		bV5Height: image.height as LONG,
+		bV5Width: image.width as i32,
+		bV5Height: image.height as i32,
 		bV5Planes: 1,
 		bV5BitCount: 32,
 		bV5Compression: BI_BITFIELDS,
-		bV5SizeImage: (4 * image.width * image.height) as DWORD,
+		bV5SizeImage: (4 * image.width * image.height) as u32,
 		bV5XPelsPerMeter: 0,
 		bV5YPelsPerMeter: 0,
 		bV5ClrUsed: 0,
@@ -59,7 +63,7 @@ fn add_cf_dibv5(_open_clipboard: OpenClipboard, image: ImageData) -> Result<(), 
 		bV5GreenMask: 0x0000ff00,
 		bV5BlueMask: 0x000000ff,
 		bV5AlphaMask: 0xff000000,
-		bV5CSType: LCS_sRGB as u32,
+		bV5CSType: LCS_sRGB,
 		// SAFETY: Windows ignores this field because `bV5CSType` is not set to `LCS_CALIBRATED_RGB`.
 		bV5Endpoints: unsafe { std::mem::zeroed() },
 		bV5GammaRed: 0,
@@ -78,15 +82,14 @@ fn add_cf_dibv5(_open_clipboard: OpenClipboard, image: ImageData) -> Result<(), 
 	let image = flip_v(image);
 
 	let data_size = header_size + image.bytes.len();
-	let hdata = unsafe { GlobalAlloc(GHND, data_size) };
-	if hdata.is_null() {
-		return Err(Error::Unknown {
-			description: format!(
-				"Could not allocate global memory object. GlobalAlloc returned null at line {}.",
-				line!()
-			),
-		});
-	}
+	let hdata = match unsafe { GlobalAlloc(GHND, data_size) } {
+		Ok(hdata) => hdata,
+		Err(err) => {
+			return Err(Error::Unknown {
+				description: format!("Could not allocate global memory object: {}", err),
+			})
+		}
+	};
 	unsafe {
 		let data_ptr = GlobalLock(hdata) as *mut u8;
 		if data_ptr.is_null() {
@@ -96,12 +99,8 @@ fn add_cf_dibv5(_open_clipboard: OpenClipboard, image: ImageData) -> Result<(), 
 		}
 
 		let _unlock = ScopeGuard::new(|| {
-			let retval = GlobalUnlock(hdata);
-			if retval == 0 {
-				let lasterr = GetLastError();
-				if lasterr != 0 {
-					log::error!("Failed calling GlobalUnlock when writing dibv5 data. Error code was 0x{:X}", lasterr);
-				}
+			if let Err(err) = GlobalUnlock(hdata) {
+				log::error!("Failed calling GlobalUnlock when writing dibv5 data: {}", err);
 			}
 		});
 
@@ -123,13 +122,10 @@ fn add_cf_dibv5(_open_clipboard: OpenClipboard, image: ImageData) -> Result<(), 
 	}
 
 	unsafe {
-		if SetClipboardData(CF_DIBV5, hdata as _).is_null() {
-			DeleteObject(hdata as _);
+		if let Err(err) = SetClipboardData(CF_DIBV5.0 as u32, HWND(hdata.0 as _)) {
+			DeleteObject(HGDIOBJ(hdata.0 as _));
 			return Err(Error::Unknown {
-				description: format!(
-					"Call to `SetClipboardData` returned NULL at line {}",
-					line!()
-				),
+				description: format!("SetClipboardData failed with error: {}", err),
 			});
 		}
 	}
@@ -142,6 +138,10 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 	// The DIBV5 format is a BITMAPV5HEADER followed by the pixel data according to
 	// https://docs.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats
 
+	// These constants are missing in windows-rs
+	const PROFILE_EMBEDDED: u32 = 0x4D42_4544;
+	const PROFILE_LINKED: u32 = 0x4C49_4E4B;
+
 	// so first let's get a pointer to the header
 	let header_size = size_of::<BITMAPV5HEADER>();
 	if dibv5.len() < header_size {
@@ -151,8 +151,7 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 	}
 	let header = unsafe { &*(dibv5.as_ptr() as *const BITMAPV5HEADER) };
 
-	let has_profile =
-		header.bV5CSType as i32 == PROFILE_LINKED || header.bV5CSType as i32 == PROFILE_EMBEDDED;
+	let has_profile = header.bV5CSType == PROFILE_LINKED || header.bV5CSType == PROFILE_EMBEDDED;
 
 	let pixel_data_start = if has_profile {
 		header.bV5ProfileData as isize + header.bV5ProfileSize as isize
@@ -162,16 +161,17 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 
 	unsafe {
 		let image_bytes = dibv5.as_ptr().offset(pixel_data_start) as *const _;
-		let hdc = GetDC(std::ptr::null_mut());
+		let hdc = GetDC(HWND(std::ptr::null::<c_void>() as _));
+
 		let hbitmap = CreateDIBitmap(
 			hdc,
-			header as *const BITMAPV5HEADER as *const _,
-			CBM_INIT,
-			image_bytes,
-			header as *const BITMAPV5HEADER as *const _,
+			Some(header as *const BITMAPV5HEADER as *const _),
+			CBM_INIT as u32,
+			Some(image_bytes),
+			Some(header as *const BITMAPV5HEADER as *const _),
 			DIB_RGB_COLORS,
 		);
-		if hbitmap.is_null() {
+		if hbitmap.is_invalid() {
 			return Err(Error::Unknown {
 				description:
 					"Failed to create the HBITMAP while reading DIBV5. CreateDIBitmap returned null"
@@ -193,7 +193,7 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 				biHeight: -h,
 				biBitCount: 32,
 				biPlanes: 1,
-				biCompression: BI_RGB,
+				biCompression: BI_RGB.0,
 				biSizeImage: 0,
 				biXPelsPerMeter: 0,
 				biYPelsPerMeter: 0,
@@ -207,7 +207,7 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 			hbitmap,
 			0,
 			h as u32,
-			result_bytes.as_mut_ptr() as *mut _,
+			Some(result_bytes.as_mut_ptr() as *mut _),
 			&mut output_header as *mut _,
 			DIB_RGB_COLORS,
 		);
