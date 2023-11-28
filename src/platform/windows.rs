@@ -17,12 +17,13 @@ use std::{borrow::Cow, marker::PhantomData, thread, time::Duration};
 mod image_data {
 	use super::*;
 	use crate::common::ScopeGuard;
-	use std::{convert::TryInto, intrinsics::copy_nonoverlapping, mem::size_of};
+	use std::{convert::TryInto, ffi::c_void, intrinsics::copy_nonoverlapping, mem::size_of};
 	use windows_sys::Win32::{
-		Foundation::GetLastError,
+		Foundation::{GetLastError, HANDLE, HGLOBAL},
 		Graphics::Gdi::{
 			CreateDIBitmap, DeleteObject, GetDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
-			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, LCS_GM_IMAGES, RGBQUAD,
+			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC,
+			LCS_GM_IMAGES, RGBQUAD,
 		},
 		System::{
 			DataExchange::SetClipboardData,
@@ -78,16 +79,9 @@ mod image_data {
 		let image = flip_v(image);
 
 		let data_size = header_size + image.bytes.len();
-		let hdata = unsafe { GlobalAlloc(GHND, data_size) };
-		if hdata.is_null() {
-			return Err(last_error("Could not allocate global memory object"));
-		}
+		let hdata = unsafe { global_alloc(data_size)? };
 		unsafe {
-			let data_ptr = GlobalLock(hdata) as *mut u8;
-			if data_ptr.is_null() {
-				return Err(last_error("Could not lock the global memory object"));
-			}
-
+			let data_ptr = global_lock(hdata)?;
 			let _unlock = ScopeGuard::new(|| {
 				if GlobalUnlock(hdata) == 0 {
 					log::error!("Failed calling GlobalUnlock when writing dibv5 data");
@@ -111,14 +105,34 @@ mod image_data {
 			}
 		}
 
-		unsafe {
-			if SetClipboardData(CF_DIBV5 as u32, hdata as _) == 0 {
-				DeleteObject(hdata as _);
-				return Err(last_error("SetClipboardData failed with error"));
-			}
-		}
+		unsafe { set_clipboard_data(hdata as _) }
+	}
 
-		Ok(())
+	unsafe fn global_alloc(bytes: usize) -> Result<HGLOBAL, Error> {
+		let hdata = GlobalAlloc(GHND, bytes);
+		if hdata.is_null() {
+			Err(last_error("Could not allocate global memory object"))
+		} else {
+			Ok(hdata)
+		}
+	}
+
+	unsafe fn global_lock(hmem: HGLOBAL) -> Result<*mut u8, Error> {
+		let data_ptr = GlobalLock(hmem) as *mut u8;
+		if data_ptr.is_null() {
+			Err(last_error("Could not lock the global memory object"))
+		} else {
+			Ok(data_ptr)
+		}
+	}
+
+	unsafe fn set_clipboard_data(hmem: HANDLE) -> Result<(), Error> {
+		if SetClipboardData(CF_DIBV5 as u32, hmem as _) == 0 {
+			DeleteObject(hmem as _);
+			Err(last_error("SetClipboardData failed with error"))
+		} else {
+			Ok(())
+		}
 	}
 
 	pub fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
@@ -147,26 +161,8 @@ mod image_data {
 
 		unsafe {
 			let image_bytes = dibv5.as_ptr().offset(pixel_data_start) as *const _;
-			let hdc = GetDC(0);
-			if hdc == 0 {
-				return Err(Error::unknown(
-					"Failed to get the device context. GetDC returned null",
-				));
-			}
-
-			let hbitmap = CreateDIBitmap(
-				hdc,
-				header as *const BITMAPV5HEADER as *const _,
-				CBM_INIT as u32,
-				image_bytes,
-				header as *const BITMAPV5HEADER as *const _,
-				DIB_RGB_COLORS,
-			);
-			if hbitmap == 0 {
-				return Err(Error::unknown(
-                    "Failed to create the HBITMAP while reading DIBV5. CreateDIBitmap returned null",
-                ));
-			}
+			let hdc = get_screen_device_context()?;
+			let hbitmap = create_bitmap_from_dib(hdc, header as _, image_bytes)?;
 			// Now extract the pixels in a desired format
 			let w = header.bV5Width;
 			let h = header.bV5Height.abs();
@@ -191,19 +187,14 @@ mod image_data {
 				},
 			};
 
-			let result = GetDIBits(
+			let lines = convert_bitmap_to_rgb(
 				hdc,
 				hbitmap,
-				0,
-				h as u32,
-				result_bytes.as_mut_ptr() as *mut _,
-				&mut output_header as *mut _,
-				DIB_RGB_COLORS,
-			);
-			if result == 0 {
-				return Err(Error::unknown("Could not get the bitmap bits, GetDIBits returned 0"));
-			}
-			let read_len = result as usize * w as usize * 4;
+				h as _,
+				result_bytes.as_mut_ptr() as _,
+				&mut output_header as _,
+			)?;
+			let read_len = lines as usize * w as usize * 4;
 			assert!(
 				read_len <= result_bytes.capacity(),
 				"Segmentation fault. Read more bytes than allocated to pixel buffer",
@@ -221,7 +212,56 @@ mod image_data {
 		}
 	}
 
-	/// Converts the RGBA (u8) pixel data into the bitmap-native ARGB (u32) format in-place
+	unsafe fn get_screen_device_context() -> Result<HDC, Error> {
+		let hdc = GetDC(0);
+		if hdc == 0 {
+			Err(Error::unknown("Failed to get the device context. GetDC returned null"))
+		} else {
+			Ok(hdc)
+		}
+	}
+
+	unsafe fn create_bitmap_from_dib(
+		hdc: HDC,
+		header: *const BITMAPV5HEADER,
+		image_bytes: *const c_void,
+	) -> Result<HBITMAP, Error> {
+		let hbitmap = CreateDIBitmap(
+			hdc,
+			header as _,
+			CBM_INIT as u32,
+			image_bytes,
+			header as _,
+			DIB_RGB_COLORS,
+		);
+		if hbitmap == 0 {
+			Err(Error::unknown(
+				"Failed to create the HBITMAP while reading DIBV5. CreateDIBitmap returned null",
+			))
+		} else {
+			Ok(hbitmap)
+		}
+	}
+
+	/// Copies the bitmap image into given buffer with DIB RGB format and
+	/// returns value is the number of scan lines copied from the bitmap.
+	unsafe fn convert_bitmap_to_rgb(
+		hdc: HDC,
+		hbitmap: HBITMAP,
+		lines: u32,
+		dst: *mut c_void,
+		header: *mut BITMAPINFO,
+	) -> Result<i32, Error> {
+		let lines = GetDIBits(hdc, hbitmap, 0, lines, dst, header, DIB_RGB_COLORS);
+		if lines == 0 {
+			Err(Error::unknown("Could not get the bitmap bits, GetDIBits returned 0"))
+		} else {
+			Ok(lines)
+		}
+	}
+
+	/// Converts the RGBA (u8) pixel data into the bitmap-native ARGB (u32)
+	/// format in-place.
 	///
 	/// Safety: the `bytes` slice must have a length that's a multiple of 4
 	#[allow(clippy::identity_op, clippy::erasing_op)]
