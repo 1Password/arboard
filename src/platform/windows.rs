@@ -377,6 +377,28 @@ mod image_data {
 			ImageDataCow::Owned(u32pixels_buffer)
 		}
 	}
+
+	#[test]
+	fn conversion_between_win_and_rgba() {
+		const DATA: [u8; 16] =
+			[100, 100, 255, 100, 0, 0, 0, 255, 255, 100, 100, 255, 100, 255, 100, 100];
+
+		let mut data = DATA;
+		let _converted = unsafe { win_to_rgba(&mut data) };
+
+		let mut data = DATA;
+		let _converted = unsafe { rgba_to_win(&mut data) };
+
+		let mut data = DATA;
+		let _converted = unsafe { win_to_rgba(&mut data) };
+		let _converted = unsafe { rgba_to_win(&mut data) };
+		assert_eq!(data, DATA);
+
+		let mut data = DATA;
+		let _converted = unsafe { rgba_to_win(&mut data) };
+		let _converted = unsafe { win_to_rgba(&mut data) };
+		assert_eq!(data, DATA);
+	}
 }
 
 /// A shim clipboard type that can have operations performed with it, but
@@ -718,24 +740,4 @@ fn wrap_html(ctn: &str) -> String {
 		ctn,
 		c_end_frag,
 	)
-}
-
-#[cfg(all(test, feature = "image-data"))]
-mod tests {
-	use super::{rgba_to_win, win_to_rgba};
-
-	const DATA: [u8; 16] =
-		[100, 100, 255, 100, 0, 0, 0, 255, 255, 100, 100, 255, 100, 255, 100, 100];
-
-	#[test]
-	fn check_win_to_rgba_conversion() {
-		let mut data = DATA;
-		let _converted = unsafe { win_to_rgba(&mut data) };
-	}
-
-	#[test]
-	fn check_rgba_to_win_conversion() {
-		let mut data = DATA;
-		let _converted = unsafe { rgba_to_win(&mut data) };
-	}
 }
