@@ -85,6 +85,12 @@ impl std::fmt::Debug for Error {
 	}
 }
 
+impl Error {
+	pub fn unknown<M: Into<String>>(message: M) -> Self {
+		Error::Unknown { description: message.into() }
+	}
+}
+
 /// Stores pixel data of an image.
 ///
 /// Each element in `bytes` stores the value of a channel of a single pixel.

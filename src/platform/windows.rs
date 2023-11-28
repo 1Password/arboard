@@ -33,7 +33,7 @@ use crate::common::{ImageData, ScopeGuard};
 #[cfg(feature = "image-data")]
 fn last_error(message: &str) -> Error {
 	let code = unsafe { GetLastError() };
-	Error::Unknown { description: format!("{} with error code {:x}", message, code) }
+	Error::unknown(format!("{} with error code {:x}", message, code))
 }
 
 #[cfg(feature = "image-data")]
@@ -143,9 +143,7 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 	// so first let's get a pointer to the header
 	let header_size = size_of::<BITMAPV5HEADER>();
 	if dibv5.len() < header_size {
-		return Err(Error::Unknown {
-			description: "When reading the DIBV5 data, it contained fewer bytes than the BITMAPV5HEADER size. This is invalid.".into()
-		});
+		return Err(Error::unknown("When reading the DIBV5 data, it contained fewer bytes than the BITMAPV5HEADER size. This is invalid."));
 	}
 	let header = unsafe { &*(dibv5.as_ptr() as *const BITMAPV5HEADER) };
 
@@ -161,9 +159,7 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 		let image_bytes = dibv5.as_ptr().offset(pixel_data_start) as *const _;
 		let hdc = GetDC(0);
 		if hdc == 0 {
-			return Err(Error::Unknown {
-				description: "Failed to get the device context. GetDC returned null".into(),
-			});
+			return Err(Error::unknown("Failed to get the device context. GetDC returned null"));
 		}
 
 		let hbitmap = CreateDIBitmap(
@@ -175,11 +171,9 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 			DIB_RGB_COLORS,
 		);
 		if hbitmap == 0 {
-			return Err(Error::Unknown {
-				description:
-					"Failed to create the HBITMAP while reading DIBV5. CreateDIBitmap returned null"
-						.into(),
-			});
+			return Err(Error::unknown(
+				"Failed to create the HBITMAP while reading DIBV5. CreateDIBitmap returned null",
+			));
 		}
 		// Now extract the pixels in a desired format
 		let w = header.bV5Width;
@@ -215,14 +209,13 @@ fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 			DIB_RGB_COLORS,
 		);
 		if result == 0 {
-			return Err(Error::Unknown {
-				description: "Could not get the bitmap bits, GetDIBits returned 0".into(),
-			});
+			return Err(Error::unknown("Could not get the bitmap bits, GetDIBits returned 0"));
 		}
 		let read_len = result as usize * w as usize * 4;
-		if read_len > result_bytes.capacity() {
-			panic!("Segmentation fault. Read more bytes than allocated to pixel buffer");
-		}
+		assert!(
+			read_len <= result_bytes.capacity(),
+			"Segmentation fault. Read more bytes than allocated to pixel buffer",
+		);
 		result_bytes.set_len(read_len);
 
 		let result_bytes = win_to_rgba(&mut result_bytes);
@@ -439,9 +432,8 @@ impl<'clipboard> Get<'clipboard> {
 			return Err(Error::ContentNotAvailable);
 		}
 
-		let text_size = clipboard_win::raw::size(FORMAT).ok_or_else(|| Error::Unknown {
-			description: "failed to read clipboard text size".into(),
-		})?;
+		let text_size = clipboard_win::raw::size(FORMAT)
+			.ok_or_else(|| Error::unknown("failed to read clipboard text size"))?;
 
 		// Allocate the specific number of WTF-16 characters we need to receive.
 		// This division is always accurate because Windows uses 16-bit characters.
@@ -452,9 +444,8 @@ impl<'clipboard> Get<'clipboard> {
 			let out: &mut [u8] =
 				unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr().cast(), out.len() * 2) };
 
-			let mut bytes_read = clipboard_win::raw::get(FORMAT, out).map_err(|_| {
-				Error::Unknown { description: "failed to read clipboard string".into() }
-			})?;
+			let mut bytes_read = clipboard_win::raw::get(FORMAT, out)
+				.map_err(|_| Error::unknown("failed to read clipboard string"))?;
 
 			// Convert the number of bytes read to the number of `u16`s
 			bytes_read /= 2;
@@ -485,9 +476,8 @@ impl<'clipboard> Get<'clipboard> {
 
 		let mut data = Vec::new();
 
-		clipboard_win::raw::get_vec(FORMAT, &mut data).map_err(|_| Error::Unknown {
-			description: "failed to read clipboard image data".into(),
-		})?;
+		clipboard_win::raw::get_vec(FORMAT, &mut data)
+			.map_err(|_| Error::unknown("failed to read clipboard image data"))?;
 
 		read_cf_dibv5(&data)
 	}
@@ -513,9 +503,8 @@ impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {
 		let open_clipboard = self.clipboard?;
 
-		clipboard_win::raw::set_string(&data).map_err(|_| Error::Unknown {
-			description: "Could not place the specified text to the clipboard".into(),
-		})?;
+		clipboard_win::raw::set_string(&data)
+			.map_err(|_| Error::unknown("Could not place the specified text to the clipboard"))?;
 
 		add_clipboard_exclusions(
 			open_clipboard,
@@ -532,14 +521,13 @@ impl<'clipboard> Set<'clipboard> {
 			Some(s) => s.into(),
 			None => String::new(),
 		};
-		clipboard_win::raw::set_string(&alt).map_err(|_| Error::Unknown {
-			description: "Could not place the specified text to the clipboard".into(),
-		})?;
+		clipboard_win::raw::set_string(&alt)
+			.map_err(|_| Error::unknown("Could not place the specified text to the clipboard"))?;
 
 		if let Some(format) = clipboard_win::register_format("HTML Format") {
 			let html = wrap_html(&html);
 			clipboard_win::raw::set_without_clear(format.get(), html.as_bytes())
-				.map_err(|e| Error::Unknown { description: e.to_string() })?;
+				.map_err(|e| Error::unknown(e.to_string()))?;
 		}
 
 		add_clipboard_exclusions(
@@ -555,9 +543,9 @@ impl<'clipboard> Set<'clipboard> {
 		let open_clipboard = self.clipboard?;
 
 		if let Err(e) = clipboard_win::raw::empty() {
-			return Err(Error::Unknown {
-				description: format!("Failed to empty the clipboard. Got error code: {e}"),
-			});
+			return Err(Error::unknown(format!(
+				"Failed to empty the clipboard. Got error code: {e}"
+			)));
 		};
 
 		add_cf_dibv5(open_clipboard, image)
@@ -585,11 +573,8 @@ fn add_clipboard_exclusions(
 		{
 			// The documentation states "place any data on the clipboard in this format to prevent...", and using the zero bytes
 			// like the others for consistency works.
-			clipboard_win::raw::set_without_clear(format.get(), CLIPBOARD_EXCLUSION_DATA).map_err(
-				|_| Error::Unknown {
-					description: "Failed to exclude data from clipboard monitoring".into(),
-				},
-			)?;
+			clipboard_win::raw::set_without_clear(format.get(), CLIPBOARD_EXCLUSION_DATA)
+				.map_err(|_| Error::unknown("Failed to exclude data from clipboard monitoring"))?;
 		}
 	}
 
@@ -598,22 +583,16 @@ fn add_clipboard_exclusions(
 			// We believe that it would be a logic error if this call failed, since we've validated the format is supported,
 			// we still have full ownership of the clipboard and aren't moving it to another thread, and this is a well-documented operation.
 			// Due to these reasons, `Error::Unknown` is used because we never expect the error path to be taken.
-			clipboard_win::raw::set_without_clear(format.get(), CLIPBOARD_EXCLUSION_DATA).map_err(
-				|_| Error::Unknown {
-					description: "Failed to exclude data from cloud clipboard".into(),
-				},
-			)?;
+			clipboard_win::raw::set_without_clear(format.get(), CLIPBOARD_EXCLUSION_DATA)
+				.map_err(|_| Error::unknown("Failed to exclude data from cloud clipboard"))?;
 		}
 	}
 
 	if exclude_from_history {
 		if let Some(format) = clipboard_win::register_format("CanIncludeInClipboardHistory") {
 			// See above for reasoning about using `Error::Unknown`.
-			clipboard_win::raw::set_without_clear(format.get(), CLIPBOARD_EXCLUSION_DATA).map_err(
-				|_| Error::Unknown {
-					description: "Failed to exclude data from clipboard history".into(),
-				},
-			)?;
+			clipboard_win::raw::set_without_clear(format.get(), CLIPBOARD_EXCLUSION_DATA)
+				.map_err(|_| Error::unknown("Failed to exclude data from clipboard history"))?;
 		}
 	}
 
@@ -669,8 +648,7 @@ impl<'clipboard> Clear<'clipboard> {
 
 	pub(crate) fn clear(self) -> Result<(), Error> {
 		let _clipboard_assertion = self.clipboard?;
-		clipboard_win::empty()
-			.map_err(|_| Error::Unknown { description: "failed to clear clipboard".into() })
+		clipboard_win::empty().map_err(|_| Error::unknown("failed to clear clipboard"))
 	}
 }
 
