@@ -17,9 +17,9 @@ use std::{borrow::Cow, marker::PhantomData, thread, time::Duration};
 mod image_data {
 	use super::*;
 	use crate::common::ScopeGuard;
-	use std::{convert::TryInto, ffi::c_void, intrinsics::copy_nonoverlapping, mem::size_of};
+	use std::{convert::TryInto, ffi::c_void, io, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
-		Foundation::{GetLastError, HANDLE, HGLOBAL},
+		Foundation::{HANDLE, HGLOBAL},
 		Graphics::Gdi::{
 			CreateDIBitmap, DeleteObject, GetDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
 			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC,
@@ -33,8 +33,8 @@ mod image_data {
 	};
 
 	fn last_error(message: &str) -> Error {
-		let code = unsafe { GetLastError() };
-		Error::unknown(format!("{} with error code {:x}", message, code))
+		let os_error = io::Error::last_os_error();
+		Error::unknown(format!("{}: {}", message, os_error))
 	}
 
 	pub fn add_cf_dibv5(_open_clipboard: OpenClipboard, image: ImageData) -> Result<(), Error> {
