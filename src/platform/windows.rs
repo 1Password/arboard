@@ -19,7 +19,7 @@ mod image_data {
 	use crate::common::ScopeGuard;
 	use std::{convert::TryInto, ffi::c_void, io, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
-		Foundation::{HANDLE, HGLOBAL},
+		Foundation::HGLOBAL,
 		Graphics::Gdi::{
 			CreateDIBitmap, DeleteObject, GetDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
 			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC,
@@ -108,7 +108,12 @@ mod image_data {
 			}
 		}
 
-		unsafe { set_clipboard_data(hdata as _) }
+		if unsafe { SetClipboardData(CF_DIBV5 as u32, hdata as _) } == 0 {
+			unsafe { DeleteObject(hdata as _) };
+			Err(last_error("SetClipboardData failed with error"))
+		} else {
+			Ok(())
+		}
 	}
 
 	unsafe fn global_alloc(bytes: usize) -> Result<HGLOBAL, Error> {
@@ -126,15 +131,6 @@ mod image_data {
 			Err(last_error("Could not lock the global memory object"))
 		} else {
 			Ok(data_ptr)
-		}
-	}
-
-	unsafe fn set_clipboard_data(hmem: HANDLE) -> Result<(), Error> {
-		if SetClipboardData(CF_DIBV5 as u32, hmem as _) == 0 {
-			DeleteObject(hmem as _);
-			Err(last_error("SetClipboardData failed with error"))
-		} else {
-			Ok(())
 		}
 	}
 
@@ -215,8 +211,9 @@ mod image_data {
 		}
 	}
 
-	unsafe fn get_screen_device_context() -> Result<HDC, Error> {
-		let hdc = GetDC(0);
+	fn get_screen_device_context() -> Result<HDC, Error> {
+		// SAFETY: Calling `GetDC` with `NULL` is safe.
+		let hdc = unsafe { GetDC(0) };
 		if hdc == 0 {
 			Err(Error::unknown("Failed to get the device context. GetDC returned null"))
 		} else {
@@ -247,7 +244,7 @@ mod image_data {
 	}
 
 	/// Copies the bitmap image into given buffer with DIB RGB format and
-	/// returns value is the number of scan lines copied from the bitmap.
+	/// returns the number of scan lines copied from the bitmap.
 	unsafe fn convert_bitmap_to_rgb(
 		hdc: HDC,
 		hbitmap: HBITMAP,
