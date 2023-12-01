@@ -22,7 +22,7 @@ thiserror = "1.0"
 env_logger = "0.9.0"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52.0", optional = true, features = [
+windows-sys = { version = "0.48.0", optional = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_DataExchange",

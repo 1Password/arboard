@@ -110,7 +110,7 @@ mod image_data {
 
 	unsafe fn global_alloc(bytes: usize) -> Result<HGLOBAL, Error> {
 		let hdata = GlobalAlloc(GHND, bytes);
-		if hdata.is_null() {
+		if hdata == 0 {
 			Err(last_error("Could not allocate global memory object"))
 		} else {
 			Ok(hdata)
@@ -178,7 +178,7 @@ mod image_data {
 					biHeight: -h,
 					biBitCount: 32,
 					biPlanes: 1,
-					biCompression: BI_RGB,
+					biCompression: BI_RGB as u32,
 					biSizeImage: 0,
 					biXPelsPerMeter: 0,
 					biYPelsPerMeter: 0,
