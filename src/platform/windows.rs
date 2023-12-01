@@ -83,8 +83,11 @@ mod image_data {
 		unsafe {
 			let data_ptr = global_lock(hdata)?;
 			let _unlock = ScopeGuard::new(|| {
-				if GlobalUnlock(hdata) == 0 {
-					log::error!("Failed calling GlobalUnlock when writing dibv5 data");
+				if GlobalUnlock(hdata) != 0 {
+					log::error!(
+						"Failed calling GlobalUnlock when writing dibv5 data: {}",
+						io::Error::last_os_error(),
+					);
 				}
 			});
 
