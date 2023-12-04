@@ -83,11 +83,14 @@ mod image_data {
 		unsafe {
 			let data_ptr = global_lock(hdata)?;
 			let _unlock = ScopeGuard::new(|| {
-				if GlobalUnlock(hdata) != 0 {
-					log::error!(
-						"Failed calling GlobalUnlock when writing dibv5 data: {}",
-						io::Error::last_os_error(),
-					);
+				// If the memory object is unlocked after decrementing the lock count, the function
+				// returns zero and GetLastError returns NO_ERROR. If it fails, the return value is
+				// zero and GetLastError returns a value other than NO_ERROR.
+				if GlobalUnlock(hdata) == 0 {
+					let err = io::Error::last_os_error();
+					if err.raw_os_error() != Some(0) {
+						log::error!("Failed calling GlobalUnlock when writing dibv5 data: {}", err);
+					}
 				}
 			});
 
