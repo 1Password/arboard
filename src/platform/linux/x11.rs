@@ -33,8 +33,7 @@ use x11rb::{
 	protocol::{
 		xproto::{
 			Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
-			PropertyNotifyEvent, SelectionNotifyEvent, SelectionRequestEvent, Time, WindowClass,
-			SELECTION_NOTIFY_EVENT,
+			SelectionNotifyEvent, SelectionRequestEvent, Time, WindowClass, SELECTION_NOTIFY_EVENT,
 		},
 		Event,
 	},
@@ -131,6 +130,8 @@ struct Inner {
 	serve_stopped: AtomicBool,
 }
 
+const ANY_PROPERTY: u32 = NONE;
+
 impl XContext {
 	fn new() -> Result<Self> {
 		// create a new connection to an X11 server
@@ -199,10 +200,11 @@ struct ClipboardData {
 	format: Atom,
 }
 
-enum ReadSelNotifyResult {
-	GotData(Vec<u8>),
-	IncrStarted,
-	EventNotRecognized,
+#[derive(Debug)]
+enum ContextState {
+	// None state is not used
+	SentConvertSelection,
+	UseIncr,
 }
 
 impl Inner {
@@ -243,12 +245,13 @@ impl Inner {
 			.conn
 			.set_selection_owner(server_win, self.atom_of(selection), Time::CURRENT_TIME)
 			.map_err(|_| Error::ClipboardOccupied)?;
-
-		self.server.conn.flush().map_err(into_unknown)?;
+		self.server.conn.sync().map_err(into_unknown)?;
+		// self.server.conn.flush().map_err(into_unknown)?;
 
 		// Just setting the data, and the `serve_requests` will take care of the rest.
 		let selection = self.selection_of(selection);
 		let mut data_guard = selection.data.write();
+		println!("Data write");
 		*data_guard = Some(data);
 
 		// Lock the mutex to both ensure that no wakers of `data_changed` can wake us between
@@ -258,6 +261,7 @@ impl Inner {
 
 		// Notify any existing waiting threads that we have changed the data in the selection.
 		// It is important that the mutex is locked to prevent this notification getting lost.
+		println!("Notify all");
 		selection.data_changed.notify_all();
 
 		if wait {
@@ -292,10 +296,11 @@ impl Inner {
 		//     return Ok(data)
 		// }
 		let reader = XContext::new()?;
+		let selection_atom = self.atom_of(selection);
 
 		trace!("Trying to get the clipboard data.");
 		for format in formats {
-			match self.read_single(&reader, selection, *format) {
+			match self.read_single(&reader, selection_atom, *format) {
 				Ok(bytes) => {
 					return Ok(ClipboardData { bytes, format: *format });
 				}
@@ -308,12 +313,19 @@ impl Inner {
 		Err(Error::ContentNotAvailable)
 	}
 
+	/// NOTE: On X11, clipboard is not persisted. i.e. if the app which created clipboard data closes, the data is lost.
+	/// There are ways to implement clipboard persistence.
+	/// Ex https://www.freedesktop.org/wiki/ClipboardManager/
+	/// Derived from [doOut](https://github.com/astrand/xclip/blob/b372f73579d30f9ba998ffd0a73694e7abe2c313/xclip.c#L714) in `xclip`
+	/// More resources:
+	/// * https://www.uninformativ.de/blog/postings/2017-04-02/0/POSTING-en.html
 	fn read_single(
 		&self,
 		reader: &XContext,
-		selection: LinuxClipboardKind,
+		selection: Atom,
 		target_format: Atom,
 	) -> Result<Vec<u8>> {
+		println!("Selection owner is {:x}", reader.conn.get_selection_owner(selection).map_err(into_unknown)?.reply().map_err(into_unknown)?.owner);
 		// Delete the property so that we can detect (using property notify)
 		// when the selection owner receives our request.
 		reader
@@ -326,7 +338,7 @@ impl Inner {
 			.conn
 			.convert_selection(
 				reader.win_id,
-				self.atom_of(selection),
+				selection,
 				target_format,
 				self.atoms.ARBOARD_CLIPBOARD,
 				Time::CURRENT_TIME,
@@ -337,9 +349,10 @@ impl Inner {
 		trace!("Finished `convert_selection`");
 
 		let mut incr_data: Vec<u8> = Vec::new();
-		let mut using_incr = false;
 
-		let mut timeout_end = Instant::now() + LONG_TIMEOUT_DUR;
+		let mut timeout_end = Instant::now() + LONG_TIMEOUT_DUR;// Duration::from_millis(4000);
+
+		let mut context_state = ContextState::SentConvertSelection;
 
 		while Instant::now() < timeout_end {
 			let event = reader.conn.poll_for_event().map_err(into_unknown)?;
@@ -350,48 +363,58 @@ impl Inner {
 					continue;
 				}
 			};
-			match event {
-				// The first response after requesting a selection.
-				Event::SelectionNotify(event) => {
-					trace!("Read SelectionNotify");
-					let result = self.handle_read_selection_notify(
-						reader,
-						target_format,
-						&mut using_incr,
-						&mut incr_data,
-						event,
-					)?;
-					match result {
-						ReadSelNotifyResult::GotData(data) => return Ok(data),
-						ReadSelNotifyResult::IncrStarted => {
-							// This means we received an indication that an the
-							// data is going to be sent INCRementally. Let's
-							// reset our timeout.
-							timeout_end += SHORT_TIMEOUT_DUR;
-						}
-						ReadSelNotifyResult::EventNotRecognized => (),
+			match context_state {
+				ContextState::SentConvertSelection => {
+					let Event::SelectionNotify(evt) = event else {
+						continue
+					};
+					if evt.property == 0 {
+						// Bad Target
+						return Err(Error::FormatUnsupported);
 					}
+					let reply = reader
+						.conn
+						.get_property(
+							true,
+							reader.win_id,
+							evt.property,
+							ANY_PROPERTY,
+							0,
+							u32::MAX / 4,
+						)
+						.map_err(into_unknown)?
+						.reply()
+						.map_err(into_unknown)?;
+
+					if reply.type_ == self.atoms.INCR {
+						reader.conn.flush().map_err(into_unknown)?;
+						context_state = ContextState::UseIncr;
+						continue;
+					}
+					return Ok(reply.value);
 				}
-				// If the previous SelectionNotify event specified that the data
-				// will be sent in INCR segments, each segment is transferred in
-				// a PropertyNotify event.
-				Event::PropertyNotify(event) => {
-					let result = self.handle_read_property_notify(
-						reader,
-						target_format,
-						using_incr,
-						&mut incr_data,
-						&mut timeout_end,
-						event,
-					)?;
-					if result {
+				ContextState::UseIncr => {
+					let Event::PropertyNotify(evt) = event else {
+						continue;
+					};
+					if evt.state != Property::NEW_VALUE {
+						continue;
+					}
+					let reply = reader
+						.conn
+						.get_property(true, evt.window, evt.atom, ANY_PROPERTY, 0, u32::MAX / 4)
+						.map_err(into_unknown)?
+						.reply()
+						.map_err(into_unknown)?;
+					if reply.value_len == 0 {
 						return Ok(incr_data);
 					}
+					incr_data.extend(reply.value);
+					timeout_end = Instant::now() + SHORT_TIMEOUT_DUR;
+					reader.conn.flush().map_err(into_unknown)?;
 				}
-				_ => log::trace!("An unexpected event arrived while reading the clipboard."),
-			}
+			};
 		}
-		log::info!("Time-out hit while reading the clipboard.");
 		Err(Error::ContentNotAvailable)
 	}
 
@@ -462,115 +485,6 @@ impl Inner {
 		})
 	}
 
-	fn handle_read_selection_notify(
-		&self,
-		reader: &XContext,
-		target_format: u32,
-		using_incr: &mut bool,
-		incr_data: &mut Vec<u8>,
-		event: SelectionNotifyEvent,
-	) -> Result<ReadSelNotifyResult> {
-		// The property being set to NONE means that the `convert_selection`
-		// failed.
-
-		// According to: https://tronche.com/gui/x/icccm/sec-2.html#s-2.4
-		// the target must be set to the same as what we requested.
-		if event.property == NONE || event.target != target_format {
-			return Err(Error::ContentNotAvailable);
-		}
-		if self.kind_of(event.selection).is_none() {
-			log::info!("Received a SelectionNotify for a selection other than CLIPBOARD, PRIMARY or SECONDARY. This is unexpected.");
-			return Ok(ReadSelNotifyResult::EventNotRecognized);
-		}
-		if *using_incr {
-			log::warn!("Received a SelectionNotify while already expecting INCR segments.");
-			return Ok(ReadSelNotifyResult::EventNotRecognized);
-		}
-		// request the selection
-		let mut reply = reader
-			.conn
-			.get_property(true, event.requestor, event.property, event.target, 0, u32::MAX / 4)
-			.map_err(into_unknown)?
-			.reply()
-			.map_err(into_unknown)?;
-
-		// trace!("Property.type: {:?}", self.atom_name(reply.type_));
-
-		// we found something
-		if reply.type_ == target_format {
-			Ok(ReadSelNotifyResult::GotData(reply.value))
-		} else if reply.type_ == self.atoms.INCR {
-			// Note that we call the get_property again because we are
-			// indicating that we are ready to receive the data by deleting the
-			// property, however deleting only works if the type matches the
-			// property type. But the type didn't match in the previous call.
-			reply = reader
-				.conn
-				.get_property(
-					true,
-					event.requestor,
-					event.property,
-					self.atoms.INCR,
-					0,
-					u32::MAX / 4,
-				)
-				.map_err(into_unknown)?
-				.reply()
-				.map_err(into_unknown)?;
-			log::trace!("Receiving INCR segments");
-			*using_incr = true;
-			if reply.value_len == 4 {
-				let min_data_len = reply.value32().and_then(|mut vals| vals.next()).unwrap_or(0);
-				incr_data.reserve(min_data_len as usize);
-			}
-			Ok(ReadSelNotifyResult::IncrStarted)
-		} else {
-			// this should never happen, we have sent a request only for supported types
-			Err(Error::Unknown {
-				description: String::from("incorrect type received from clipboard"),
-			})
-		}
-	}
-
-	/// Returns Ok(true) when the incr_data is ready
-	fn handle_read_property_notify(
-		&self,
-		reader: &XContext,
-		target_format: u32,
-		using_incr: bool,
-		incr_data: &mut Vec<u8>,
-		timeout_end: &mut Instant,
-		event: PropertyNotifyEvent,
-	) -> Result<bool> {
-		if event.atom != self.atoms.ARBOARD_CLIPBOARD || event.state != Property::NEW_VALUE {
-			return Ok(false);
-		}
-		if !using_incr {
-			// This must mean the selection owner received our request, and is
-			// now preparing the data
-			return Ok(false);
-		}
-		let reply = reader
-			.conn
-			.get_property(true, event.window, event.atom, target_format, 0, u32::MAX / 4)
-			.map_err(into_unknown)?
-			.reply()
-			.map_err(into_unknown)?;
-
-		// log::trace!("Received segment. value_len {}", reply.value_len,);
-		if reply.value_len == 0 {
-			// This indicates that all the data has been sent.
-			return Ok(true);
-		}
-		incr_data.extend(reply.value);
-
-		// Let's reset our timeout, since we received a valid chunk.
-		*timeout_end = Instant::now() + SHORT_TIMEOUT_DUR;
-
-		// Not yet complete
-		Ok(false)
-	}
-
 	fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<()> {
 		let selection = match self.kind_of(event.selection) {
 			Some(kind) => kind,
@@ -583,8 +497,13 @@ impl Inner {
 		let success;
 		// we are asked for a list of supported conversion targets
 		if event.target == self.atoms.TARGETS {
-			trace!("Handling TARGETS, dst property is {}", self.atom_name_dbg(event.property));
+			trace!(
+				"Handling TARGETS, dst property is {}, asked by {:x}",
+				self.atom_name_dbg(event.property),
+				event.requestor
+			);
 			let mut targets = Vec::with_capacity(10);
+
 			targets.push(self.atoms.TARGETS);
 			targets.push(self.atoms.SAVE_TARGETS);
 			let data = self.selection_of(selection).data.read();
@@ -768,9 +687,10 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 			}
 			Event::SelectionRequest(event) => {
 				trace!(
-					"SelectionRequest - selection is: {}, target is {}",
+					"SelectionRequest - selection is: {}, target is {}, property is {}",
 					context.atom_name_dbg(event.selection),
 					context.atom_name_dbg(event.target),
+					context.atom_name_dbg(event.property),
 				);
 				// Someone is requesting the clipboard content from us.
 				context.handle_selection_request(event).map_err(into_unknown)?;
@@ -852,6 +772,50 @@ impl Clipboard {
 		Ok(Self { inner: ctx })
 	}
 
+	pub(crate) fn get_formats(&self, selection: LinuxClipboardKind) -> Result<Vec<String>> {
+		let formats = [self.inner.atoms.TARGETS];
+		let result = self.inner.read(&formats, selection).map_err(into_unknown)?;
+		let reader = XContext::new()?;
+		let names = result
+		.bytes
+		.chunks_exact(4) // we should get vec of atoms (u32)
+			.map(|chunk| {
+				let mut four_bytes = [0;4];
+				four_bytes.copy_from_slice(chunk);
+				let atom = u32::from_ne_bytes(four_bytes);
+				let name = String::from_utf8(
+					reader
+					.conn
+					.get_atom_name(atom)
+					.map_err(into_unknown)?
+					.reply()
+					.map_err(into_unknown)?.name)
+				.map_err(into_unknown)?;
+				Ok(name)
+			})
+			.collect::<Result<Vec<_>>>()?;
+		Ok(names)
+	}
+
+	pub(crate) fn get_bytes(
+		&self,
+		selection: LinuxClipboardKind,
+		format: &[u8],
+	) -> Result<Vec<u8>> {
+		let format_atom = self
+			.inner
+			.server
+			.conn
+			.intern_atom(false, &format)
+			.map_err(into_unknown)?
+			.reply()
+			.map_err(into_unknown)?
+			.atom;
+		let formats = [format_atom];
+		let result = self.inner.read(&formats, selection)?;
+		Ok(result.bytes)
+	}
+
 	pub(crate) fn get_text(&self, selection: LinuxClipboardKind) -> Result<String> {
 		let formats = [
 			self.inner.atoms.UTF8_STRING,
@@ -881,6 +845,26 @@ impl Clipboard {
 			bytes: message.into_owned().into_bytes(),
 			format: self.inner.atoms.UTF8_STRING,
 		}];
+		self.inner.write(data, selection, wait)
+	}
+
+	pub(crate) fn set_bytes(
+		&self,
+		bytes: Cow<'_, [u8]>,
+		format: Cow<'_, [u8]>,
+		selection: LinuxClipboardKind,
+		wait: bool,
+	) -> Result<()> {
+		let format_atom = self
+			.inner
+			.server
+			.conn
+			.intern_atom(false, &format)
+			.map_err(into_unknown)?
+			.reply()
+			.map_err(into_unknown)?
+			.atom;
+		let data = vec![ClipboardData { bytes: bytes.into_owned(), format: format_atom }];
 		self.inner.write(data, selection, wait)
 	}
 

@@ -54,6 +54,10 @@ pub enum Error {
 	#[error("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format.")]
 	ConversionFailure,
 
+	/// This can happen if format is not available.
+	#[error("Possible format is unsupported")]
+	FormatUnsupported,
+
 	/// Any error that doesn't fit the other error types.
 	///
 	/// The `description` field is only meant to help the developer and should not be relied on as a
@@ -79,6 +83,7 @@ impl std::fmt::Debug for Error {
 			ClipboardNotSupported,
 			ClipboardOccupied,
 			ConversionFailure,
+			FormatUnsupported,
 			Unknown { .. }
 		);
 		f.write_fmt(format_args!("{} - \"{}\"", name, self))

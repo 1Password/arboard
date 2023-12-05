@@ -73,6 +73,21 @@ impl Clipboard {
 		self.get().text()
 	}
 
+	/// Fetches utf-8 text from the clipboard and returns it.
+	pub fn get_formats(&mut self) -> Result<Vec<String>, Error> {
+		self.get().formats()
+	}
+
+	/// Fetches utf-8 text from the clipboard and returns it.
+	pub fn get_bytes(&mut self, format: &[u8]) -> Result<Vec<u8>, Error> {
+		self.get().bytes(format)
+	}
+
+	/// Set bytes
+	pub fn set_bytes<'a, T: Into<Cow<'a, [u8]>>>(&mut self, bytes: T, format: &[u8]) -> Result<(), Error> {
+		self.set().bytes(bytes, format)
+	}
+
 	/// Places the text onto the clipboard. Any valid utf-8 string is accepted.
 	pub fn set_text<'a, T: Into<Cow<'a, str>>>(&mut self, text: T) -> Result<(), Error> {
 		self.set().text(text)
@@ -155,6 +170,16 @@ impl Get<'_> {
 	pub fn image(self) -> Result<ImageData<'static>, Error> {
 		self.platform.image()
 	}
+
+	/// Get formats/mimes available in clipboard
+	pub fn formats(self) -> Result<Vec<String>, Error> {
+		self.platform.formats()
+	}
+
+	/// Get formats/mimes available in clipboard
+	pub fn bytes(self, format: &[u8]) -> Result<Vec<u8>, Error> {
+		self.platform.bytes(format)
+	}
 }
 
 /// A builder for an operation that sets a value to the clipboard.
@@ -164,6 +189,16 @@ pub struct Set<'clipboard> {
 }
 
 impl Set<'_> {
+	/// Completes the "set" operation by placing text onto the clipboard. Any valid UTF-8 string
+	/// is accepted.
+	pub fn bytes<'a, T: Into<Cow<'a, [u8]>>>(
+		self,
+		bytes: T,
+		format: &[u8],
+	) -> Result<(), Error> {
+		let bytes = bytes.into();
+		self.platform.bytes(bytes, format.into())
+	}
 	/// Completes the "set" operation by placing text onto the clipboard. Any valid UTF-8 string
 	/// is accepted.
 	pub fn text<'a, T: Into<Cow<'a, str>>>(self, text: T) -> Result<(), Error> {

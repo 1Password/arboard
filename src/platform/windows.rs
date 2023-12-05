@@ -539,6 +539,14 @@ impl<'clipboard> Get<'clipboard> {
 
 		image_data::read_cf_dibv5(&data)
 	}
+
+	pub(crate) fn formats(self) -> Result<Vec<String>, Error> {
+		todo!()
+	}
+
+	pub(crate) fn bytes(self, format: &[u8]) -> Result<Vec<u8>, Error> {
+		todo!()
+	}
 }
 
 pub(crate) struct Set<'clipboard> {
@@ -570,6 +578,10 @@ impl<'clipboard> Set<'clipboard> {
 			self.exclude_from_cloud,
 			self.exclude_from_history,
 		)
+	}
+
+	pub(crate) fn bytes(self, bytes: Cow<'_, Vec<u8>>, format: &[u8]) -> Result<(), Error> {
+		todo!()
 	}
 
 	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
