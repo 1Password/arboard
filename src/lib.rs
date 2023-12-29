@@ -56,7 +56,7 @@ pub use platform::SetExtWindows;
 /// The clipboard on Windows is a global object, which may only be opened on one thread at once.
 /// This means that `arboard` only truly opens the clipboard during each operation to ensure that
 /// multiple `Clipboard`'s may exist at once. This also means that attempting operations in parallel
-/// has a high likelyhood to return an error instead.
+/// has a high likelihood to return an error instead.
 #[allow(rustdoc::broken_intra_doc_links)]
 pub struct Clipboard {
 	pub(crate) platform: platform::Clipboard,
@@ -68,19 +68,19 @@ impl Clipboard {
 		Ok(Clipboard { platform: platform::Clipboard::new()? })
 	}
 
-	/// Fetches utf-8 text from the clipboard and returns it.
+	/// Fetches UTF-8 text from the clipboard and returns it.
 	pub fn get_text(&mut self) -> Result<String, Error> {
 		self.get().text()
 	}
 
-	/// Places the text onto the clipboard. Any valid utf-8 string is accepted.
+	/// Places the text onto the clipboard. Any valid UTF-8 string is accepted.
 	pub fn set_text<'a, T: Into<Cow<'a, str>>>(&mut self, text: T) -> Result<(), Error> {
 		self.set().text(text)
 	}
 
 	/// Places the HTML as well as a plain-text alternative onto the clipboard.
 	///
-	/// Any valid utf-8 string is accepted.
+	/// Any valid UTF-8 string is accepted.
 	pub fn set_html<'a, T: Into<Cow<'a, str>>>(
 		&mut self,
 		html: T,
@@ -304,7 +304,7 @@ mod tests {
 			ctx.set_text("clipboard test").unwrap();
 			assert!(matches!(ctx.get_image(), Err(Error::ContentNotAvailable)));
 
-			// Test if we get the same image that we put onto the clibboard
+			// Test if we get the same image that we put onto the clipboard
 			ctx.set_image(img_data.clone()).unwrap();
 			let got = ctx.get_image().unwrap();
 			assert_eq!(img_data.bytes, got.bytes);
