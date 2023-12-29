@@ -42,7 +42,7 @@ pub use platform::SetExtWindows;
 ///
 /// `arboard` does its best to abstract over different platforms, but sometimes the platform-specific
 /// behavior leaks through unsolvably. These differences, depending on which platforms are being targeted,
-/// may affect your app's clipboard architecture (ex, opening and closing a [Clipboard] every time
+/// may affect your app's clipboard architecture (ex, opening and closing a [`Clipboard`] every time
 /// or keeping one open in some application/global state).
 ///
 /// ## Linux
@@ -54,26 +54,41 @@ pub use platform::SetExtWindows;
 /// ## Windows
 ///
 /// The clipboard on Windows is a global object, which may only be opened on one thread at once.
-/// This means that `arboard` only truly opens the clipboard during each operation to ensure that
-/// multiple `Clipboard`'s may exist at once. This also means that attempting operations in parallel
-/// has a high likelihood to return an error instead.
+/// This means that `arboard` only truly opens the clipboard during each operation to prevent
+/// multiple `Clipboard`s from existing at once.
+///
+/// This means that attempting operations in parallel has a high likelihood to return an error or
+/// deadlock. As such, it is recommended to avoid creating/operating clipboard objects on >1 thread.
 #[allow(rustdoc::broken_intra_doc_links)]
 pub struct Clipboard {
 	pub(crate) platform: platform::Clipboard,
 }
 
 impl Clipboard {
-	/// Creates an instance of the clipboard
+	/// Creates an instance of the clipboard.
+	///
+	/// # Errors
+	///
+	/// On some platforms or desktop environments, an error can be returned if clipboards are not
+	/// supported. This may be retried.
 	pub fn new() -> Result<Self, Error> {
 		Ok(Clipboard { platform: platform::Clipboard::new()? })
 	}
 
 	/// Fetches UTF-8 text from the clipboard and returns it.
+	///
+	/// # Errors
+	///
+	/// Returns error if clipboard is empty or contents are not UTF-8 text.
 	pub fn get_text(&mut self) -> Result<String, Error> {
 		self.get().text()
 	}
 
 	/// Places the text onto the clipboard. Any valid UTF-8 string is accepted.
+	///
+	/// # Errors
+	///
+	/// Returns error if `text` failed to be stored on the clipboard.
 	pub fn set_text<'a, T: Into<Cow<'a, str>>>(&mut self, text: T) -> Result<(), Error> {
 		self.set().text(text)
 	}
@@ -81,6 +96,10 @@ impl Clipboard {
 	/// Places the HTML as well as a plain-text alternative onto the clipboard.
 	///
 	/// Any valid UTF-8 string is accepted.
+	///
+	/// # Errors
+	///
+	/// Returns error if both `html` and `alt_text` failed to be stored on the clipboard.
 	pub fn set_html<'a, T: Into<Cow<'a, str>>>(
 		&mut self,
 		html: T,
@@ -94,6 +113,11 @@ impl Clipboard {
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
 	/// this function. However it's of not guaranteed that an image placed on the clipboard by any
 	/// other application will be of a supported format.
+	///
+	/// # Errors
+	///
+	/// Returns error if clipboard is empty, contents are not an image, or the contents cannot be
+	/// converted to an appropriate format and stored in the [`ImageData`] type.
 	#[cfg(feature = "image-data")]
 	pub fn get_image(&mut self) -> Result<ImageData<'static>, Error> {
 		self.get().image()
@@ -106,6 +130,11 @@ impl Clipboard {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
+	///
+	/// # Errors
+	///
+	/// Returns error if `image` cannot be converted to an appropriate format or if it failed to be
+	/// stored on the clipboard.
 	#[cfg(feature = "image-data")]
 	pub fn set_image(&mut self, image: ImageData) -> Result<(), Error> {
 		self.set().image(image)
@@ -113,6 +142,10 @@ impl Clipboard {
 
 	/// Clears any contents that may be present from the platform's default clipboard,
 	/// regardless of the format of the data.
+	///
+	/// # Errors
+	///
+	/// Returns error on Windows or Linux if clipboard cannot be cleared.
 	pub fn clear(&mut self) -> Result<(), Error> {
 		self.clear_with().default()
 	}

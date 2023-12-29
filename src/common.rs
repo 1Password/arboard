@@ -46,11 +46,8 @@ pub enum Error {
 	#[error("The native clipboard is not accessible due to being held by an other party.")]
 	ClipboardOccupied,
 
-	/// This can happen in either of the following cases.
-	///
-	/// - When returned from `set_image`: the image going to the clipboard cannot be converted to the appropriate format.
-	/// - When returned from `get_image`: the image coming from the clipboard could not be converted into the `ImageData` struct.
-	/// - When returned from `get_text`: the text coming from the clipboard is not valid UTF-8 or cannot be converted to UTF-8.
+	/// The image or the text that was about the be transferred to/from the clipboard could not be
+	/// converted to the appropriate format.
 	#[error("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format.")]
 	ConversionFailure,
 
