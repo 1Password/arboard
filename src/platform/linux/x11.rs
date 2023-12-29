@@ -724,7 +724,7 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 		log::trace!("Finishing clipboard manager handover.");
 		*handover_state = ManagerHandoverState::Finished;
 
-		// Not sure if unlocking the mutext is necessary here but better safe than sorry.
+		// Not sure if unlocking the mutex is necessary here but better safe than sorry.
 		drop(handover_state);
 
 		clip.handover_cv.notify_all();
