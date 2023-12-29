@@ -10,17 +10,13 @@ jobs:
   rustfmt:
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions-rs/toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-          override: true
           components: rustfmt
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Check formatting
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+        run: cargo fmt --all -- --check
 
   clippy:
     needs: rustfmt
@@ -32,39 +28,26 @@ jobs:
         # for the MSRV build to keep CI fast, since other configurations should also work.
         rust_version: [stable, "1.61"]
     steps:
-      - uses: actions-rs/toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-          override: true
           components: clippy
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Run `cargo clippy` with no features
         if: ${{ matrix.rust_version == 'stable' }}
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --verbose --no-default-features -- -D warnings -D clippy::dbg_macro
+        run: cargo clippy --verbose --no-default-features -- -D warnings -D clippy::dbg_macro
 
       - name: Run `cargo clippy` with `image-data` feature
         if: ${{ matrix.rust_version == 'stable' }}
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --verbose --no-default-features --features image-data -- -D warnings -D clippy::dbg_macro
+        run: cargo clippy --verbose --no-default-features --features image-data -- -D warnings -D clippy::dbg_macro
 
       - name: Run `cargo clippy` with `wayland-data-control` feature
         if: ${{ matrix.rust_version == 'stable' }}
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --verbose --no-default-features --features wayland-data-control -- -D warnings -D clippy::dbg_macro
+        run: cargo clippy --verbose --no-default-features --features wayland-data-control -- -D warnings -D clippy::dbg_macro
 
       - name: Run `cargo clippy` with all features
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --verbose --all-features -- -D warnings -D clippy::dbg_macro
+        run: cargo clippy --verbose --all-features -- -D warnings -D clippy::dbg_macro
 
   test:
     needs: clippy
@@ -74,32 +57,19 @@ jobs:
         # No Linux test for now as it just fails due to not having a desktop environment.
         os: [macos-latest, windows-latest]
     steps:
-      - uses: actions-rs/toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
-          override: true
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Run tests with no features
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --no-default-features
+        run: cargo test --no-default-features
       - name: Run tests with `image-data` feature
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --no-default-features --features image-data
+        run: cargo test --no-default-features --features image-data
       - name: Run tests with `wayland-data-control` feature
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --no-default-features --features wayland-data-control
+        run: cargo test --no-default-features --features wayland-data-control
       - name: Run tests with all features
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features
+        run: cargo test --all-features
 
   miri:
     needs: clippy
@@ -111,17 +81,13 @@ jobs:
         # Currently, only Windows has soundness tests.
         os: [windows-latest]
     steps:
-      - uses: actions-rs/toolchain@v1
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: nightly-2023-10-08
-          override: true
           components: miri
 
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Check soundness
-        uses: actions-rs/cargo@v1
-        with:
-          command: miri
-          args: test windows --features image-data
+        run: cargo miri test windows --features image-data
