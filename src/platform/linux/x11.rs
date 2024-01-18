@@ -48,7 +48,10 @@ use super::encode_as_png;
 use super::{into_unknown, LinuxClipboardKind};
 #[cfg(feature = "image-data")]
 use crate::ImageData;
-use crate::{common::ScopeGuard, Error};
+use crate::{
+	common::{HTMLData, ScopeGuard},
+	Error,
+};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -882,6 +885,31 @@ impl Clipboard {
 			format: self.inner.atoms.UTF8_STRING,
 		}];
 		self.inner.write(data, selection, wait)
+	}
+
+	pub(crate) fn get_html(&self, selection: LinuxClipboardKind) -> Result<HTMLData> {
+		let html_formats = [
+			self.inner.atoms.HTML,
+			self.inner.atoms.UTF8_STRING,
+			self.inner.atoms.UTF8_MIME_0,
+			self.inner.atoms.UTF8_MIME_1,
+			self.inner.atoms.STRING,
+			self.inner.atoms.TEXT,
+		];
+		let result = self.inner.read(&html_formats, selection)?;
+
+		if result.format == self.inner.atoms.HTML {
+			log::info!("result format and bytes: {:?}", result);
+			let html: String = result.bytes.into_iter().map(|c| c as char).collect();
+			let mut data = HTMLData::from_html(html.clone());
+			// TODO: remove HTML tags when getting 
+			data.alt_text = String::from("Raw HTML: ") + html.as_str();
+			Ok(data)
+		} else {
+			log::info!("didn't find HTML mime type, falling back to alt text");
+			let alt_text = String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)?;
+			Ok(HTMLData::from_alt_text(alt_text))
+		}
 	}
 
 	pub(crate) fn set_html(

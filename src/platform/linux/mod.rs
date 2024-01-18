@@ -1,5 +1,7 @@
 use std::borrow::Cow;
 
+use crate::HTMLData;
+
 #[cfg(feature = "wayland-data-control")]
 use log::{trace, warn};
 
@@ -111,6 +113,14 @@ impl<'clipboard> Get<'clipboard> {
 			Clipboard::X11(clipboard) => clipboard.get_text(self.selection),
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_text(self.selection),
+		}
+	}
+
+	pub(crate) fn html(self) -> Result<HTMLData, Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.get_html(self.selection),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => Err("not implemented"),
 		}
 	}
 
