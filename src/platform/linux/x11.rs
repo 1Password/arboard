@@ -902,7 +902,7 @@ impl Clipboard {
 			log::info!("result format and bytes: {:?}", result);
 			let html: String = result.bytes.into_iter().map(|c| c as char).collect();
 			let mut data = HTMLData::from_html(html.clone());
-			// TODO: remove HTML tags when getting 
+			// TODO: remove HTML tags when getting
 			data.alt_text = String::from("Raw HTML: ") + html.as_str();
 			Ok(data)
 		} else {
@@ -920,16 +920,19 @@ impl Clipboard {
 		wait: bool,
 	) -> Result<()> {
 		let mut data = vec![];
+		log::info!("started data blob");
 		if let Some(alt_text) = alt {
 			data.push(ClipboardData {
 				bytes: alt_text.into_owned().into_bytes(),
 				format: self.inner.atoms.UTF8_STRING,
 			});
+			log::info!("pushed alt text to data blob, result: {:?}", data);
 		}
 		data.push(ClipboardData {
 			bytes: html.into_owned().into_bytes(),
 			format: self.inner.atoms.HTML,
 		});
+		log::info!("pushed HTML to data blob, result: {:?}", data);
 		self.inner.write(data, selection, wait)
 	}
 
