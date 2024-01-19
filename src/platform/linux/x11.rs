@@ -900,25 +900,19 @@ impl Clipboard {
 
 		let mut data = HTMLData::default();
 
-		log::info!("attempting to read HTML");
 		let html_result = self.inner.read(&html_format, selection);
 		if let Ok(html_data) = html_result {
-			log::info!("HTML result format and bytes: {:?}", html_data);
 			let html: String = html_data.bytes.into_iter().map(|c| c as char).collect();
 			data.html = html;
 		}
 
-		log::info!("attempting to read alt text");
 		let alt_text_result = self.inner.read(&alt_text_formats, selection);
 		if let Ok(alt_text_data) = alt_text_result {
-			log::info!("alt text format and bytes: {:?}", alt_text_data);
 			data.alt_text = if alt_text_data.format == self.inner.atoms.STRING {
-				log::info!("reading alt text as string");
 				// ISO Latin-1
 				// See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
 				alt_text_data.bytes.into_iter().map(|c| c as char).collect::<String>()
 			} else {
-				log::info!("converting alt text from bytes");
 				String::from_utf8(alt_text_data.bytes).map_err(|_| Error::ConversionFailure)?
 			};
 		}
@@ -934,19 +928,16 @@ impl Clipboard {
 		wait: bool,
 	) -> Result<()> {
 		let mut data = vec![];
-		log::info!("started data blob");
 		if let Some(alt_text) = alt {
 			data.push(ClipboardData {
 				bytes: alt_text.into_owned().into_bytes(),
 				format: self.inner.atoms.UTF8_STRING,
 			});
-			log::info!("pushed alt text to data blob, result: {:?}", data);
 		}
 		data.push(ClipboardData {
 			bytes: html.into_owned().into_bytes(),
 			format: self.inner.atoms.HTML,
 		});
-		log::info!("pushed HTML to data blob, result: {:?}", data);
 		self.inner.write(data, selection, wait)
 	}
 
