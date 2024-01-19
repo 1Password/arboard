@@ -888,28 +888,42 @@ impl Clipboard {
 	}
 
 	pub(crate) fn get_html(&self, selection: LinuxClipboardKind) -> Result<HTMLData> {
-		let html_formats = [
-			self.inner.atoms.HTML,
+		let html_format = [self.inner.atoms.HTML];
+		let alt_text_formats = [
 			self.inner.atoms.UTF8_STRING,
 			self.inner.atoms.UTF8_MIME_0,
 			self.inner.atoms.UTF8_MIME_1,
 			self.inner.atoms.STRING,
 			self.inner.atoms.TEXT,
+			self.inner.atoms.TEXT_MIME_UNKNOWN,
 		];
-		let result = self.inner.read(&html_formats, selection)?;
 
-		if result.format == self.inner.atoms.HTML {
-			log::info!("result format and bytes: {:?}", result);
-			let html: String = result.bytes.into_iter().map(|c| c as char).collect();
-			let mut data = HTMLData::from_html(html.clone());
-			// TODO: remove HTML tags when getting
-			data.alt_text = String::from("Raw HTML: ") + html.as_str();
-			Ok(data)
-		} else {
-			log::info!("didn't find HTML mime type, falling back to alt text");
-			let alt_text = String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)?;
-			Ok(HTMLData::from_alt_text(alt_text))
+		let mut data = HTMLData::default();
+
+		log::info!("attempting to read HTML");
+		let html_result = self.inner.read(&html_format, selection);
+		if let Ok(html_data) = html_result {
+			log::info!("HTML result format and bytes: {:?}", html_data);
+			let html: String = html_data.bytes.into_iter().map(|c| c as char).collect();
+			data.html = html;
 		}
+
+		log::info!("attempting to read alt text");
+		let alt_text_result = self.inner.read(&alt_text_formats, selection);
+		if let Ok(alt_text_data) = alt_text_result {
+			log::info!("alt text format and bytes: {:?}", alt_text_data);
+			data.alt_text = if alt_text_data.format == self.inner.atoms.STRING {
+				log::info!("reading alt text as string");
+				// ISO Latin-1
+				// See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
+				alt_text_data.bytes.into_iter().map(|c| c as char).collect::<String>()
+			} else {
+				log::info!("converting alt text from bytes");
+				String::from_utf8(alt_text_data.bytes).map_err(|_| Error::ConversionFailure)?
+			};
+		}
+
+		Ok(data)
 	}
 
 	pub(crate) fn set_html(
