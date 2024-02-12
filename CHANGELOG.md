@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.3.1 on 2024-12-02
+
+### Changed
+- Updated Windows clipboard and migrated from `winapi` to `windows-sys`.
+- Internally migrated to Rust 2021 edition.
+- Significantly improved the crate's error documentation.
+- Updated `core-graphics` to `0.23`
+- Updated `x11rb` to `0.13`
+
 ## 3.3.0 on 2023-20-11
 
 ### Added
