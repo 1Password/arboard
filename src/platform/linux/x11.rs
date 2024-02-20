@@ -96,6 +96,8 @@ thread_local! {
 const LONG_TIMEOUT_DUR: Duration = Duration::from_millis(4000);
 const SHORT_TIMEOUT_DUR: Duration = Duration::from_millis(10);
 
+static X11_SERVER_CONN_TIMEOUT_DUR: RwLock<Duration> = RwLock::new(SHORT_TIMEOUT_DUR);
+
 #[derive(Debug, PartialEq, Eq)]
 enum ManagerHandoverState {
 	Idle,
@@ -139,9 +141,15 @@ impl XContext {
 		thread::spawn(move || {
 			tx.send(RustConnection::connect(None)).ok(); // disregard error sending on channel as main thread has timed out.
 		});
-		let patient_conn = rx.recv_timeout(SHORT_TIMEOUT_DUR).map_err(|_| Error::Unknown {
-			description: String::from("X11 server connection timed out because it was unreachable"),
-		})?;
+		let patient_conn =
+			rx.recv_timeout(*X11_SERVER_CONN_TIMEOUT_DUR.read()).map_err(|e| match e {
+				mpsc::RecvTimeoutError::Timeout => Error::X11ServerConnTimeout,
+				mpsc::RecvTimeoutError::Disconnected => Error::Unknown {
+					description: String::from(
+						"The channel to the X11 server connection thread was disconnected.",
+					),
+				},
+			})?;
 		let (conn, screen_num): (RustConnection, _) = patient_conn.map_err(into_unknown)?;
 
 		let screen = conn
@@ -832,6 +840,16 @@ pub(crate) struct Clipboard {
 }
 
 impl Clipboard {
+	#[inline]
+	pub(crate) fn get_x11_server_conn_timeout() -> Duration {
+		*X11_SERVER_CONN_TIMEOUT_DUR.read()
+	}
+
+	#[inline]
+	pub(crate) fn set_x11_server_conn_timeout(dur: Duration) {
+		*X11_SERVER_CONN_TIMEOUT_DUR.write() = dur;
+	}
+
 	pub(crate) fn new() -> Result<Self> {
 		let mut global_cb = CLIPBOARD.lock();
 		if let Some(global_cb) = &*global_cb {

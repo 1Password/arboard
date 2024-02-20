@@ -51,6 +51,13 @@ pub enum Error {
 	#[error("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format.")]
 	ConversionFailure,
 
+	/// X11 server connection timed out because it was unreachable.
+	///
+	/// This error is only relevant on X11 systems and is returned when the X11 server
+	/// could not be connected to in time.
+	#[error("X11 server connection timed out because it was unreachable")]
+	X11ServerConnTimeout,
+
 	/// Any error that doesn't fit the other error types.
 	///
 	/// The `description` field is only meant to help the developer and should not be relied on as a
@@ -76,6 +83,7 @@ impl std::fmt::Debug for Error {
 			ClipboardNotSupported,
 			ClipboardOccupied,
 			ConversionFailure,
+			X11ServerConnTimeout,
 			Unknown { .. }
 		);
 		f.write_fmt(format_args!("{} - \"{}\"", name, self))
