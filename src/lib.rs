@@ -9,7 +9,7 @@ and conditions of the chosen license apply to this file.
 */
 
 mod common;
-use std::{borrow::Cow, time::Duration};
+use std::borrow::Cow;
 
 pub use common::Error;
 #[cfg(feature = "image-data")]
@@ -65,20 +65,24 @@ pub struct Clipboard {
 }
 
 impl Clipboard {
+	/// Get the timeout for X11 server connection in milliseconds.
+	///
 	#[cfg(all(
 		unix,
 		not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
 	))]
-	pub fn get_x11_server_conn_timeout() -> Duration {
+	pub fn get_x11_server_conn_timeout() -> u64 {
 		platform::Clipboard::get_x11_server_conn_timeout()
 	}
 
+	/// Set the timeout for X11 server connection in milliseconds.
+	///
 	#[cfg(all(
 		unix,
 		not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
 	))]
-	pub fn set_x11_server_conn_timeout(dur: Duration) {
-		platform::Clipboard::set_x11_server_conn_timeout(dur);
+	pub fn set_x11_server_conn_timeout(msecs: u64) {
+		platform::Clipboard::set_x11_server_conn_timeout(msecs);
 	}
 
 	/// Creates an instance of the clipboard.

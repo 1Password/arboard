@@ -1,4 +1,4 @@
-use std::{borrow::Cow, time::Duration};
+use std::borrow::Cow;
 
 #[cfg(feature = "wayland-data-control")]
 use log::{trace, warn};
@@ -76,13 +76,13 @@ pub(crate) enum Clipboard {
 
 impl Clipboard {
 	#[inline]
-	pub(crate) fn get_x11_server_conn_timeout() -> Duration {
-		x11::Clipboard::get_x11_server_conn_timeout()
+	pub(crate) fn get_x11_server_conn_timeout() -> u64 {
+		x11::Clipboard::get_server_conn_timeout_msecs()
 	}
 
 	#[inline]
-	pub(crate) fn set_x11_server_conn_timeout(dur: Duration) {
-		x11::Clipboard::set_x11_server_conn_timeout(dur);
+	pub(crate) fn set_x11_server_conn_timeout(msecs: u64) {
+		x11::Clipboard::set_server_conn_timeout_msecs(msecs);
 	}
 
 	pub(crate) fn new() -> Result<Self, Error> {

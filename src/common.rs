@@ -51,7 +51,7 @@ pub enum Error {
 	#[error("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format.")]
 	ConversionFailure,
 
-	/// X11 server connection timed out because it was unreachable.
+	/// X11 server connection timed out error.
 	///
 	/// This error is only relevant on X11 systems and is returned when the X11 server
 	/// could not be connected to in time.
