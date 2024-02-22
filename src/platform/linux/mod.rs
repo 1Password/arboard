@@ -244,7 +244,7 @@ pub trait SetExtLinux: private::Sealed {
 	/// This is useful for short-lived programs so that it doesn't block until new contents on the clipboard
 	/// were added and will exit as so.
 	///
-	/// Note: this will call [`wait()`][SetExtLinux::wait].
+	/// Note: this will call [`wait()`][SetExtLinux::wait] if it wasn't previously set.
 	fn wait_until(self, deadline: Instant) -> Self;
 }
 
