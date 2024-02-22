@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, time::Instant};
 
 #[cfg(feature = "wayland-data-control")]
 use log::{trace, warn};
@@ -143,17 +143,21 @@ impl GetExtLinux for crate::Get<'_> {
 pub(crate) struct Set<'clipboard> {
 	clipboard: &'clipboard mut Clipboard,
 	wait: bool,
+	wait_until: Option<Instant>,
 	selection: LinuxClipboardKind,
 }
 
 impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard, wait: false, selection: LinuxClipboardKind::Clipboard }
+		Self { clipboard, wait: false, wait_until: None, selection: LinuxClipboardKind::Clipboard }
 	}
 
 	pub(crate) fn text(self, text: Cow<'_, str>) -> Result<(), Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_text(text, self.selection, self.wait),
+			Clipboard::X11(clipboard) => {
+				clipboard.set_text(text, self.selection, self.wait, self.wait_until)
+			}
+
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.set_text(text, self.selection, self.wait),
 		}
@@ -161,7 +165,10 @@ impl<'clipboard> Set<'clipboard> {
 
 	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
+			Clipboard::X11(clipboard) => {
+				clipboard.set_html(html, alt, self.selection, self.wait, self.wait_until)
+			}
+
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
 		}
@@ -170,7 +177,10 @@ impl<'clipboard> Set<'clipboard> {
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, image: ImageData<'_>) -> Result<(), Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_image(image, self.selection, self.wait),
+			Clipboard::X11(clipboard) => {
+				clipboard.set_image(image, self.selection, self.wait, self.wait_until)
+			}
+
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.set_image(image, self.selection, self.wait),
 		}
@@ -227,6 +237,15 @@ pub trait SetExtLinux: private::Sealed {
 	/// # }
 	/// ```
 	fn clipboard(self, selection: LinuxClipboardKind) -> Self;
+
+	/// Whether or not to wait for the clipboard's content to be replaced after setting it. This waits until the
+	/// `deadline` has exceeded.
+	///
+	/// This is useful for short-lived programs so that it doesn't block until new contents on the clipboard
+	/// were added and will exit as so.
+	///
+	/// Note: this will call [`wait()`][SetExtLinux::wait].
+	fn wait_until(self, deadline: Instant) -> Self;
 }
 
 impl SetExtLinux for crate::Set<'_> {
@@ -237,6 +256,15 @@ impl SetExtLinux for crate::Set<'_> {
 
 	fn clipboard(mut self, selection: LinuxClipboardKind) -> Self {
 		self.platform.selection = selection;
+		self
+	}
+
+	fn wait_until(mut self, deadline: Instant) -> Self {
+		self.platform.wait_until = Some(deadline);
+		if !self.platform.wait {
+			self.platform.wait = true;
+		}
+
 		self
 	}
 }
