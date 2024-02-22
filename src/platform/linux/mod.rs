@@ -244,6 +244,9 @@ pub trait SetExtLinux: private::Sealed {
 	/// This is useful for short-lived programs so that it doesn't block until new contents on the clipboard
 	/// were added and will exit as so.
 	///
+	/// For X11, this will wait until it either had new contents available in the clipboard or if the
+	/// `deadline` was exceeded. This isn't available for Wayland and will not do anything.
+	///
 	/// Note: this will call [`wait()`][SetExtLinux::wait] if it wasn't previously set.
 	fn wait_until(self, deadline: Instant) -> Self;
 }
