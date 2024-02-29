@@ -120,7 +120,7 @@ impl<'clipboard> Get<'clipboard> {
 		match self.clipboard {
 			Clipboard::X11(clipboard) => clipboard.get_html(self.selection),
 			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => Err("not implemented"),
+			Clipboard::WlDataControl(clipboard) => clipboard.get_html(self.selection),
 		}
 	}
 

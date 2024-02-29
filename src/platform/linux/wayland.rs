@@ -11,9 +11,9 @@ use wl_clipboard_rs::{
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
 use super::{into_unknown, LinuxClipboardKind};
-use crate::common::Error;
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
+use crate::common::{Error, HTMLData};
 
 #[cfg(feature = "image-data")]
 const MIME_PNG: &str = "image/png";
@@ -58,21 +58,18 @@ impl Clipboard {
 		use wl_clipboard_rs::paste::MimeType;
 
 		let result = get_contents(selection.try_into()?, Seat::Unspecified, MimeType::Text);
-		match result {
-			Ok((mut pipe, _)) => {
-				let mut contents = vec![];
-				pipe.read_to_end(&mut contents).map_err(into_unknown)?;
-				String::from_utf8(contents).map_err(|_| Error::ConversionFailure)
-			}
+		process_result(result)
+	}
 
-			Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
-				Err(Error::ContentNotAvailable)
-			}
+	pub(crate) fn get_html(&mut self, selection: LinuxClipboardKind) -> Result<HTMLData, Error> {
+		use wl_clipboard_rs::paste::MimeType;
 
-			Err(PasteError::PrimarySelectionUnsupported) => Err(Error::ClipboardNotSupported),
+		let html_result =
+			get_contents(selection.try_into()?, Seat::Unspecified, MimeType::Specific("text/html"));
+		let mut result = HTMLData::from_html(process_result(html_result)?);
 
-			Err(err) => Err(Error::Unknown { description: err.to_string() }),
-		}
+		result.alt_text = self.get_text(selection)?;
+		Ok(result)
 	}
 
 	pub(crate) fn set_text(
@@ -172,5 +169,25 @@ impl Clipboard {
 		let source = Source::Bytes(image.into());
 		opts.copy(source, MimeType::Specific(MIME_PNG.into())).map_err(into_unknown)?;
 		Ok(())
+	}
+}
+
+fn process_result(
+	result: Result<(os_pipe::PipeReader, String), wl_clipboard_rs::paste::Error>,
+) -> Result<String, Error> {
+	match result {
+		Ok((mut pipe, _)) => {
+			let mut contents = vec![];
+			pipe.read_to_end(&mut contents).map_err(into_unknown)?;
+			String::from_utf8(contents).map_err(|_| Error::ConversionFailure)
+		}
+
+		Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
+			Err(Error::ContentNotAvailable)
+		}
+
+		Err(PasteError::PrimarySelectionUnsupported) => Err(Error::ClipboardNotSupported),
+
+		Err(err) => Err(Error::Unknown { description: err.to_string() }),
 	}
 }
