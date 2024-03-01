@@ -419,7 +419,7 @@ impl Drop for Clipboard {
 	fn drop(&mut self) {}
 }
 
-struct OpenClipboard<'clipboard> {
+pub struct OpenClipboard<'clipboard> {
 	_inner: clipboard_win::Clipboard,
 	// The Windows clipboard can not be sent between threads once
 	// open.
