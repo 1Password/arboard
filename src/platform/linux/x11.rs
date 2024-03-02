@@ -17,7 +17,7 @@ use std::{
 	cell::RefCell,
 	collections::{hash_map::Entry, HashMap},
 	sync::{
-		atomic::{AtomicBool, Ordering, AtomicU64},
+		atomic::{AtomicBool, AtomicU64, Ordering},
 		mpsc, Arc,
 	},
 	thread::{self, JoinHandle},
@@ -142,15 +142,14 @@ impl XContext {
 			tx.send(RustConnection::connect(None)).ok(); // disregard error sending on channel as main thread has timed out.
 		});
 		let timeout_dur = Duration::from_millis(Clipboard::get_server_conn_timeout_msecs());
-		let patient_conn =
-			rx.recv_timeout(timeout_dur).map_err(|e| match e {
-				mpsc::RecvTimeoutError::Timeout => Error::X11ServerConnTimeout,
-				mpsc::RecvTimeoutError::Disconnected => Error::Unknown {
-					description: String::from(
-						"The channel to the X11 server connection thread was disconnected.",
-					),
-				},
-			})?;
+		let patient_conn = rx.recv_timeout(timeout_dur).map_err(|e| match e {
+			mpsc::RecvTimeoutError::Timeout => Error::X11ServerConnTimeout,
+			mpsc::RecvTimeoutError::Disconnected => Error::Unknown {
+				description: String::from(
+					"The channel to the X11 server connection thread was disconnected.",
+				),
+			},
+		})?;
 		let (conn, screen_num): (RustConnection, _) = patient_conn.map_err(into_unknown)?;
 
 		let screen = conn
