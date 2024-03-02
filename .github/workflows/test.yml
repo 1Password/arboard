@@ -91,3 +91,10 @@ jobs:
 
       - name: Check soundness
         run: cargo miri test windows --features image-data
+
+  semver:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check semver
+      uses: obi1kenobi/cargo-semver-checks-action@v2
