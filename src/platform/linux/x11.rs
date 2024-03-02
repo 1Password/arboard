@@ -228,6 +228,7 @@ impl Inner {
 		data: Vec<ClipboardData>,
 		selection: LinuxClipboardKind,
 		wait: bool,
+		until: Option<Instant>,
 	) -> Result<()> {
 		if self.serve_stopped.load(Ordering::Relaxed) {
 			return Err(Error::Unknown {
@@ -264,7 +265,13 @@ impl Inner {
 			drop(data_guard);
 
 			// Wait for the clipboard's content to be changed.
-			selection.data_changed.wait(&mut guard);
+			match until {
+				Some(deadline) => {
+					selection.data_changed.wait_until(&mut guard, deadline);
+				}
+
+				None => selection.data_changed.wait(&mut guard),
+			}
 		}
 
 		Ok(())
@@ -876,12 +883,13 @@ impl Clipboard {
 		message: Cow<'_, str>,
 		selection: LinuxClipboardKind,
 		wait: bool,
+		until: Option<Instant>,
 	) -> Result<()> {
 		let data = vec![ClipboardData {
 			bytes: message.into_owned().into_bytes(),
 			format: self.inner.atoms.UTF8_STRING,
 		}];
-		self.inner.write(data, selection, wait)
+		self.inner.write(data, selection, wait, until)
 	}
 
 	pub(crate) fn set_html(
@@ -890,6 +898,7 @@ impl Clipboard {
 		alt: Option<Cow<'_, str>>,
 		selection: LinuxClipboardKind,
 		wait: bool,
+		until: Option<Instant>,
 	) -> Result<()> {
 		let mut data = vec![];
 		if let Some(alt_text) = alt {
@@ -902,7 +911,7 @@ impl Clipboard {
 			bytes: html.into_owned().into_bytes(),
 			format: self.inner.atoms.HTML,
 		});
-		self.inner.write(data, selection, wait)
+		self.inner.write(data, selection, wait, until)
 	}
 
 	#[cfg(feature = "image-data")]
@@ -929,10 +938,11 @@ impl Clipboard {
 		image: ImageData,
 		selection: LinuxClipboardKind,
 		wait: bool,
+		until: Option<Instant>,
 	) -> Result<()> {
 		let encoded = encode_as_png(&image)?;
 		let data = vec![ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME }];
-		self.inner.write(data, selection, wait)
+		self.inner.write(data, selection, wait, until)
 	}
 }
 
