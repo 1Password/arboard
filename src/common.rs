@@ -167,6 +167,9 @@ impl<F: FnOnce()> Drop for ScopeGuard<F> {
 
 /// Common trait for sealing platform extension traits.
 pub(crate) mod private {
+	// This is currently unused on macOS, so silence the warning which appears
+	// since there's no extension traits making use of this trait sealing structure.
+	#[cfg_attr(target_vendor = "apple", allow(unreachable_pub))]
 	pub trait Sealed {}
 
 	impl Sealed for crate::Get<'_> {}
