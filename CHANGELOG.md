@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.3.2 on 2024-12-02
+
+### Fixed
+- Fixed compilation on Windows when using the `image-data` feature combined with older Rust compilers.
+
 ## 3.3.1 on 2024-12-02
 
 ### Changed
