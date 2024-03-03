@@ -143,6 +143,22 @@ impl<'a> ImageData<'a> {
 	}
 }
 
+#[derive(Debug, Default)]
+pub struct HTMLData {
+	pub html: String,
+	pub alt_text: String,
+}
+
+impl HTMLData {
+	pub fn from_html(html: String) -> Self {
+		Self { html, ..Default::default() }
+	}
+
+	pub fn from_alt_text(alt_text: String) -> Self {
+		Self { alt_text, ..Default::default() }
+	}
+}
+
 #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
 pub(crate) struct ScopeGuard<F: FnOnce()> {
 	callback: Option<F>,
