@@ -17,7 +17,7 @@ use std::{
 	cell::RefCell,
 	collections::{hash_map::Entry, HashMap},
 	sync::{
-		atomic::{AtomicBool, Ordering},
+		atomic::{AtomicBool, AtomicU64, Ordering},
 		mpsc, Arc,
 	},
 	thread::{self, JoinHandle},
@@ -96,6 +96,8 @@ thread_local! {
 const LONG_TIMEOUT_DUR: Duration = Duration::from_millis(4000);
 const SHORT_TIMEOUT_DUR: Duration = Duration::from_millis(10);
 
+static SERVER_CONN_TIMEOUT_MSECS: AtomicU64 = AtomicU64::new(SHORT_TIMEOUT_DUR.as_millis() as _);
+
 #[derive(Debug, PartialEq, Eq)]
 enum ManagerHandoverState {
 	Idle,
@@ -139,8 +141,14 @@ impl XContext {
 		thread::spawn(move || {
 			tx.send(RustConnection::connect(None)).ok(); // disregard error sending on channel as main thread has timed out.
 		});
-		let patient_conn = rx.recv_timeout(SHORT_TIMEOUT_DUR).map_err(|_| Error::Unknown {
-			description: String::from("X11 server connection timed out because it was unreachable"),
+		let timeout_dur = Duration::from_millis(Clipboard::get_server_conn_timeout_msecs());
+		let patient_conn = rx.recv_timeout(timeout_dur).map_err(|e| match e {
+			mpsc::RecvTimeoutError::Timeout => Error::X11ServerConnTimeout,
+			mpsc::RecvTimeoutError::Disconnected => Error::Unknown {
+				description: String::from(
+					"The channel to the X11 server connection thread was disconnected.",
+				),
+			},
 		})?;
 		let (conn, screen_num): (RustConnection, _) = patient_conn.map_err(into_unknown)?;
 
@@ -832,6 +840,16 @@ pub(crate) struct Clipboard {
 }
 
 impl Clipboard {
+	#[inline]
+	pub(crate) fn get_server_conn_timeout_msecs() -> u64 {
+		SERVER_CONN_TIMEOUT_MSECS.load(Ordering::Relaxed)
+	}
+
+	#[inline]
+	pub(crate) fn set_server_conn_timeout_msecs(msecs: u64) {
+		SERVER_CONN_TIMEOUT_MSECS.store(msecs, Ordering::Relaxed);
+	}
+
 	pub(crate) fn new() -> Result<Self> {
 		let mut global_cb = CLIPBOARD.lock();
 		if let Some(global_cb) = &*global_cb {
