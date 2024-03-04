@@ -17,6 +17,9 @@ use std::{borrow::Cow, marker::PhantomData, thread, time::Duration};
 mod image_data {
 	use super::*;
 	use crate::common::ScopeGuard;
+	use image::codecs::png::PngEncoder;
+	use image::ColorType::Rgba8;
+	use image::ImageEncoder;
 	use std::{convert::TryInto, ffi::c_void, io, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
 		Foundation::HGLOBAL,
@@ -112,6 +115,41 @@ mod image_data {
 		}
 
 		if unsafe { SetClipboardData(CF_DIBV5 as u32, hdata as _) } == 0 {
+			unsafe { DeleteObject(hdata as _) };
+			Err(last_error("SetClipboardData failed with error"))
+		} else {
+			Ok(())
+		}
+	}
+
+	pub fn add_png_file(image: &ImageData) -> Result<(), Error> {
+		// Try encoding the image as PNG.
+		let mut buf = Vec::new();
+		let encoder = PngEncoder::new(&mut buf);
+
+		if let Err(_) =
+			encoder.write_image(&image.bytes, image.width as u32, image.height as u32, Rgba8)
+		{
+			return Err(last_error("Cannot encode image data as PNG."));
+		}
+
+		// Register PNG format.
+		let format_id = match clipboard_win::register_format("PNG") {
+			Some(format_id) => format_id.into(),
+			None => return Err(last_error("Cannot register PNG clipboard format.")),
+		};
+
+		let data_size = buf.len();
+		let hdata = unsafe { global_alloc(data_size)? };
+
+		unsafe {
+			let data_ptr = global_lock(hdata)?;
+			let pixels_dst = (data_ptr as usize) as *mut u8;
+			copy_nonoverlapping::<u8>(buf.as_ptr(), pixels_dst, data_size);
+			GlobalUnlock(hdata);
+		}
+
+		if unsafe { SetClipboardData(format_id, hdata as _) } == 0 {
 			unsafe { DeleteObject(hdata as _) };
 			Err(last_error("SetClipboardData failed with error"))
 		} else {
@@ -606,7 +644,9 @@ impl<'clipboard> Set<'clipboard> {
 			)));
 		};
 
-		image_data::add_cf_dibv5(open_clipboard, image)
+		image_data::add_png_file(&image)?;
+		image_data::add_cf_dibv5(open_clipboard, image)?;
+		Ok(())
 	}
 }
 
