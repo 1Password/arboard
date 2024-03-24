@@ -31,7 +31,7 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 			image.bytes.as_ref(),
 			image.width as u32,
 			image.height as u32,
-			image::ColorType::Rgba8,
+			image::ExtendedColorType::Rgba8,
 		)
 		.map_err(|_| Error::ConversionFailure)?;
 
