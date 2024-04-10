@@ -37,7 +37,10 @@ mod image_data {
 		Error::unknown(format!("{}: {}", message, os_error))
 	}
 
-	pub fn add_cf_dibv5(_open_clipboard: OpenClipboard, image: ImageData) -> Result<(), Error> {
+	pub(super) fn add_cf_dibv5(
+		_open_clipboard: OpenClipboard,
+		image: ImageData,
+	) -> Result<(), Error> {
 		// This constant is missing in windows-rs
 		// https://github.com/microsoft/windows-rs/issues/2711
 		#[allow(non_upper_case_globals)]
@@ -137,7 +140,7 @@ mod image_data {
 		}
 	}
 
-	pub fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
+	pub(super) fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 		// The DIBV5 format is a BITMAPV5HEADER followed by the pixel data according to
 		// https://docs.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats
 

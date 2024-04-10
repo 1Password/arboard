@@ -1,6 +1,6 @@
 [package]
 name = "arboard"
-version = "3.3.1"
+version = "3.3.2"
 authors = ["Artur Kovacs <kovacs.artur.barnabas@gmail.com>", "Avi Weinstock <aweinstock314@gmail.com>", "Arboard contributors"]
 description = "Image and text handling for the OS clipboard."
 repository = "https://github.com/1Password/arboard"
@@ -37,13 +37,13 @@ objc = "0.2"
 objc_id = "0.1"
 objc-foundation = "0.1"
 core-graphics = { version = "0.23", optional = true }
-image = { version = "0.24", optional = true, default-features = false, features = ["tiff"] }
+image = { version = "0.25", optional = true, default-features = false, features = ["tiff"] }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
 log = "0.4"
 x11rb = { version = "0.13" }
 wl-clipboard-rs = { version = "0.8", optional = true }
-image = { version = "0.24", optional = true, default-features = false, features = ["png"] }
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 parking_lot = "0.12"
 
 [[example]]
