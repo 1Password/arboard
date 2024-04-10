@@ -205,6 +205,20 @@ enum ReadSelNotifyResult {
 	EventNotRecognized,
 }
 
+/// Configuration on how long to wait for a new X11 copy event is emitted.
+#[derive(Default)]
+pub enum WaitConfig {
+	/// Waits until the given [`Instant`] has reached.
+	Until(Instant),
+
+	/// Waits forever until a new event is reached.
+	Forever,
+
+	/// It shouldn't wait.
+	#[default]
+	None,
+}
+
 impl Inner {
 	fn new() -> Result<Self> {
 		let server = XContext::new()?;
@@ -227,8 +241,7 @@ impl Inner {
 		&self,
 		data: Vec<ClipboardData>,
 		selection: LinuxClipboardKind,
-		wait: bool,
-		until: Option<Instant>,
+		wait: WaitConfig,
 	) -> Result<()> {
 		if self.serve_stopped.load(Ordering::Relaxed) {
 			return Err(Error::Unknown {
@@ -261,16 +274,16 @@ impl Inner {
 		// It is important that the mutex is locked to prevent this notification getting lost.
 		selection.data_changed.notify_all();
 
-		if wait {
-			drop(data_guard);
+		match wait {
+			WaitConfig::None => {}
+			WaitConfig::Forever => {
+				drop(data_guard);
+				selection.data_changed.wait(&mut guard);
+			}
 
-			// Wait for the clipboard's content to be changed.
-			match until {
-				Some(deadline) => {
-					selection.data_changed.wait_until(&mut guard, deadline);
-				}
-
-				None => selection.data_changed.wait(&mut guard),
+			WaitConfig::Until(deadline) => {
+				drop(data_guard);
+				selection.data_changed.wait_until(&mut guard, deadline);
 			}
 		}
 
@@ -882,14 +895,13 @@ impl Clipboard {
 		&self,
 		message: Cow<'_, str>,
 		selection: LinuxClipboardKind,
-		wait: bool,
-		until: Option<Instant>,
+		wait: WaitConfig,
 	) -> Result<()> {
 		let data = vec![ClipboardData {
 			bytes: message.into_owned().into_bytes(),
 			format: self.inner.atoms.UTF8_STRING,
 		}];
-		self.inner.write(data, selection, wait, until)
+		self.inner.write(data, selection, wait)
 	}
 
 	pub(crate) fn set_html(
@@ -897,8 +909,7 @@ impl Clipboard {
 		html: Cow<'_, str>,
 		alt: Option<Cow<'_, str>>,
 		selection: LinuxClipboardKind,
-		wait: bool,
-		until: Option<Instant>,
+		wait: WaitConfig,
 	) -> Result<()> {
 		let mut data = vec![];
 		if let Some(alt_text) = alt {
@@ -911,7 +922,7 @@ impl Clipboard {
 			bytes: html.into_owned().into_bytes(),
 			format: self.inner.atoms.HTML,
 		});
-		self.inner.write(data, selection, wait, until)
+		self.inner.write(data, selection, wait)
 	}
 
 	#[cfg(feature = "image-data")]
@@ -937,12 +948,11 @@ impl Clipboard {
 		&self,
 		image: ImageData,
 		selection: LinuxClipboardKind,
-		wait: bool,
-		until: Option<Instant>,
+		wait: WaitConfig,
 	) -> Result<()> {
 		let encoded = encode_as_png(&image)?;
 		let data = vec![ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME }];
-		self.inner.write(data, selection, wait, until)
+		self.inner.write(data, selection, wait)
 	}
 }
 
