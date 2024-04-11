@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::convert::TryInto;
 use std::io::Read;
 
 use wl_clipboard_rs::{
@@ -82,11 +81,7 @@ impl Clipboard {
 		wait: WaitConfig,
 	) -> Result<(), Error> {
 		let mut opts = Options::new();
-		opts.foreground(match wait {
-			WaitConfig::Forever => true,
-			_ => false,
-		});
-
+		opts.foreground(matches!(wait, WaitConfig::Forever));
 		opts.clipboard(selection.try_into()?);
 		let source = Source::Bytes(text.into_owned().into_bytes().into_boxed_slice());
 		opts.copy(source, MimeType::Text).map_err(|e| match e {
@@ -105,11 +100,7 @@ impl Clipboard {
 	) -> Result<(), Error> {
 		let html_mime = MimeType::Specific(String::from("text/html"));
 		let mut opts = Options::new();
-		opts.foreground(match wait {
-			WaitConfig::Forever => true,
-			_ => false,
-		});
-
+		opts.foreground(matches!(wait, WaitConfig::Forever));
 		opts.clipboard(selection.try_into()?);
 		let html_source = Source::Bytes(html.into_owned().into_bytes().into_boxed_slice());
 		match alt {
@@ -175,11 +166,7 @@ impl Clipboard {
 	) -> Result<(), Error> {
 		let image = encode_as_png(&image)?;
 		let mut opts = Options::new();
-		opts.foreground(match wait {
-			WaitConfig::Forever => true,
-			_ => false,
-		});
-
+		opts.foreground(matches!(wait, WaitConfig::Forever));
 		opts.clipboard(selection.try_into()?);
 		let source = Source::Bytes(image.into());
 		opts.copy(source, MimeType::Specific(MIME_PNG.into())).map_err(into_unknown)?;
