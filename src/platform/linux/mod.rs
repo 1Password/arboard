@@ -140,29 +140,34 @@ impl GetExtLinux for crate::Get<'_> {
 	}
 }
 
+/// Configuration on how long to wait for a new X11 copy event is emitted.
+#[derive(Default)]
+pub(crate) enum WaitConfig {
+	/// Waits until the given [`Instant`] has reached.
+	Until(Instant),
+
+	/// Waits forever until a new event is reached.
+	Forever,
+
+	/// It shouldn't wait.
+	#[default]
+	None,
+}
+
 pub(crate) struct Set<'clipboard> {
 	clipboard: &'clipboard mut Clipboard,
-	wait: bool,
-	wait_until: Option<Instant>,
+	wait: WaitConfig,
 	selection: LinuxClipboardKind,
 }
 
 impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard, wait: false, wait_until: None, selection: LinuxClipboardKind::Clipboard }
+		Self { clipboard, wait: WaitConfig::default(), selection: LinuxClipboardKind::Clipboard }
 	}
 
 	pub(crate) fn text(self, text: Cow<'_, str>) -> Result<(), Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_text(
-				text,
-				self.selection,
-				match (self.wait, self.wait_until) {
-					(_, Some(deadline)) => x11::WaitConfig::Until(deadline),
-					(true, None) => x11::WaitConfig::Forever,
-					(false, None) => x11::WaitConfig::None,
-				},
-			),
+			Clipboard::X11(clipboard) => clipboard.set_text(text, self.selection, self.wait),
 
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.set_text(text, self.selection, self.wait),
@@ -171,16 +176,7 @@ impl<'clipboard> Set<'clipboard> {
 
 	pub(crate) fn html(self, html: Cow<'_, str>, alt: Option<Cow<'_, str>>) -> Result<(), Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_html(
-				html,
-				alt,
-				self.selection,
-				match (self.wait, self.wait_until) {
-					(_, Some(deadline)) => x11::WaitConfig::Until(deadline),
-					(true, None) => x11::WaitConfig::Forever,
-					(false, None) => x11::WaitConfig::None,
-				},
-			),
+			Clipboard::X11(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
 
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.set_html(html, alt, self.selection, self.wait),
@@ -190,15 +186,7 @@ impl<'clipboard> Set<'clipboard> {
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, image: ImageData<'_>) -> Result<(), Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.set_image(
-				image,
-				self.selection,
-				match (self.wait, self.wait_until) {
-					(_, Some(deadline)) => x11::WaitConfig::Until(deadline),
-					(true, None) => x11::WaitConfig::Forever,
-					(false, None) => x11::WaitConfig::None,
-				},
-			),
+			Clipboard::X11(clipboard) => clipboard.set_image(image, self.selection, self.wait),
 
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.set_image(image, self.selection, self.wait),
@@ -235,6 +223,16 @@ pub trait SetExtLinux: private::Sealed {
 	/// [daemonize example]: https://github.com/1Password/arboard/blob/master/examples/daemonize.rs
 	fn wait(self) -> Self;
 
+	/// Whether or not to wait for the clipboard's content to be replaced after setting it. This waits until the
+	/// `deadline` has exceeded.
+	///
+	/// This is useful for short-lived programs so it won't block until new contents on the clipboard
+	/// were added.
+	///
+	/// Note: this is a superset of [`wait()`][SetExtLinux::wait] and will overwrite any state
+	/// that was previously set using it.
+	fn wait_until(self, deadline: Instant) -> Self;
+
 	/// Sets the clipboard the operation will store its data to.
 	///
 	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
@@ -256,21 +254,11 @@ pub trait SetExtLinux: private::Sealed {
 	/// # }
 	/// ```
 	fn clipboard(self, selection: LinuxClipboardKind) -> Self;
-
-	/// Whether or not to wait for the clipboard's content to be replaced after setting it. This waits until the
-	/// `deadline` has exceeded.
-	///
-	/// This is useful for short-lived programs so it won't block until new contents on the clipboard
-	/// were added.
-	///
-	/// Note: this is a superset of [`wait()`][SetExtLinux::wait] and will overwrite any state
-	/// that was previously set using it.
-	fn wait_until(self, deadline: Instant) -> Self;
 }
 
 impl SetExtLinux for crate::Set<'_> {
 	fn wait(mut self) -> Self {
-		self.platform.wait = true;
+		self.platform.wait = WaitConfig::Forever;
 		self
 	}
 
@@ -280,11 +268,7 @@ impl SetExtLinux for crate::Set<'_> {
 	}
 
 	fn wait_until(mut self, deadline: Instant) -> Self {
-		self.platform.wait_until = Some(deadline);
-		if !self.platform.wait {
-			self.platform.wait = true;
-		}
-
+		self.platform.wait = WaitConfig::Until(deadline);
 		self
 	}
 }

@@ -10,7 +10,7 @@ use wl_clipboard_rs::{
 
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
-use super::{into_unknown, LinuxClipboardKind};
+use super::{into_unknown, LinuxClipboardKind, WaitConfig};
 use crate::common::Error;
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
@@ -79,10 +79,14 @@ impl Clipboard {
 		&self,
 		text: Cow<'_, str>,
 		selection: LinuxClipboardKind,
-		wait: bool,
+		wait: WaitConfig,
 	) -> Result<(), Error> {
 		let mut opts = Options::new();
-		opts.foreground(wait);
+		opts.foreground(match wait {
+			WaitConfig::Forever => true,
+			_ => false,
+		});
+
 		opts.clipboard(selection.try_into()?);
 		let source = Source::Bytes(text.into_owned().into_bytes().into_boxed_slice());
 		opts.copy(source, MimeType::Text).map_err(|e| match e {
@@ -97,11 +101,15 @@ impl Clipboard {
 		html: Cow<'_, str>,
 		alt: Option<Cow<'_, str>>,
 		selection: LinuxClipboardKind,
-		wait: bool,
+		wait: WaitConfig,
 	) -> Result<(), Error> {
 		let html_mime = MimeType::Specific(String::from("text/html"));
 		let mut opts = Options::new();
-		opts.foreground(wait);
+		opts.foreground(match wait {
+			WaitConfig::Forever => true,
+			_ => false,
+		});
+
 		opts.clipboard(selection.try_into()?);
 		let html_source = Source::Bytes(html.into_owned().into_bytes().into_boxed_slice());
 		match alt {
@@ -163,11 +171,15 @@ impl Clipboard {
 		&mut self,
 		image: ImageData,
 		selection: LinuxClipboardKind,
-		wait: bool,
+		wait: WaitConfig,
 	) -> Result<(), Error> {
 		let image = encode_as_png(&image)?;
 		let mut opts = Options::new();
-		opts.foreground(wait);
+		opts.foreground(match wait {
+			WaitConfig::Forever => true,
+			_ => false,
+		});
+
 		opts.clipboard(selection.try_into()?);
 		let source = Source::Bytes(image.into());
 		opts.copy(source, MimeType::Specific(MIME_PNG.into())).map_err(into_unknown)?;

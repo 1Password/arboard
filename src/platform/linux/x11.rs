@@ -45,7 +45,7 @@ use x11rb::{
 
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
-use super::{into_unknown, LinuxClipboardKind};
+use super::{into_unknown, LinuxClipboardKind, WaitConfig};
 #[cfg(feature = "image-data")]
 use crate::ImageData;
 use crate::{common::ScopeGuard, Error};
@@ -203,20 +203,6 @@ enum ReadSelNotifyResult {
 	GotData(Vec<u8>),
 	IncrStarted,
 	EventNotRecognized,
-}
-
-/// Configuration on how long to wait for a new X11 copy event is emitted.
-#[derive(Default)]
-pub enum WaitConfig {
-	/// Waits until the given [`Instant`] has reached.
-	Until(Instant),
-
-	/// Waits forever until a new event is reached.
-	Forever,
-
-	/// It shouldn't wait.
-	#[default]
-	None,
 }
 
 impl Inner {
