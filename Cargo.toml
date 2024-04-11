@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["clipboard", "image"]
 edition = "2021"
-rust-version = "1.61"
+rust-version = "1.67.1"
 
 [features]
 default = ["image-data"]
