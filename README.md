@@ -2,7 +2,7 @@
 
 [![Latest version](https://img.shields.io/crates/v/arboard?color=mediumvioletred)](https://crates.io/crates/arboard)
 [![Documentation](https://docs.rs/arboard/badge.svg)](https://docs.rs/arboard)
-![MSRV](https://img.shields.io/badge/rustc-1.61+-blue.svg)
+![MSRV](https://img.shields.io/badge/rustc-1.67.1+-blue.svg)
 
 ## General
 
