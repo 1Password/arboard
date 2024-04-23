@@ -33,9 +33,10 @@ clipboard-win = "5.3.1"
 log = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc = "0.2"
-objc_id = "0.1"
-objc-foundation = "0.1"
+# Use `relax-void-encoding`, as that allows us to pass `c_void` instead of implementing `Encode` correctly for `&CGImageRef`
+objc2 = { version = "0.5.1", features = ["relax-void-encoding"] }
+objc2-foundation = { version = "0.2.0", features = ["NSArray", "NSString", "NSEnumerator", "NSGeometry"] }
+objc2-app-kit = { version = "0.2.0", features = ["NSPasteboard", "NSPasteboardItem", "NSImage"] }
 core-graphics = { version = "0.23", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["tiff"] }
 
