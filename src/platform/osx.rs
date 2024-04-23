@@ -11,31 +11,18 @@ and conditions of the chosen license apply to this file.
 use crate::common::Error;
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
-#[cfg(feature = "image-data")]
-use core_graphics::{
-	base::{kCGBitmapByteOrderDefault, kCGImageAlphaLast, kCGRenderingIntentDefault, CGFloat},
-	color_space::CGColorSpace,
-	data_provider::{CGDataProvider, CustomData},
-	image::CGImage,
+use objc2::{
+	msg_send_id,
+	rc::{autoreleasepool, Id},
+	runtime::ProtocolObject,
+	ClassType,
 };
-use objc::{
-	msg_send,
-	rc::autoreleasepool,
-	runtime::{Class, Object},
-	sel, sel_impl,
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString};
+use objc2_foundation::{NSArray, NSString};
+use std::{
+	borrow::Cow,
+	panic::{RefUnwindSafe, UnwindSafe},
 };
-use objc_foundation::{INSArray, INSFastEnumeration, INSString, NSArray, NSObject, NSString};
-use objc_id::{Id, Owned};
-use std::{borrow::Cow, ptr::NonNull};
-
-// Required to bring NSPasteboard into the path of the class-resolver
-#[link(name = "AppKit", kind = "framework")]
-extern "C" {
-	static NSPasteboardTypeHTML: *const Object;
-	static NSPasteboardTypeString: *const Object;
-	#[cfg(feature = "image-data")]
-	static NSPasteboardTypeTIFF: *const Object;
-}
 
 /// Returns an NSImage object on success.
 #[cfg(feature = "image-data")]
@@ -43,13 +30,16 @@ fn image_from_pixels(
 	pixels: Vec<u8>,
 	width: usize,
 	height: usize,
-) -> Result<Id<NSObject>, Box<dyn std::error::Error>> {
-	#[repr(C)]
-	#[derive(Copy, Clone)]
-	struct NSSize {
-		width: CGFloat,
-		height: CGFloat,
-	}
+) -> Result<Id<objc2_app_kit::NSImage>, Box<dyn std::error::Error>> {
+	use core_graphics::{
+		base::{kCGBitmapByteOrderDefault, kCGImageAlphaLast, kCGRenderingIntentDefault, CGFloat},
+		color_space::CGColorSpace,
+		data_provider::{CGDataProvider, CustomData},
+		image::{CGImage, CGImageRef},
+	};
+	use objc2_app_kit::NSImage;
+	use objc2_foundation::NSSize;
+	use std::ffi::c_void;
 
 	#[derive(Debug)]
 	struct PixelArray {
@@ -81,42 +71,54 @@ fn image_from_pixels(
 		false,
 		kCGRenderingIntentDefault,
 	);
+
+	// Convert the owned `CGImage` into a reference `&CGImageRef`, and pass
+	// that as `*const c_void`, since `CGImageRef` does not implement
+	// `RefEncode`.
+	let cg_image: *const CGImageRef = &*cg_image;
+	let cg_image: *const c_void = cg_image.cast();
+
 	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
-	let nsimage_class = objc::class!(NSImage);
-	// Take ownership of the newly allocated object, which has an existing retain count.
-	let image: Id<NSObject> = unsafe { Id::from_retained_ptr(msg_send![nsimage_class, alloc]) };
-	#[allow(clippy::let_unit_value)]
-	{
-		// Note: `initWithCGImage` expects a reference (`CGImageRef`), not an actual object.
-		let _: () = unsafe { msg_send![image, initWithCGImage: &*cg_image size:size] };
-	}
+	// XXX: Use `NSImage::initWithCGImage_size` once `objc2-app-kit` supports
+	// CoreGraphics.
+	let image: Id<NSImage> =
+		unsafe { msg_send_id![NSImage::alloc(), initWithCGImage: cg_image, size:size] };
 
 	Ok(image)
 }
 
 pub(crate) struct Clipboard {
-	pasteboard: Id<Object>,
+	pasteboard: Id<NSPasteboard>,
 }
+
+unsafe impl Send for Clipboard {}
+unsafe impl Sync for Clipboard {}
+impl UnwindSafe for Clipboard {}
+impl RefUnwindSafe for Clipboard {}
 
 impl Clipboard {
 	pub(crate) fn new() -> Result<Clipboard, Error> {
-		let cls = Class::get("NSPasteboard").expect("NSPasteboard not registered");
-		let pasteboard: *mut Object = unsafe { msg_send![cls, generalPasteboard] };
+		// Rust only supports 10.7+, while `generalPasteboard` first appeared
+		// in 10.0, so this should always be available.
+		//
+		// However, in some edge cases, like running under launchd (in some
+		// modes) as a daemon, the clipboard object may be unavailable, and
+		// then `generalPasteboard` will return NULL even though it's
+		// documented not to.
+		//
+		// Otherwise we'd just use `NSPasteboard::generalPasteboard()` here.
+		let pasteboard: Option<Id<NSPasteboard>> =
+			unsafe { msg_send_id![NSPasteboard::class(), generalPasteboard] };
 
-		if !pasteboard.is_null() {
-			// SAFETY: `generalPasteboard` is not null and a valid object pointer.
-			let pasteboard: Id<Object> = unsafe { Id::from_ptr(pasteboard) };
+		if let Some(pasteboard) = pasteboard {
 			Ok(Clipboard { pasteboard })
 		} else {
-			// Rust only supports 10.7+, while `generalPasteboard` first appeared in 10.0, so this
-			// is unreachable in "normal apps". However in some edge cases, like running under
-			// launchd (in some modes) as a daemon, the clipboard object may be unavailable.
 			Err(Error::ClipboardNotSupported)
 		}
 	}
 
 	fn clear(&mut self) {
-		let _: usize = unsafe { msg_send![self.pasteboard, clearContents] };
+		unsafe { self.pasteboard.clearContents() };
 	}
 
 	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn std::error::Error>> {
@@ -171,38 +173,31 @@ impl Clipboard {
 }
 
 pub(crate) struct Get<'clipboard> {
-	pasteboard: &'clipboard Object,
+	clipboard: &'clipboard Clipboard,
 }
 
 impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { pasteboard: &*clipboard.pasteboard }
+		Self { clipboard }
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
 		// XXX: There does not appear to be an alternative for obtaining text without the need for
 		// autorelease behavior.
-		autoreleasepool(|| {
+		autoreleasepool(|_| {
 			// XXX: We explicitly use `pasteboardItems` and not `stringForType` since the latter will concat
 			// multiple strings, if present, into one and return it instead of reading just the first which is `arboard`'s
 			// historical behavior.
-			let contents: Option<NonNull<NSArray<NSObject>>> =
-				unsafe { msg_send![self.pasteboard, pasteboardItems] };
-
-			let contents = contents.map(|c| unsafe { c.as_ref() }).ok_or_else(|| {
-				Error::Unknown { description: String::from("NSPasteboard#pasteboardItems errored") }
-			})?;
-
-			for item in contents.enumerator() {
-				let maybe_str: Option<NonNull<NSString>> =
-					unsafe { msg_send![item, stringForType:NSPasteboardTypeString] };
-
-				match maybe_str {
-					Some(string) => {
-						let string: Id<NSString, Owned> = unsafe { Id::from_ptr(string.as_ptr()) };
-						return Ok(string.as_str().to_owned());
+			let contents =
+				unsafe { self.clipboard.pasteboard.pasteboardItems() }.ok_or_else(|| {
+					Error::Unknown {
+						description: String::from("NSPasteboard#pasteboardItems errored"),
 					}
-					None => continue,
+				})?;
+
+			for item in contents {
+				if let Some(string) = unsafe { item.stringForType(NSPasteboardTypeString) } {
+					return Ok(string.to_string());
 				}
 			}
 
@@ -212,27 +207,16 @@ impl<'clipboard> Get<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
-		use objc_foundation::NSData;
+		use objc2_app_kit::NSPasteboardTypeTIFF;
 		use std::io::Cursor;
 
 		// XXX: There does not appear to be an alternative for obtaining images without the need for
 		// autorelease behavior.
-		let image = autoreleasepool(|| {
-			let obj: Option<NonNull<NSData>> =
-				unsafe { msg_send![self.pasteboard, dataForType: NSPasteboardTypeTIFF] };
+		let image = autoreleasepool(|_| {
+			let image_data = unsafe { self.clipboard.pasteboard.dataForType(NSPasteboardTypeTIFF) }
+				.ok_or(Error::ContentNotAvailable)?;
 
-			let image_data: Id<NSData> = if let Some(obj) = obj {
-				unsafe { Id::from_ptr(obj.as_ptr()) }
-			} else {
-				return Err(Error::ContentNotAvailable);
-			};
-
-			let data = unsafe {
-				let len: usize = msg_send![&*image_data, length];
-				let bytes: *const u8 = msg_send![&*image_data, bytes];
-
-				Cursor::new(std::slice::from_raw_parts(bytes, len))
-			};
+			let data = Cursor::new(image_data.bytes());
 
 			let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
 			reader.decode().map_err(|_| Error::ConversionFailure)
@@ -261,11 +245,9 @@ impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {
 		self.clipboard.clear();
 
-		let string_array = NSArray::from_vec(vec![NSString::from_str(&data)]);
-		// Make sure that we pass a pointer to the system and not the array object itself. Otherwise,
-		// the system won't free it because the API doesn't give it ownership of the data. This results in
-		// a memory leak because Rust can never run its destructor.
-		let success = unsafe { msg_send![self.clipboard.pasteboard, writeObjects: &*string_array] };
+		let string_array =
+			NSArray::from_vec(vec![ProtocolObject::from_id(NSString::from_str(&data))]);
+		let success = unsafe { self.clipboard.pasteboard.writeObjects(&string_array) };
 		if success {
 			Ok(())
 		} else {
@@ -286,15 +268,14 @@ impl<'clipboard> Set<'clipboard> {
 		);
 		let html_nss = NSString::from_str(&html);
 		// Make sure that we pass a pointer to the string and not the object itself.
-		let mut success: bool = unsafe {
-			msg_send![self.clipboard.pasteboard, setString: &*html_nss forType:NSPasteboardTypeHTML]
-		};
+		let mut success =
+			unsafe { self.clipboard.pasteboard.setString_forType(&html_nss, NSPasteboardTypeHTML) };
 		if success {
 			if let Some(alt_text) = alt {
 				let alt_nss = NSString::from_str(&alt_text);
 				// Similar to the primary string, we only want a pointer here too.
 				success = unsafe {
-					msg_send![self.clipboard.pasteboard, setString: &*alt_nss forType:NSPasteboardTypeString]
+					self.clipboard.pasteboard.setString_forType(&alt_nss, NSPasteboardTypeString)
 				};
 			}
 		}
@@ -313,9 +294,8 @@ impl<'clipboard> Set<'clipboard> {
 
 		self.clipboard.clear();
 
-		let image_array: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(vec![image]);
-		// Make sure that we pass a pointer to the system and not the array object itself.
-		let success = unsafe { msg_send![self.clipboard.pasteboard, writeObjects: &*image_array] };
+		let image_array = NSArray::from_vec(vec![ProtocolObject::from_id(image)]);
+		let success = unsafe { self.clipboard.pasteboard.writeObjects(&image_array) };
 		if success {
 			Ok(())
 		} else {
