@@ -17,6 +17,9 @@ use std::{borrow::Cow, marker::PhantomData, thread, time::Duration};
 mod image_data {
 	use super::*;
 	use crate::common::ScopeGuard;
+	use image::codecs::png::PngEncoder;
+	use image::ExtendedColorType;
+	use image::ImageEncoder;
 	use std::{convert::TryInto, ffi::c_void, io, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
 		Foundation::HGLOBAL,
@@ -35,6 +38,18 @@ mod image_data {
 	fn last_error(message: &str) -> Error {
 		let os_error = io::Error::last_os_error();
 		Error::unknown(format!("{}: {}", message, os_error))
+	}
+
+	unsafe fn global_unlock_checked(hdata: isize) {
+		// If the memory object is unlocked after decrementing the lock count, the function
+		// returns zero and GetLastError returns NO_ERROR. If it fails, the return value is
+		// zero and GetLastError returns a value other than NO_ERROR.
+		if GlobalUnlock(hdata) == 0 {
+			let err = io::Error::last_os_error();
+			if err.raw_os_error() != Some(0) {
+				log::error!("Failed calling GlobalUnlock when writing data: {}", err);
+			}
+		}
 	}
 
 	pub(super) fn add_cf_dibv5(
@@ -85,17 +100,7 @@ mod image_data {
 		let hdata = unsafe { global_alloc(data_size)? };
 		unsafe {
 			let data_ptr = global_lock(hdata)?;
-			let _unlock = ScopeGuard::new(|| {
-				// If the memory object is unlocked after decrementing the lock count, the function
-				// returns zero and GetLastError returns NO_ERROR. If it fails, the return value is
-				// zero and GetLastError returns a value other than NO_ERROR.
-				if GlobalUnlock(hdata) == 0 {
-					let err = io::Error::last_os_error();
-					if err.raw_os_error() != Some(0) {
-						log::error!("Failed calling GlobalUnlock when writing dibv5 data: {}", err);
-					}
-				}
-			});
+			let _unlock = ScopeGuard::new(|| global_unlock_checked(hdata));
 
 			copy_nonoverlapping::<u8>((&header) as *const _ as *const u8, data_ptr, header_size);
 
@@ -115,6 +120,43 @@ mod image_data {
 		}
 
 		if unsafe { SetClipboardData(CF_DIBV5 as u32, hdata as _) } == 0 {
+			unsafe { DeleteObject(hdata as _) };
+			Err(last_error("SetClipboardData failed with error"))
+		} else {
+			Ok(())
+		}
+	}
+
+	pub(super) fn add_png_file(image: &ImageData) -> Result<(), Error> {
+		// Try encoding the image as PNG.
+		let mut buf = Vec::new();
+		let encoder = PngEncoder::new(&mut buf);
+
+		encoder
+			.write_image(
+				&image.bytes,
+				image.width as u32,
+				image.height as u32,
+				ExtendedColorType::Rgba8,
+			)
+			.map_err(|_| Error::ConversionFailure)?;
+
+		// Register PNG format.
+		let format_id = match clipboard_win::register_format("PNG") {
+			Some(format_id) => format_id.into(),
+			None => return Err(last_error("Cannot register PNG clipboard format.")),
+		};
+
+		let data_size = buf.len();
+		let hdata = unsafe { global_alloc(data_size)? };
+
+		unsafe {
+			let pixels_dst = global_lock(hdata)?;
+			copy_nonoverlapping::<u8>(buf.as_ptr(), pixels_dst, data_size);
+			global_unlock_checked(hdata);
+		}
+
+		if unsafe { SetClipboardData(format_id, hdata as _) } == 0 {
 			unsafe { DeleteObject(hdata as _) };
 			Err(last_error("SetClipboardData failed with error"))
 		} else {
@@ -609,7 +651,11 @@ impl<'clipboard> Set<'clipboard> {
 			)));
 		};
 
-		image_data::add_cf_dibv5(open_clipboard, image)
+		// XXX: The ordering of these functions is important, as some programs will grab the
+		// first format available. PNGs tend to have better compatibility on Windows, so it is set first.
+		image_data::add_png_file(&image)?;
+		image_data::add_cf_dibv5(open_clipboard, image)?;
+		Ok(())
 	}
 }
 
