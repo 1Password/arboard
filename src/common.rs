@@ -10,20 +10,17 @@ and conditions of the chosen license apply to this file.
 
 #[cfg(feature = "image-data")]
 use std::borrow::Cow;
-use thiserror::Error;
 
 /// An error that might happen during a clipboard operation.
 ///
 /// Note that both the `Display` and the `Debug` trait is implemented for this type in such a way
 /// that they give a short human-readable description of the error; however the documentation
 /// gives a more detailed explanation for each error kind.
-#[derive(Error)]
 #[non_exhaustive]
 pub enum Error {
 	/// The clipboard contents were not available in the requested format.
 	/// This could either be due to the clipboard being empty or the clipboard contents having
 	/// an incompatible format to the requested one (eg when calling `get_image` on text)
-	#[error("The clipboard contents were not available in the requested format or the clipboard is empty.")]
 	ContentNotAvailable,
 
 	/// The selected clipboard is not supported by the current configuration (system and/or environment).
@@ -31,7 +28,6 @@ pub enum Error {
 	/// This can be caused by a few conditions:
 	/// - Using the Primary clipboard with an older Wayland compositor (that doesn't support version 2)
 	/// - Using the Secondary clipboard on Wayland
-	#[error("The selected clipboard is not supported with the current system configuration.")]
 	ClipboardNotSupported,
 
 	/// The native clipboard is not accessible due to being held by an other party.
@@ -43,21 +39,32 @@ pub enum Error {
 	/// Note that it's OK to have multiple `Clipboard` instances. The underlying
 	/// implementation will make sure that the native clipboard is only
 	/// opened for transferring data and then closed as soon as possible.
-	#[error("The native clipboard is not accessible due to being held by an other party.")]
 	ClipboardOccupied,
 
 	/// The image or the text that was about the be transferred to/from the clipboard could not be
 	/// converted to the appropriate format.
-	#[error("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format.")]
 	ConversionFailure,
 
 	/// Any error that doesn't fit the other error types.
 	///
 	/// The `description` field is only meant to help the developer and should not be relied on as a
 	/// means to identify an error case during runtime.
-	#[error("Unknown error while interacting with the clipboard: {description}")]
 	Unknown { description: String },
 }
+
+impl std::fmt::Display for Error {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Error::ContentNotAvailable => f.write_str("The clipboard contents were not available in the requested format or the clipboard is empty."),
+			Error::ClipboardNotSupported => f.write_str("The selected clipboard is not supported with the current system configuration."),
+			Error::ClipboardOccupied => f.write_str("The native clipboard is not accessible due to being held by an other party."),
+			Error::ConversionFailure => f.write_str("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format."),
+			Error::Unknown { description } => f.write_fmt(format_args!("Unknown error while interacting with the clipboard: {description}")),
+		}
+	}
+}
+
+impl std::error::Error for Error {}
 
 impl std::fmt::Debug for Error {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
