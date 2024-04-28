@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.4.0 on 2024-29-04
+
+### Added
+- Added a `wait_until` method for Linux, as a superset of the existing `wait` functionality.
+  This is a helper for letting an application wait without manual timeout handling.
+
+### Fixed
+- Transparency in copied images now behaves better in certain Windows apps.
+
+### Changed
+- Updated `image` to `0.25`.
+- Removed direct `thiserror` dependency.
+- Fixed Linux documentation links
+- Raised MSRV to 1.67.1
+- Reverted timeout behavior of `Clipboard::new()` on platforms using X11. Applications are
+  encouraged to wrap constructor calls in their own thread/channel timeout mechanisms instead
+  to make sure the behavior matches each usecase.
+- Migrated away from `objc` to the `objc2` ecosystem for the Apple clipboard implementation.
+
 ## 3.3.2 on 2024-12-02
 
 ### Fixed

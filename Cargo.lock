@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "arboard"
-version = "3.3.2"
+version = "3.4.0"
 dependencies = [
  "clipboard-win",
  "core-graphics",
