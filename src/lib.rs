@@ -13,6 +13,7 @@ mod common;
 use std::borrow::Cow;
 
 pub use common::Error;
+use common::HTMLData;
 #[cfg(feature = "image-data")]
 pub use common::ImageData;
 
@@ -92,6 +93,11 @@ impl Clipboard {
 	/// Returns error if `text` failed to be stored on the clipboard.
 	pub fn set_text<'a, T: Into<Cow<'a, str>>>(&mut self, text: T) -> Result<(), Error> {
 		self.set().text(text)
+	}
+
+	/// Fetches HTML from the clipboard and returns it.
+	pub fn get_html(&mut self) -> Result<HTMLData, Error> {
+		self.get().html()
 	}
 
 	/// Places the HTML as well as a plain-text alternative onto the clipboard.
@@ -177,6 +183,11 @@ impl Get<'_> {
 	/// Completes the "get" operation by fetching UTF-8 text from the clipboard.
 	pub fn text(self) -> Result<String, Error> {
 		self.platform.text()
+	}
+
+	/// Completes the "get" operation by fetching HTML data from the clipboard.
+	pub fn html(self) -> Result<HTMLData, Error> {
+		self.platform.html()
 	}
 
 	/// Completes the "get" operation by fetching image data from the clipboard and returning the
