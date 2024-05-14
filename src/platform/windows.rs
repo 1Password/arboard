@@ -10,7 +10,7 @@ and conditions of the chosen license apply to this file.
 
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
-use crate::common::{private, Error};
+use crate::common::{private, Error, HTMLData};
 use std::{borrow::Cow, marker::PhantomData, thread, time::Duration};
 
 #[cfg(feature = "image-data")]
@@ -520,6 +520,10 @@ impl<'clipboard> Get<'clipboard> {
 
 		// Create a UTF-8 string from WTF-16 data, if it was valid.
 		String::from_utf16(&out[..bytes_read]).map_err(|_| Error::ConversionFailure)
+	}
+
+	pub(crate) fn html(self) -> Result<HTMLData, Error> {
+		self.text().map(|text| HTMLData { html: text.clone(), alt_text: text.clone() })
 	}
 
 	#[cfg(feature = "image-data")]
