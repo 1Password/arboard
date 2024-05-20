@@ -525,13 +525,10 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn html(self) -> Result<HTMLData, Error> {
-		println!("called get_html");
 		if let Some(format_code) = clipboard_win::register_format("HTML Format") {
-			println!("successfully registered HTML format");
 			let _clipboard_assertion = self.clipboard?;
 
 			if !clipboard_win::is_format_avail(format_code.get()) {
-				println!("HTML format was not available");
 				return Err(Error::ContentNotAvailable);
 			}
 
@@ -539,19 +536,11 @@ impl<'clipboard> Get<'clipboard> {
 			let mut html_out = String::new();
 			html_format
 				.read_clipboard(&mut html_out)
-				.map(|bytes_read| {
-					println!(
-						"successfully read clipboard HTML data, {:?} bytes, contents {:?}",
-						bytes_read, html_out
-					);
-					HTMLData::from_html(html_out)
-				})
+				.map(|_| HTMLData::from_html(html_out))
 				.map_err(|e| {
-					println!("failed to read clipboard HTML data, code {:?}", e);
 					Error::unknown(format!("failed to read clipboard HTML data, code {:?}", e))
 				})
 		} else {
-			println!("failed to register HTML format");
 			Err(Error::ContentNotAvailable)
 		}
 	}
