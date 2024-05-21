@@ -210,6 +210,11 @@ impl<'clipboard> Get<'clipboard> {
 		})
 	}
 
+	/// Unimplemented for now.
+	pub(crate) fn html(self) -> Result<HTMLData, Error> {
+		self.text().map(|string_data| HTMLData::from_alt_text(string_data))
+	}
+
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		use objc_foundation::NSData;
