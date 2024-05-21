@@ -185,6 +185,7 @@ impl<F: FnOnce()> Drop for ScopeGuard<F> {
 }
 
 /// Common trait for sealing platform extension traits.
+#[cfg(not(target_os = "macos"))]
 pub(crate) mod private {
 	pub trait Sealed {}
 
