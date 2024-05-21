@@ -210,7 +210,7 @@ impl<'clipboard> Get<'clipboard> {
 		})
 	}
 
-	/// Unimplemented for now.
+	/// TODO: Implement get_html for MacOS.
 	pub(crate) fn html(self) -> Result<HTMLData, Error> {
 		self.text().map(HTMLData::from_alt_text)
 	}
