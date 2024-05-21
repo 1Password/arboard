@@ -8,9 +8,9 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use crate::common::Error;
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
+use crate::common::{Error, HTMLData};
 #[cfg(feature = "image-data")]
 use core_graphics::{
 	base::{kCGBitmapByteOrderDefault, kCGImageAlphaLast, kCGRenderingIntentDefault, CGFloat},
@@ -212,7 +212,7 @@ impl<'clipboard> Get<'clipboard> {
 
 	/// Unimplemented for now.
 	pub(crate) fn html(self) -> Result<HTMLData, Error> {
-		self.text().map(|string_data| HTMLData::from_alt_text(string_data))
+		self.text().map(HTMLData::from_alt_text)
 	}
 
 	#[cfg(feature = "image-data")]
