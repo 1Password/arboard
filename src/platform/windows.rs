@@ -8,9 +8,11 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
+use clipboard_win::{formats, Getter};
+
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
-use crate::common::{private, Error};
+use crate::common::{private, Error, HTMLData};
 use std::{borrow::Cow, marker::PhantomData, thread, time::Duration};
 
 #[cfg(feature = "image-data")]
@@ -520,6 +522,27 @@ impl<'clipboard> Get<'clipboard> {
 
 		// Create a UTF-8 string from WTF-16 data, if it was valid.
 		String::from_utf16(&out[..bytes_read]).map_err(|_| Error::ConversionFailure)
+	}
+
+	pub(crate) fn html(self) -> Result<HTMLData, Error> {
+		if let Some(format_code) = clipboard_win::register_format("HTML Format") {
+			let _clipboard_assertion = self.clipboard?;
+
+			if !clipboard_win::is_format_avail(format_code.get()) {
+				return Err(Error::ContentNotAvailable);
+			}
+
+			let html_format = formats::Html::new().unwrap();
+			let mut html_out = String::new();
+			html_format
+				.read_clipboard(&mut html_out)
+				.map(|_| HTMLData::from_html(html_out))
+				.map_err(|e| {
+					Error::unknown(format!("failed to read clipboard HTML data, code {:?}", e))
+				})
+		} else {
+			Err(Error::ContentNotAvailable)
+		}
 	}
 
 	#[cfg(feature = "image-data")]
