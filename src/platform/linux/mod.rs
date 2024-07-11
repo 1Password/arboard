@@ -114,6 +114,10 @@ impl<'clipboard> Get<'clipboard> {
 		}
 	}
 
+	pub(crate) fn html(self) -> Result<String, Error> {
+		unimplemented!()
+	}
+
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		match self.clipboard {

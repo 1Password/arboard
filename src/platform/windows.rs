@@ -567,6 +567,10 @@ impl<'clipboard> Get<'clipboard> {
 		String::from_utf16(&out[..bytes_read]).map_err(|_| Error::ConversionFailure)
 	}
 
+	pub(crate) fn html(self) -> Result<String, Error> {
+		unimplemented!()
+	}
+
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		const FORMAT: u32 = clipboard_win::formats::CF_DIBV5;

@@ -179,6 +179,11 @@ impl Get<'_> {
 		self.platform.text()
 	}
 
+	/// Completes the "get" operation by fetching HTML from the clipboard.
+	pub fn html(self) -> Result<String, Error> {
+		self.platform.html()
+	}
+
 	/// Completes the "get" operation by fetching image data from the clipboard and returning the
 	/// decoded pixels.
 	///

@@ -205,6 +205,28 @@ impl<'clipboard> Get<'clipboard> {
 		})
 	}
 
+	pub(crate) fn html(self) -> Result<String, Error> {
+		autoreleasepool(|_| {
+			// XXX: We explicitly use `pasteboardItems` and not `stringForType` since the latter will concat
+			// multiple strings, if present, into one and return it instead of reading just the first which is `arboard`'s
+			// historical behavior.
+			let contents =
+				unsafe { self.clipboard.pasteboard.pasteboardItems() }.ok_or_else(|| {
+					Error::Unknown {
+						description: String::from("NSPasteboard#pasteboardItems errored"),
+					}
+				})?;
+
+			for item in contents {
+				if let Some(string) = unsafe { item.stringForType(NSPasteboardTypeHTML) } {
+					return Ok(string.to_string());
+				}
+			}
+
+			Err(Error::ContentNotAvailable)
+		})
+	}
+
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		use objc2_app_kit::NSPasteboardTypeTIFF;
