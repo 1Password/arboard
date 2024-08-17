@@ -131,6 +131,7 @@ impl Clipboard {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
+	/// - On WASM: Currently unsupported
 	///
 	/// # Errors
 	///
@@ -226,6 +227,7 @@ impl Set<'_> {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
+	/// - On WASM: Currently unsupported
 	#[cfg(feature = "image-data")]
 	pub fn image(self, image: ImageData) -> Result<(), Error> {
 		self.platform.image(image)
