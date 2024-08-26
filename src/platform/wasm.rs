@@ -7,47 +7,61 @@ use web_sys::wasm_bindgen::closure::Closure;
 
 pub(crate) struct Clipboard {
 	inner: web_sys::Clipboard,
-	window: web_sys::Window,
-	_paste_callback: Closure<dyn FnMut(web_sys::ClipboardEvent)>,
+	window: web_sys::Window
 }
 
 impl Clipboard {
 	const GLOBAL_CLIPBOARD_OBJECT: &str = "__arboard_global_clipboard";
+	const GLOBAL_CALLBACK_OBJECT: &str = "__arboard_global_callback";
 
 	pub(crate) fn new() -> Result<Self, Error> {
 		let window = web_sys::window().ok_or(Error::ClipboardNotSupported)?;
 		let inner = window.navigator().clipboard();
 
-		let window_clone = window.clone();
-		let paste_callback = Closure::wrap(Box::new(move |e: web_sys::ClipboardEvent| {
-			if let Some(data_transfer) = e.clipboard_data() {
-				let object_to_set = if let Ok(text_data) = data_transfer.get_data("text") {
-					text_data.into()
-				} else {
-					web_sys::wasm_bindgen::JsValue::NULL.clone()
-				};
+        // If the clipboard is being opened for the first time, add a paste callback
+        if js_sys::Reflect::get(&window, &Self::GLOBAL_CALLBACK_OBJECT.into())
+            .map_err(|_| Error::ClipboardNotSupported)?.is_falsy() {
+            let window_clone = window.clone();
 
-				js_sys::Reflect::set(
-					&window_clone,
-					&Self::GLOBAL_CLIPBOARD_OBJECT.into(),
-					&object_to_set,
-				)
-				.expect("Failed to set global clipboard object.");
-			}
-		}) as Box<dyn FnMut(_)>);
+            let paste_callback = Closure::wrap(Box::new(move |e: web_sys::ClipboardEvent| {
+                if let Some(data_transfer) = e.clipboard_data() {
+                    let object_to_set = if let Ok(text_data) = data_transfer.get_data("text") {
+                        text_data.into()
+                    } else {
+                        web_sys::wasm_bindgen::JsValue::NULL.clone()
+                    };
+    
+                    js_sys::Reflect::set(
+                        &window_clone,
+                        &Self::GLOBAL_CLIPBOARD_OBJECT.into(),
+                        &object_to_set,
+                    )
+                    .expect("Failed to set global clipboard object.");
+                }
+            }) as Box<dyn FnMut(_)>);
+    
+            // Set this event handler to execute before any child elements (third argument `true`) so that it is subsequently observed by other events.
+            window
+                .document()
+                .ok_or(Error::ClipboardNotSupported)?
+                .add_event_listener_with_callback_and_bool(
+                    "paste",
+                    &paste_callback.as_ref().unchecked_ref(),
+                    true,
+                )
+                .map_err(|_| Error::unknown("Could not add paste event listener."))?;
 
-		// Set this event handler to execute before any child elements (third argument `true`) so that it is subsequently observed by other events.
-		window
-			.document()
-			.ok_or(Error::ClipboardNotSupported)?
-			.add_event_listener_with_callback_and_bool(
-				"paste",
-				&paste_callback.as_ref().unchecked_ref(),
-				true,
-			)
-			.map_err(|_| Error::unknown("Could not add paste event listener."))?;
+            js_sys::Reflect::set(
+                &window,
+                &Self::GLOBAL_CALLBACK_OBJECT.into(),
+                &web_sys::wasm_bindgen::JsValue::TRUE,
+            )
+            .expect("Failed to set global callback flag.");
 
-		Ok(Self { inner, _paste_callback: paste_callback, window })
+            paste_callback.forget();
+        }
+
+		Ok(Self { inner, window })
 	}
 
 	fn get_last_clipboard(&self) -> Option<String> {
@@ -72,7 +86,7 @@ impl<'clipboard> Clear<'clipboard> {
 	}
 
 	pub(crate) fn clear(self) -> Result<(), Error> {
-		let _ = self.clipboard.inner.write(&js_sys::Array::default());
+		let _ = self.clipboard.inner.write_text("");
 		self.clipboard.set_last_clipboard("");
 		Ok(())
 	}
