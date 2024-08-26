@@ -3,11 +3,12 @@ use crate::common::ImageData;
 use crate::common::Error;
 use js_sys::wasm_bindgen::JsCast;
 use std::borrow::Cow;
+use web_sys::wasm_bindgen::closure::Closure;
 
 pub(crate) struct Clipboard {
     inner: web_sys::Clipboard,
     window: web_sys::Window,
-    _paste_callback: web_sys::wasm_bindgen::closure::Closure<dyn FnMut(web_sys::ClipboardEvent)>
+    _paste_callback: Closure<dyn FnMut(web_sys::ClipboardEvent)>
 }
 
 impl Clipboard {
@@ -18,9 +19,16 @@ impl Clipboard {
         let inner = window.navigator().clipboard();
         
         let window_clone = window.clone();
-        let paste_callback = web_sys::wasm_bindgen::closure::Closure::wrap(Box::new(move |e: web_sys::ClipboardEvent| {
+        let paste_callback = Closure::wrap(Box::new(move |e: web_sys::ClipboardEvent| {
             if let Some(data_transfer) = e.clipboard_data() {
-                js_sys::Reflect::set(&window_clone, &Self::GLOBAL_CLIPBOARD_OBJECT.into(), &data_transfer.get_data("text").unwrap_or_default().into())
+                let object_to_set = if let Ok(text_data) = data_transfer.get_data("text") {
+                    text_data.into()
+                }
+                else {
+                    web_sys::wasm_bindgen::JsValue::NULL.clone()
+                };
+
+                js_sys::Reflect::set(&window_clone, &Self::GLOBAL_CLIPBOARD_OBJECT.into(), &object_to_set)
                     .expect("Failed to set global clipboard object.");
             }
         }) as Box<dyn FnMut(_)>);
@@ -36,9 +44,9 @@ impl Clipboard {
         })
     }
 
-    fn get_last_clipboard(&self) -> String {
+    fn get_last_clipboard(&self) -> Option<String> {
         js_sys::Reflect::get(&self.window, &Self::GLOBAL_CLIPBOARD_OBJECT.into())
-            .ok().and_then(|x| x.as_string()).unwrap_or_default()
+            .ok().and_then(|x| x.as_string())
     }
 
     fn set_last_clipboard(&self, value: &str) {
@@ -73,7 +81,8 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
-        Ok(self.clipboard.get_last_clipboard())
+        self.clipboard.get_last_clipboard()
+            .ok_or_else(|| Error::ContentNotAvailable)
 	}
 
 	#[cfg(feature = "image-data")]
@@ -105,9 +114,8 @@ impl<'clipboard> Set<'clipboard> {
 			None => String::new(),
 		};
         
-        self.clipboard.set_last_clipboard(&html);
         let html_item = js_sys::Object::new();
-        js_sys::Reflect::set(&html_item, &"text/html".into(), &html.into_owned().into())
+        js_sys::Reflect::set(&html_item, &"text/html".into(), &(&*html).into())
             .expect("Failed to set HTML item text.");
 
         let alt_item = js_sys::Object::new();
@@ -123,6 +131,7 @@ impl<'clipboard> Set<'clipboard> {
         ]);
         
         let _ = self.clipboard.inner.write(&clipboard_items);
+        self.clipboard.set_last_clipboard(&html);
         Ok(())
 	}
 
