@@ -60,9 +60,9 @@ pub use platform::SetExtWindows;
 ///
 /// This means that attempting operations in parallel has a high likelihood to return an error or
 /// deadlock. As such, it is recommended to avoid creating/operating clipboard objects on >1 thread.
-/// 
+///
 /// ## WASM
-/// 
+///
 /// The `Clipboard` is only available on the main browser thread; attempting to use it from a worker
 /// will panic. In addition, the user must perform a paste action on the web document before
 /// the clipboard contents become available to read with `arboard`.
