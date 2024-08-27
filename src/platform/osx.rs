@@ -337,7 +337,7 @@ fn add_clipboard_exclusions(clipboard: &mut Clipboard, exclude_from_history: boo
 	// On Mac there isn't an official standard for excluding data from clipboard, however
 	// there is an unofficial standard which is to set `org.nspasteboard.ConcealedType`.
 	//
-	// https://nspasteboard.org/
+	// See http://nspasteboard.org/ for details about the community standard.
 	if exclude_from_history {
 		unsafe {
 			clipboard
@@ -347,16 +347,16 @@ fn add_clipboard_exclusions(clipboard: &mut Clipboard, exclude_from_history: boo
 	}
 }
 
-/// OS X-specific extensions to the [`Set`](crate::Set) builder.
-pub trait SetExtOsx: private::Sealed {
+/// Apple-specific extensions to the [`Set`](crate::Set) builder.
+pub trait SetExtApple: private::Sealed {
 	/// Excludes the data which will be set on the clipboard from being added to
 	/// third party clipboard history software.
 	///
-	/// http://nspasteboard.org/
+	/// See http://nspasteboard.org/ for details about the community standard.
 	fn exclude_from_history(self) -> Self;
 }
 
-impl SetExtOsx for crate::Set<'_> {
+impl SetExtApple for crate::Set<'_> {
 	fn exclude_from_history(mut self) -> Self {
 		self.platform.exclude_from_history = true;
 		self

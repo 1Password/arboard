@@ -28,7 +28,7 @@ pub use platform::{ClearExtLinux, GetExtLinux, LinuxClipboardKind, SetExtLinux};
 pub use platform::SetExtWindows;
 
 #[cfg(target_os = "macos")]
-pub use platform::SetExtOsx;
+pub use platform::SetExtApple;
 
 /// The OS independent struct for accessing the clipboard.
 ///
