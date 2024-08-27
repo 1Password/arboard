@@ -8,9 +8,9 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-use crate::common::Error;
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
+use crate::common::{private, Error};
 use objc2::{
 	msg_send_id,
 	rc::{autoreleasepool, Id},
@@ -18,7 +18,7 @@ use objc2::{
 	ClassType,
 };
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString};
-use objc2_foundation::{NSArray, NSString};
+use objc2_foundation::{ns_string, NSArray, NSString};
 use std::{
 	borrow::Cow,
 	panic::{RefUnwindSafe, UnwindSafe},
@@ -235,11 +235,12 @@ impl<'clipboard> Get<'clipboard> {
 
 pub(crate) struct Set<'clipboard> {
 	clipboard: &'clipboard mut Clipboard,
+	exclude_from_history: bool,
 }
 
 impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard }
+		Self { clipboard, exclude_from_history: false }
 	}
 
 	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {
@@ -248,6 +249,9 @@ impl<'clipboard> Set<'clipboard> {
 		let string_array =
 			NSArray::from_vec(vec![ProtocolObject::from_id(NSString::from_str(&data))]);
 		let success = unsafe { self.clipboard.pasteboard.writeObjects(&string_array) };
+
+		add_clipboard_exclusions(self.clipboard, self.exclude_from_history);
+
 		if success {
 			Ok(())
 		} else {
@@ -279,6 +283,9 @@ impl<'clipboard> Set<'clipboard> {
 				};
 			}
 		}
+
+		add_clipboard_exclusions(self.clipboard, self.exclude_from_history);
+
 		if success {
 			Ok(())
 		} else {
@@ -296,6 +303,9 @@ impl<'clipboard> Set<'clipboard> {
 
 		let image_array = NSArray::from_vec(vec![ProtocolObject::from_id(image)]);
 		let success = unsafe { self.clipboard.pasteboard.writeObjects(&image_array) };
+
+		add_clipboard_exclusions(self.clipboard, self.exclude_from_history);
+
 		if success {
 			Ok(())
 		} else {
@@ -320,5 +330,35 @@ impl<'clipboard> Clear<'clipboard> {
 	pub(crate) fn clear(self) -> Result<(), Error> {
 		self.clipboard.clear();
 		Ok(())
+	}
+}
+
+fn add_clipboard_exclusions(clipboard: &mut Clipboard, exclude_from_history: bool) {
+	// On Mac there isn't an official standard for excluding data from clipboard, however
+	// there is an unofficial standard which is to set `org.nspasteboard.ConcealedType`.
+	//
+	// See http://nspasteboard.org/ for details about the community standard.
+	if exclude_from_history {
+		unsafe {
+			clipboard
+				.pasteboard
+				.setString_forType(ns_string!(""), ns_string!("org.nspasteboard.ConcealedType"));
+		}
+	}
+}
+
+/// Apple-specific extensions to the [`Set`](crate::Set) builder.
+pub trait SetExtApple: private::Sealed {
+	/// Excludes the data which will be set on the clipboard from being added to
+	/// third party clipboard history software.
+	///
+	/// See http://nspasteboard.org/ for details about the community standard.
+	fn exclude_from_history(self) -> Self;
+}
+
+impl SetExtApple for crate::Set<'_> {
+	fn exclude_from_history(mut self) -> Self {
+		self.platform.exclude_from_history = true;
+		self
 	}
 }

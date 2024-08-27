@@ -14,4 +14,4 @@ pub use windows::*;
 #[cfg(target_os = "macos")]
 mod osx;
 #[cfg(target_os = "macos")]
-pub(crate) use osx::*;
+pub use osx::*;
