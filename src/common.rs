@@ -90,6 +90,7 @@ impl std::fmt::Debug for Error {
 }
 
 impl Error {
+	#[allow(unused)]
 	pub(crate) fn unknown<M: Into<String>>(message: M) -> Self {
 		Error::Unknown { description: message.into() }
 	}
