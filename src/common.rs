@@ -90,7 +90,7 @@ impl std::fmt::Debug for Error {
 }
 
 impl Error {
-	#[cfg(windows)]
+	#[allow(unused)]
 	pub(crate) fn unknown<M: Into<String>>(message: M) -> Self {
 		Error::Unknown { description: message.into() }
 	}
@@ -174,6 +174,9 @@ impl<F: FnOnce()> Drop for ScopeGuard<F> {
 
 /// Common trait for sealing platform extension traits.
 pub(crate) mod private {
+	// This is currently unused on macOS and WASM, so silence the warning which appears
+	// since there's no extension traits making use of this trait sealing structure.
+	#[allow(unreachable_pub, unused, dead_code)]
 	pub trait Sealed {}
 
 	impl Sealed for crate::Get<'_> {}

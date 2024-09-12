@@ -47,6 +47,10 @@ wl-clipboard-rs = { version = "0.8", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 parking_lot = "0.12"
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = { version = "0.3.70", default-features = false }
+web-sys = { version = "0.3.70", default-features = false, features = [ "Clipboard", "ClipboardEvent", "ClipboardItem", "DataTransfer", "Document", "FileList", "Navigator", "Window" ] }
+
 [[example]]
 name = "get_image"
 required-features = ["image-data"]
