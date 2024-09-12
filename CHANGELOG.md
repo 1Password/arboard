@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.4.1 on 2024-12-09
+
+### Added
+- Added support for excluding macOS clipboard items from history.
+    - Note that macOS has no official history, so arboard's implementation uses a community standard instead.
+
 ## 3.4.0 on 2024-29-04
 
 ### Added
