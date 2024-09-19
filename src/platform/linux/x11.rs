@@ -47,7 +47,10 @@ use super::encode_as_png;
 use super::{into_unknown, LinuxClipboardKind, WaitConfig};
 #[cfg(feature = "image-data")]
 use crate::ImageData;
-use crate::{common::ScopeGuard, Error};
+use crate::{
+	common::{HTMLData, ScopeGuard},
+	Error,
+};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -883,6 +886,39 @@ impl Clipboard {
 			format: self.inner.atoms.UTF8_STRING,
 		}];
 		self.inner.write(data, selection, wait)
+	}
+
+	pub(crate) fn get_html(&self, selection: LinuxClipboardKind) -> Result<HTMLData> {
+		let html_format = [self.inner.atoms.HTML];
+		let alt_text_formats = [
+			self.inner.atoms.UTF8_STRING,
+			self.inner.atoms.UTF8_MIME_0,
+			self.inner.atoms.UTF8_MIME_1,
+			self.inner.atoms.STRING,
+			self.inner.atoms.TEXT,
+			self.inner.atoms.TEXT_MIME_UNKNOWN,
+		];
+
+		let mut data = HTMLData::default();
+
+		let html_result = self.inner.read(&html_format, selection);
+		if let Ok(html_data) = html_result {
+			let html: String = html_data.bytes.into_iter().map(|c| c as char).collect();
+			data.html = html;
+		}
+
+		let alt_text_result = self.inner.read(&alt_text_formats, selection);
+		if let Ok(alt_text_data) = alt_text_result {
+			data.alt_text = if alt_text_data.format == self.inner.atoms.STRING {
+				// ISO Latin-1
+				// See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
+				alt_text_data.bytes.into_iter().map(|c| c as char).collect::<String>()
+			} else {
+				String::from_utf8(alt_text_data.bytes).map_err(|_| Error::ConversionFailure)?
+			};
+		}
+
+		Ok(data)
 	}
 
 	pub(crate) fn set_html(
