@@ -192,6 +192,11 @@ impl Get<'_> {
 	pub fn image(self) -> Result<ImageData<'static>, Error> {
 		self.platform.image()
 	}
+
+	/// Completes the "get" operation by fetching HTML from the clipboard.
+	pub fn html(self) -> Result<String, Error> {
+		self.platform.html()
+	}
 }
 
 /// A builder for an operation that sets a value to the clipboard.

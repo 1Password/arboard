@@ -121,6 +121,30 @@ impl Clipboard {
 		unsafe { self.pasteboard.clearContents() };
 	}
 
+	fn string_from_type(&self, type: &'static NSString) -> Result<String, Error> {
+		// XXX: There does not appear to be an alternative for obtaining text without the need for
+		// autorelease behavior.
+		autoreleasepool(|_| {
+			// XXX: We explicitly use `pasteboardItems` and not `stringForType` since the latter will concat
+			// multiple strings, if present, into one and return it instead of reading just the first which is `arboard`'s
+			// historical behavior.
+			let contents =
+				unsafe { self.pasteboard.pasteboardItems() }.ok_or_else(|| {
+					Error::Unknown {
+						description: String::from("NSPasteboard#pasteboardItems errored"),
+					}
+				})?;
+
+			for item in contents {
+				if let Some(string) = unsafe { item.stringForType(type) } {
+					return Ok(string.to_string());
+				}
+			}
+
+			Err(Error::ContentNotAvailable)
+		})
+	}
+
 	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn std::error::Error>> {
 	// 	let string_class: Id<NSObject> = {
 	// 		let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
@@ -182,27 +206,11 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
-		// XXX: There does not appear to be an alternative for obtaining text without the need for
-		// autorelease behavior.
-		autoreleasepool(|_| {
-			// XXX: We explicitly use `pasteboardItems` and not `stringForType` since the latter will concat
-			// multiple strings, if present, into one and return it instead of reading just the first which is `arboard`'s
-			// historical behavior.
-			let contents =
-				unsafe { self.clipboard.pasteboard.pasteboardItems() }.ok_or_else(|| {
-					Error::Unknown {
-						description: String::from("NSPasteboard#pasteboardItems errored"),
-					}
-				})?;
+		self.clipboard.string_from_type(NSPasteboardTypeString)
+	}
 
-			for item in contents {
-				if let Some(string) = unsafe { item.stringForType(NSPasteboardTypeString) } {
-					return Ok(string.to_string());
-				}
-			}
-
-			Err(Error::ContentNotAvailable)
-		})
+	pub(crate) fn html(self) -> Result<String, Error> {
+		self.clipboard.string_from_type(NSPasteboardTypeHTML)
 	}
 
 	#[cfg(feature = "image-data")]

@@ -91,6 +91,27 @@ impl Clipboard {
 		Ok(())
 	}
 
+	pub(crate) fn get_html(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
+		use wl_clipboard_rs::paste::MimeType;
+
+		let result = get_contents(selection.try_into()?, Seat::Unspecified, MimeType::Specific("text/html"));
+		match result {
+			Ok((mut pipe, _)) => {
+				let mut contents = vec![];
+				pipe.read_to_end(&mut contents).map_err(into_unknown)?;
+				String::from_utf8(contents).map_err(|_| Error::ConversionFailure)
+			}
+
+			Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
+				Err(Error::ContentNotAvailable)
+			}
+
+			Err(PasteError::PrimarySelectionUnsupported) => Err(Error::ClipboardNotSupported),
+
+			Err(err) => Err(Error::Unknown { description: err.to_string() }),
+		}
+	}
+
 	pub(crate) fn set_html(
 		&self,
 		html: Cow<'_, str>,
