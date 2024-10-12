@@ -327,6 +327,15 @@ mod tests {
 			ctx.set_html(html, Some(alt_text)).unwrap();
 			assert_eq!(ctx.get_text().unwrap(), alt_text);
 		}
+		{
+			let mut ctx = Clipboard::new().unwrap();
+
+			let html = "<b>hello</b> <i>world</i>!";
+
+			ctx.set().html(html, None).unwrap();
+
+			assert_eq!(ctx.get().html().unwrap(), html);
+		}
 		#[cfg(feature = "image-data")]
 		{
 			let mut ctx = Clipboard::new().unwrap();
