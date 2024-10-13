@@ -53,10 +53,8 @@ impl Clipboard {
 		Ok(Self {})
 	}
 
-	pub(crate) fn get_text(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
-		use wl_clipboard_rs::paste::MimeType;
-
-		let result = get_contents(selection.try_into()?, Seat::Unspecified, MimeType::Text);
+	fn string_for_mime(&mut self, selection: LinuxClipboardKind, mime: paste::MimeType) -> Result<String, Error> {
+		let result = get_contents(selection.try_into()?, Seat::Unspecified, mime);
 		match result {
 			Ok((mut pipe, _)) => {
 				let mut contents = vec![];
@@ -72,6 +70,10 @@ impl Clipboard {
 
 			Err(err) => Err(Error::Unknown { description: err.to_string() }),
 		}
+	}
+
+	pub(crate) fn get_text(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
+		self.string_for_mime(selection, paste::MimeType::Text)
 	}
 
 	pub(crate) fn set_text(
@@ -92,24 +94,7 @@ impl Clipboard {
 	}
 
 	pub(crate) fn get_html(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
-		use wl_clipboard_rs::paste::MimeType;
-
-		let result = get_contents(selection.try_into()?, Seat::Unspecified, MimeType::Specific("text/html"));
-		match result {
-			Ok((mut pipe, _)) => {
-				let mut contents = vec![];
-				pipe.read_to_end(&mut contents).map_err(into_unknown)?;
-				String::from_utf8(contents).map_err(|_| Error::ConversionFailure)
-			}
-
-			Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
-				Err(Error::ContentNotAvailable)
-			}
-
-			Err(PasteError::PrimarySelectionUnsupported) => Err(Error::ClipboardNotSupported),
-
-			Err(err) => Err(Error::Unknown { description: err.to_string() }),
-		}
+		self.string_for_mime(selection, paste::MimeType::Specific("text/html"))
 	}
 
 	pub(crate) fn set_html(
