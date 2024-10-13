@@ -207,18 +207,18 @@ impl<'clipboard> Get<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
-		use objc2_app_kit::NSPasteboardTypeTIFF;
+		use objc2_app_kit::NSPasteboardTypePNG;
 		use std::io::Cursor;
 
 		// XXX: There does not appear to be an alternative for obtaining images without the need for
 		// autorelease behavior.
 		let image = autoreleasepool(|_| {
-			let image_data = unsafe { self.clipboard.pasteboard.dataForType(NSPasteboardTypeTIFF) }
+			let image_data = unsafe { self.clipboard.pasteboard.dataForType(NSPasteboardTypePNG) }
 				.ok_or(Error::ContentNotAvailable)?;
 
 			let data = Cursor::new(image_data.bytes());
 
-			let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
+			let reader = image::io::Reader::with_format(data, image::ImageFormat::Png);
 			reader.decode().map_err(|_| Error::ConversionFailure)
 		})?;
 
