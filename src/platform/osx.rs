@@ -121,7 +121,7 @@ impl Clipboard {
 		unsafe { self.pasteboard.clearContents() };
 	}
 
-	fn string_from_type(&self, type: &'static NSString) -> Result<String, Error> {
+	fn string_from_type(&self, type_: &'static NSString) -> Result<String, Error> {
 		// XXX: There does not appear to be an alternative for obtaining text without the need for
 		// autorelease behavior.
 		autoreleasepool(|_| {
@@ -133,7 +133,7 @@ impl Clipboard {
 			})?;
 
 			for item in contents {
-				if let Some(string) = unsafe { item.stringForType(type) } {
+				if let Some(string) = unsafe { item.stringForType(type_) } {
 					return Ok(string.to_string());
 				}
 			}
@@ -203,11 +203,11 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
-		self.clipboard.string_from_type(NSPasteboardTypeString)
+		unsafe { self.clipboard.string_from_type(NSPasteboardTypeString) }
 	}
 
 	pub(crate) fn html(self) -> Result<String, Error> {
-		self.clipboard.string_from_type(NSPasteboardTypeHTML)
+		unsafe { self.clipboard.string_from_type(NSPasteboardTypeHTML) }
 	}
 
 	#[cfg(feature = "image-data")]
