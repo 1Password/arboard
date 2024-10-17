@@ -16,28 +16,6 @@ fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
 	Error::Unknown { description: error.to_string() }
 }
 
-#[cfg(feature = "image-data")]
-fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
-	use image::ImageEncoder as _;
-
-	if image.bytes.is_empty() || image.width == 0 || image.height == 0 {
-		return Err(Error::ConversionFailure);
-	}
-
-	let mut png_bytes = Vec::new();
-	let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
-	encoder
-		.write_image(
-			image.bytes.as_ref(),
-			image.width as u32,
-			image.height as u32,
-			image::ExtendedColorType::Rgba8,
-		)
-		.map_err(|_| Error::ConversionFailure)?;
-
-	Ok(png_bytes)
-}
-
 /// Clipboard selection
 ///
 /// Linux has a concept of clipboard "selections" which tend to be used in different contexts. This

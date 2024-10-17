@@ -7,12 +7,10 @@ use wl_clipboard_rs::{
 	utils::is_primary_selection_supported,
 };
 
-#[cfg(feature = "image-data")]
-use super::encode_as_png;
 use super::{into_unknown, LinuxClipboardKind, WaitConfig};
 use crate::common::Error;
 #[cfg(feature = "image-data")]
-use crate::common::ImageData;
+use crate::ImageData;
 
 #[cfg(feature = "image-data")]
 const MIME_PNG: &str = "image/png";
@@ -164,7 +162,7 @@ impl Clipboard {
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
 	) -> Result<(), Error> {
-		let image = encode_as_png(&image)?;
+		let image = image.encode_as_png()?;
 		let mut opts = Options::new();
 		opts.foreground(matches!(wait, WaitConfig::Forever));
 		opts.clipboard(selection.try_into()?);

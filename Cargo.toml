@@ -12,7 +12,7 @@ rust-version = "1.67.1"
 
 [features]
 default = ["image-data"]
-image-data = ["core-graphics", "image", "windows-sys"]
+image-data = ["image", "windows-sys"]
 wayland-data-control = ["wl-clipboard-rs"]
 
 [dependencies]
@@ -37,7 +37,6 @@ log = "0.4"
 objc2 = { version = "0.5.1", features = ["relax-void-encoding"] }
 objc2-foundation = { version = "0.2.0", features = ["NSArray", "NSString", "NSEnumerator", "NSGeometry"] }
 objc2-app-kit = { version = "0.2.0", features = ["NSPasteboard", "NSPasteboardItem", "NSImage"] }
-core-graphics = { version = "0.23", optional = true }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
 log = "0.4"
