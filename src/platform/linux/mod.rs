@@ -128,7 +128,7 @@ impl<'clipboard> Get<'clipboard> {
 			Clipboard::X11(clipboard) => clipboard.get_html(self.selection),
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_html(self.selection),
-		}	
+		}
 	}
 }
 

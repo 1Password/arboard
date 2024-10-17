@@ -128,12 +128,9 @@ impl Clipboard {
 			// XXX: We explicitly use `pasteboardItems` and not `stringForType` since the latter will concat
 			// multiple strings, if present, into one and return it instead of reading just the first which is `arboard`'s
 			// historical behavior.
-			let contents =
-				unsafe { self.pasteboard.pasteboardItems() }.ok_or_else(|| {
-					Error::Unknown {
-						description: String::from("NSPasteboard#pasteboardItems errored"),
-					}
-				})?;
+			let contents = unsafe { self.pasteboard.pasteboardItems() }.ok_or_else(|| {
+				Error::Unknown { description: String::from("NSPasteboard#pasteboardItems errored") }
+			})?;
 
 			for item in contents {
 				if let Some(string) = unsafe { item.stringForType(type) } {

@@ -53,7 +53,11 @@ impl Clipboard {
 		Ok(Self {})
 	}
 
-	fn string_for_mime(&mut self, selection: LinuxClipboardKind, mime: paste::MimeType) -> Result<String, Error> {
+	fn string_for_mime(
+		&mut self,
+		selection: LinuxClipboardKind,
+		mime: paste::MimeType,
+	) -> Result<String, Error> {
 		let result = get_contents(selection.try_into()?, Seat::Unspecified, mime);
 		match result {
 			Ok((mut pipe, _)) => {
