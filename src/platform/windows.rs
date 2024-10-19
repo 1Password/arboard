@@ -568,11 +568,15 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn html(self) -> Result<String, Error> {
+		let _clipboard_assertion = self.clipboard?;
+
 		let format = clipboard_win::register_format("HTML Format")
 			.ok_or_else(|| Error::unknown("unable to register HTML format"))?;
+
 		let mut out: Vec<u8> = Vec::new();
 		clipboard_win::raw::get_html(format.get(), &mut out)
 			.map_err(|_| Error::unknown("failed to read clipboard string"))?;
+
 		String::from_utf8(out).map_err(|_| Error::ConversionFailure)
 	}
 
