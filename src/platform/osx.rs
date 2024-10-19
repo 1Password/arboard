@@ -8,8 +8,6 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 
-#[cfg(feature = "image-data")]
-use crate::common::ImageData;
 use crate::common::{private, Error};
 use objc2::{
 	msg_send_id,
@@ -23,69 +21,8 @@ use std::{
 	borrow::Cow,
 	panic::{RefUnwindSafe, UnwindSafe},
 };
-
-/// Returns an NSImage object on success.
 #[cfg(feature = "image-data")]
-fn image_from_pixels(
-	pixels: Vec<u8>,
-	width: usize,
-	height: usize,
-) -> Result<Id<objc2_app_kit::NSImage>, Box<dyn std::error::Error>> {
-	use core_graphics::{
-		base::{kCGBitmapByteOrderDefault, kCGImageAlphaLast, kCGRenderingIntentDefault, CGFloat},
-		color_space::CGColorSpace,
-		data_provider::{CGDataProvider, CustomData},
-		image::{CGImage, CGImageRef},
-	};
-	use objc2_app_kit::NSImage;
-	use objc2_foundation::NSSize;
-	use std::ffi::c_void;
-
-	#[derive(Debug)]
-	struct PixelArray {
-		data: Vec<u8>,
-	}
-
-	impl CustomData for PixelArray {
-		unsafe fn ptr(&self) -> *const u8 {
-			self.data.as_ptr()
-		}
-		unsafe fn len(&self) -> usize {
-			self.data.len()
-		}
-	}
-
-	let colorspace = CGColorSpace::create_device_rgb();
-	let pixel_data: Box<Box<dyn CustomData>> = Box::new(Box::new(PixelArray { data: pixels }));
-	let provider = unsafe { CGDataProvider::from_custom_data(pixel_data) };
-
-	let cg_image = CGImage::new(
-		width,
-		height,
-		8,
-		32,
-		4 * width,
-		&colorspace,
-		kCGBitmapByteOrderDefault | kCGImageAlphaLast,
-		&provider,
-		false,
-		kCGRenderingIntentDefault,
-	);
-
-	// Convert the owned `CGImage` into a reference `&CGImageRef`, and pass
-	// that as `*const c_void`, since `CGImageRef` does not implement
-	// `RefEncode`.
-	let cg_image: *const CGImageRef = &*cg_image;
-	let cg_image: *const c_void = cg_image.cast();
-
-	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
-	// XXX: Use `NSImage::initWithCGImage_size` once `objc2-app-kit` supports
-	// CoreGraphics.
-	let image: Id<NSImage> =
-		unsafe { msg_send_id![NSImage::alloc(), initWithCGImage: cg_image, size:size] };
-
-	Ok(image)
-}
+use {crate::ImageData, objc2_app_kit::NSPasteboardTypePNG};
 
 pub(crate) struct Clipboard {
 	pasteboard: Id<NSPasteboard>,
@@ -207,18 +144,17 @@ impl<'clipboard> Get<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
-		use objc2_app_kit::NSPasteboardTypeTIFF;
 		use std::io::Cursor;
 
 		// XXX: There does not appear to be an alternative for obtaining images without the need for
 		// autorelease behavior.
 		let image = autoreleasepool(|_| {
-			let image_data = unsafe { self.clipboard.pasteboard.dataForType(NSPasteboardTypeTIFF) }
+			let image_data = unsafe { self.clipboard.pasteboard.dataForType(NSPasteboardTypePNG) }
 				.ok_or(Error::ContentNotAvailable)?;
 
 			let data = Cursor::new(image_data.bytes());
 
-			let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
+			let reader = image::io::Reader::with_format(data, image::ImageFormat::Png);
 			reader.decode().map_err(|_| Error::ConversionFailure)
 		})?;
 
@@ -295,14 +231,16 @@ impl<'clipboard> Set<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, data: ImageData) -> Result<(), Error> {
-		let pixels = data.bytes.into();
-		let image = image_from_pixels(pixels, data.width, data.height)
-			.map_err(|_| Error::ConversionFailure)?;
+		use objc2_foundation::NSData;
+		use std::ffi::c_void;
 
 		self.clipboard.clear();
 
-		let image_array = NSArray::from_vec(vec![ProtocolObject::from_id(image)]);
-		let success = unsafe { self.clipboard.pasteboard.writeObjects(&image_array) };
+		let encoded = data.encode_as_png()?;
+		let success = unsafe {
+			let ns_data = NSData::from_vec(encoded);
+			self.clipboard.pasteboard.setData_forType(Some(&ns_data), NSPasteboardTypePNG)
+		};
 
 		add_clipboard_exclusions(self.clipboard, self.exclude_from_history);
 

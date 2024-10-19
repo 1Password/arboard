@@ -42,8 +42,6 @@ use x11rb::{
 	COPY_DEPTH_FROM_PARENT, COPY_FROM_PARENT, NONE,
 };
 
-#[cfg(feature = "image-data")]
-use super::encode_as_png;
 use super::{into_unknown, LinuxClipboardKind, WaitConfig};
 #[cfg(feature = "image-data")]
 use crate::ImageData;
@@ -931,7 +929,7 @@ impl Clipboard {
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
 	) -> Result<()> {
-		let encoded = encode_as_png(&image)?;
+		let encoded = image.encode_as_png()?;
 		let data = vec![ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME }];
 		self.inner.write(data, selection, wait)
 	}

@@ -17,9 +17,6 @@ use std::{borrow::Cow, marker::PhantomData, thread, time::Duration};
 mod image_data {
 	use super::*;
 	use crate::common::ScopeGuard;
-	use image::codecs::png::PngEncoder;
-	use image::ExtendedColorType;
-	use image::ImageEncoder;
 	use std::{convert::TryInto, ffi::c_void, io, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
 		Foundation::HGLOBAL,
@@ -128,18 +125,7 @@ mod image_data {
 	}
 
 	pub(super) fn add_png_file(image: &ImageData) -> Result<(), Error> {
-		// Try encoding the image as PNG.
-		let mut buf = Vec::new();
-		let encoder = PngEncoder::new(&mut buf);
-
-		encoder
-			.write_image(
-				&image.bytes,
-				image.width as u32,
-				image.height as u32,
-				ExtendedColorType::Rgba8,
-			)
-			.map_err(|_| Error::ConversionFailure)?;
+		let buf = image.encode_as_png()?;
 
 		// Register PNG format.
 		let format_id = match clipboard_win::register_format("PNG") {
