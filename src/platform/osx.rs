@@ -238,13 +238,7 @@ impl<'clipboard> Set<'clipboard> {
 
 		let encoded = data.encode_as_png()?;
 		let success = unsafe {
-			let ns_data = {
-				NSData::initWithBytes_length(
-					NSData::alloc(),
-					encoded.as_ptr() as *mut c_void,
-					encoded.len(),
-				)
-			};
+			let ns_data = NSData::from_vec(encoded);
 			self.clipboard.pasteboard.setData_forType(Some(&ns_data), NSPasteboardTypePNG)
 		};
 
