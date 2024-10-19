@@ -885,6 +885,12 @@ impl Clipboard {
 		self.inner.write(data, selection, wait)
 	}
 
+	pub(crate) fn get_html(&self, selection: LinuxClipboardKind) -> Result<String> {
+		let formats = [self.inner.atoms.HTML];
+		let result = self.inner.read(&formats, selection)?;
+		String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)
+	}
+
 	pub(crate) fn set_html(
 		&self,
 		html: Cow<'_, str>,

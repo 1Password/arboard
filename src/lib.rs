@@ -192,6 +192,11 @@ impl Get<'_> {
 	pub fn image(self) -> Result<ImageData<'static>, Error> {
 		self.platform.image()
 	}
+
+	/// Completes the "get" operation by fetching HTML from the clipboard.
+	pub fn html(self) -> Result<String, Error> {
+		self.platform.html()
+	}
 }
 
 /// A builder for an operation that sets a value to the clipboard.
@@ -321,6 +326,15 @@ mod tests {
 
 			ctx.set_html(html, Some(alt_text)).unwrap();
 			assert_eq!(ctx.get_text().unwrap(), alt_text);
+		}
+		{
+			let mut ctx = Clipboard::new().unwrap();
+
+			let html = "<b>hello</b> <i>world</i>!";
+
+			ctx.set().html(html, None).unwrap();
+
+			assert_eq!(ctx.get().html().unwrap(), html);
 		}
 		#[cfg(feature = "image-data")]
 		{

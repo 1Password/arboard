@@ -122,6 +122,14 @@ impl<'clipboard> Get<'clipboard> {
 			Clipboard::WlDataControl(clipboard) => clipboard.get_image(self.selection),
 		}
 	}
+
+	pub(crate) fn html(self) -> Result<String, Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.get_html(self.selection),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.get_html(self.selection),
+		}
+	}
 }
 
 /// Linux-specific extensions to the [`Get`](super::Get) builder.
