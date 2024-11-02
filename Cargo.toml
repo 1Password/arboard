@@ -21,7 +21,7 @@ wayland-data-control = ["wl-clipboard-rs"]
 env_logger = "0.10.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.48.0", optional = true, features = [
+windows-sys = { version = "0.52.0", optional = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_DataExchange",

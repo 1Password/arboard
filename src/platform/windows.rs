@@ -40,7 +40,7 @@ mod image_data {
 		Error::unknown(format!("{}: {}", message, os_error))
 	}
 
-	unsafe fn global_unlock_checked(hdata: isize) {
+	unsafe fn global_unlock_checked(hdata: HGLOBAL) {
 		// If the memory object is unlocked after decrementing the lock count, the function
 		// returns zero and GetLastError returns NO_ERROR. If it fails, the return value is
 		// zero and GetLastError returns a value other than NO_ERROR.
@@ -166,7 +166,7 @@ mod image_data {
 
 	unsafe fn global_alloc(bytes: usize) -> Result<HGLOBAL, Error> {
 		let hdata = GlobalAlloc(GHND, bytes);
-		if hdata == 0 {
+		if hdata.is_null() {
 			Err(last_error("Could not allocate global memory object"))
 		} else {
 			Ok(hdata)
