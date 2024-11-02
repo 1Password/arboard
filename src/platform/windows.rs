@@ -119,7 +119,7 @@ mod image_data {
 			}
 		}
 
-		if unsafe { SetClipboardData(CF_DIBV5 as u32, hdata as _) } == 0 {
+		if unsafe { SetClipboardData(CF_DIBV5 as u32, hdata as _) }.is_null() {
 			unsafe { DeleteObject(hdata as _) };
 			Err(last_error("SetClipboardData failed with error"))
 		} else {
@@ -156,7 +156,7 @@ mod image_data {
 			global_unlock_checked(hdata);
 		}
 
-		if unsafe { SetClipboardData(format_id, hdata as _) } == 0 {
+		if unsafe { SetClipboardData(format_id, hdata as _) }.is_null() {
 			unsafe { DeleteObject(hdata as _) };
 			Err(last_error("SetClipboardData failed with error"))
 		} else {
@@ -261,8 +261,8 @@ mod image_data {
 
 	fn get_screen_device_context() -> Result<HDC, Error> {
 		// SAFETY: Calling `GetDC` with `NULL` is safe.
-		let hdc = unsafe { GetDC(0) };
-		if hdc == 0 {
+		let hdc = unsafe { GetDC(std::ptr::null_mut()) };
+		if hdc.is_null() {
 			Err(Error::unknown("Failed to get the device context. GetDC returned null"))
 		} else {
 			Ok(hdc)
@@ -282,7 +282,7 @@ mod image_data {
 			header as _,
 			DIB_RGB_COLORS,
 		);
-		if hbitmap == 0 {
+		if hbitmap.is_null() {
 			Err(Error::unknown(
 				"Failed to create the HBITMAP while reading DIBV5. CreateDIBitmap returned null",
 			))
