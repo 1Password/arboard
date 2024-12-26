@@ -7,5 +7,5 @@ fn main() {
 
 	let the_string = "Hello, world!";
 	clipboard.set_text(the_string).unwrap();
-	println!("But now the clipboard text should be: \"{}\"", the_string);
+	println!("But now the clipboard text should be: \"{the_string}\"");
 }
