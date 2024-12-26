@@ -98,3 +98,24 @@ jobs:
     - uses: actions/checkout@v4
     - name: Check semver
       uses: obi1kenobi/cargo-semver-checks-action@v2
+
+  android:
+    needs: clippy
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust/setup-rust@v1
+        with:
+          toolchain: stable
+          override: true
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4.5.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Install Cargo NDK
+        run: cargo install cargo-ndk
+      - name: Run tests
+        run: cargo ndk --target aarch64-linux-android build
