@@ -132,7 +132,7 @@ pub struct ImageData<'a> {
 }
 
 #[cfg(feature = "image-data")]
-impl<'a> ImageData<'a> {
+impl ImageData<'_> {
 	/// Returns a the bytes field in a way that it's guaranteed to be owned.
 	/// It moves the bytes if they are already owned and clones them if they are borrowed.
 	pub fn into_owned_bytes(self) -> Cow<'static, [u8]> {
