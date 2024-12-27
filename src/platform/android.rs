@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use jni::{
 	objects::{JObject, JString},
-	JavaVM,
+	AttachGuard, JavaVM,
 };
 
 use crate::{Error, ImageData};
@@ -31,6 +31,23 @@ impl Clipboard {
 		// SAFETY: Valid pointer guaranteed by the `ndk_context` crate.
 		unsafe { JObject::from_raw(self.ctx.context().cast()) }
 	}
+
+	fn clipboard_manager<'attachment>(
+		&self,
+		env: &mut AttachGuard<'attachment>,
+	) -> Result<JObject<'attachment>, Error> {
+		let context = self.context();
+		let clipboard = env.new_string("clipboard")?;
+
+		Ok(env
+			.call_method(
+				context,
+				"getSystemService",
+				"(Ljava/lang/String;)Ljava/lang/Object;",
+				&[(&clipboard).into()],
+			)?
+			.l()?)
+	}
 }
 
 pub(crate) struct Get<'clipboard> {
@@ -44,19 +61,8 @@ impl<'clipboard> Get<'clipboard> {
 
 	pub(crate) fn text(self) -> Result<String, Error> {
 		let vm = self.clipboard.vm()?;
-		let context = self.clipboard.context();
 		let mut env = vm.attach_current_thread()?;
-
-		let clipboard = env.new_string("clipboard")?;
-
-		let clipboard_manager = env
-			.call_method(
-				context,
-				"getSystemService",
-				"(Ljava/lang/String;)Ljava/lang/Object;",
-				&[(&clipboard).into()],
-			)?
-			.l()?;
+		let clipboard_manager = self.clipboard.clipboard_manager(&mut env)?;
 
 		let clip = env
 			.call_method(clipboard_manager, "getPrimaryClip", "()Landroid/content/ClipData;", &[])?
@@ -67,10 +73,8 @@ impl<'clipboard> Get<'clipboard> {
 			.l()?;
 
 		let text = env.call_method(item, "getText", "()Ljava/lang/CharSequence;", &[])?.l()?;
-
 		let text = JString::from(text);
 		let text = env.get_string(&text)?;
-
 		Ok(text.into())
 	}
 
