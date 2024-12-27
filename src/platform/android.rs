@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 
-use jni::objects::{JObject, JString};
+use jni::{
+	objects::{JObject, JString},
+	JavaVM,
+};
 
 use crate::{Error, ImageData};
 
@@ -10,11 +13,23 @@ impl From<jni::errors::Error> for Error {
 	}
 }
 
-pub(crate) struct Clipboard {}
+pub(crate) struct Clipboard {
+	ctx: ndk_context::AndroidContext,
+}
 
 impl Clipboard {
 	pub(crate) fn new() -> Result<Self, Error> {
-		Ok(Self {})
+		Ok(Self { ctx: ndk_context::android_context() })
+	}
+
+	fn vm(&self) -> Result<JavaVM, jni::errors::Error> {
+		// SAFETY: Valid pointer guaranteed by the `ndk_context` crate.
+		unsafe { jni::JavaVM::from_raw(self.ctx.vm().cast()) }
+	}
+
+	fn context(&self) -> JObject {
+		// SAFETY: Valid pointer guaranteed by the `ndk_context` crate.
+		unsafe { JObject::from_raw(self.ctx.context().cast()) }
 	}
 }
 
@@ -28,10 +43,9 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
-		let ctx = ndk_context::android_context();
-		let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
-		let context = unsafe { JObject::from_raw(ctx.context().cast()) };
-		let mut env = vm.attach_current_thread().unwrap();
+		let vm = self.clipboard.vm()?;
+		let context = self.clipboard.context();
+		let mut env = vm.attach_current_thread()?;
 
 		let clipboard = env.new_string("clipboard")?;
 
@@ -75,10 +89,9 @@ impl<'clipboard> Set<'clipboard> {
 	}
 
 	pub(crate) fn text(self, text: Cow<'_, str>) -> Result<(), Error> {
-		let ctx = ndk_context::android_context();
-		let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
-		let context = unsafe { JObject::from_raw(ctx.context().cast()) };
-		let mut env = vm.attach_current_thread().unwrap();
+		let vm = self.clipboard.vm()?;
+		let context = self.clipboard.context();
+		let mut env = vm.attach_current_thread()?;
 
 		let clipboard = env.new_string("clipboard")?;
 
@@ -131,10 +144,9 @@ impl<'clipboard> Clear<'clipboard> {
 	}
 
 	pub(crate) fn clear(self) -> Result<(), Error> {
-		let ctx = ndk_context::android_context();
-		let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
-		let context = unsafe { JObject::from_raw(ctx.context().cast()) };
-		let mut env = vm.attach_current_thread().unwrap();
+		let vm = self.clipboard.vm()?;
+		let context = self.clipboard.context();
+		let mut env = vm.attach_current_thread()?;
 
 		let clipboard = env.new_string("clipboard")?;
 
