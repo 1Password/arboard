@@ -1,6 +1,14 @@
 use std::borrow::Cow;
 
+use jni::objects::{JObject, JString};
+
 use crate::{Error, ImageData};
+
+impl From<jni::errors::Error> for Error {
+	fn from(error: jni::errors::Error) -> Self {
+		Error::Unknown { description: error.to_string() }
+	}
+}
 
 pub(crate) struct Clipboard {}
 
@@ -20,7 +28,36 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
-		Err(Error::ClipboardNotSupported)
+		let ctx = ndk_context::android_context();
+		let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
+		let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+		let mut env = vm.attach_current_thread().unwrap();
+
+		let clipboard = env.new_string("clipboard")?;
+
+		let clipboard_manager = env
+			.call_method(
+				context,
+				"getSystemService",
+				"(Ljava/lang/String;)Ljava/lang/Object;",
+				&[(&clipboard).into()],
+			)?
+			.l()?;
+
+		let clip = env
+			.call_method(clipboard_manager, "getPrimaryClip", "()Landroid/content/ClipData;", &[])?
+			.l()?;
+
+		let item = env
+			.call_method(clip, "getItemAt", "(I)Landroid/content/ClipData$Item;", &[0.into()])?
+			.l()?;
+
+		let text = env.call_method(item, "getText", "()Ljava/lang/CharSequence;", &[])?.l()?;
+
+		let text = JString::from(text);
+		let text = env.get_string(&text)?;
+
+		Ok(text.into())
 	}
 
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
