@@ -94,19 +94,8 @@ impl<'clipboard> Set<'clipboard> {
 
 	pub(crate) fn text(self, text: Cow<'_, str>) -> Result<(), Error> {
 		let vm = self.clipboard.vm()?;
-		let context = self.clipboard.context();
 		let mut env = vm.attach_current_thread()?;
-
-		let clipboard = env.new_string("clipboard")?;
-
-		let clipboard_manager = env
-			.call_method(
-				context,
-				"getSystemService",
-				"(Ljava/lang/String;)Ljava/lang/Object;",
-				&[(&clipboard).into()],
-			)?
-			.l()?;
+		let clipboard_manager = self.clipboard.clipboard_manager(&mut env)?;
 
 		let label = env.new_string("label")?;
 		let text = env.new_string(text)?;
@@ -149,19 +138,8 @@ impl<'clipboard> Clear<'clipboard> {
 
 	pub(crate) fn clear(self) -> Result<(), Error> {
 		let vm = self.clipboard.vm()?;
-		let context = self.clipboard.context();
 		let mut env = vm.attach_current_thread()?;
-
-		let clipboard = env.new_string("clipboard")?;
-
-		let clipboard_manager = env
-			.call_method(
-				context,
-				"getSystemService",
-				"(Ljava/lang/String;)Ljava/lang/Object;",
-				&[(&clipboard).into()],
-			)?
-			.l()?;
+		let clipboard_manager = self.clipboard.clipboard_manager(&mut env)?;
 
 		env.call_method(clipboard_manager, "clearPrimaryClip", "()V", &[])?;
 
