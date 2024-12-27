@@ -63,6 +63,12 @@ pub use platform::SetExtApple;
 ///
 /// This means that attempting operations in parallel has a high likelihood to return an error or
 /// deadlock. As such, it is recommended to avoid creating/operating clipboard objects on >1 thread.
+///
+/// ## WASM
+///
+/// The `Clipboard` is only available on the main browser thread; attempting to use it from a worker
+/// will panic. In addition, the user must perform a paste action on the web document before
+/// the clipboard contents become available to read with `arboard`.
 #[allow(rustdoc::broken_intra_doc_links)]
 pub struct Clipboard {
 	pub(crate) platform: platform::Clipboard,
@@ -134,6 +140,7 @@ impl Clipboard {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
+	/// - On WASM: Currently unsupported
 	///
 	/// # Errors
 	///
@@ -229,6 +236,7 @@ impl Set<'_> {
 	/// - On macOS: `NSImage` object
 	/// - On Linux: PNG, under the atom `image/png`
 	/// - On Windows: In order of priority `CF_DIB` and `CF_BITMAP`
+	/// - On WASM: Currently unsupported
 	#[cfg(feature = "image-data")]
 	pub fn image(self, image: ImageData) -> Result<(), Error> {
 		self.platform.image(image)
