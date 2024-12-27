@@ -149,12 +149,12 @@ impl ImageData<'_> {
 	}
 }
 
-#[cfg(any(windows, all(unix, not(target_os = "macos"))))]
+#[cfg(any(windows, all(unix, not(any(target_os = "macos", target_os = "android")))))]
 pub(crate) struct ScopeGuard<F: FnOnce()> {
 	callback: Option<F>,
 }
 
-#[cfg(any(windows, all(unix, not(target_os = "macos"))))]
+#[cfg(any(windows, all(unix, not(any(target_os = "macos", target_os = "android")))))]
 impl<F: FnOnce()> ScopeGuard<F> {
 	#[cfg_attr(all(windows, not(feature = "image-data")), allow(dead_code))]
 	pub(crate) fn new(callback: F) -> Self {
@@ -162,7 +162,7 @@ impl<F: FnOnce()> ScopeGuard<F> {
 	}
 }
 
-#[cfg(any(windows, all(unix, not(target_os = "macos"))))]
+#[cfg(any(windows, all(unix, not(any(target_os = "macos", target_os = "android")))))]
 impl<F: FnOnce()> Drop for ScopeGuard<F> {
 	fn drop(&mut self) {
 		if let Some(callback) = self.callback.take() {
@@ -172,6 +172,7 @@ impl<F: FnOnce()> Drop for ScopeGuard<F> {
 }
 
 /// Common trait for sealing platform extension traits.
+#[cfg(not(target_os = "android"))]
 pub(crate) mod private {
 	pub trait Sealed {}
 
