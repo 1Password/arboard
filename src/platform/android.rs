@@ -74,8 +74,41 @@ impl<'clipboard> Set<'clipboard> {
 		Self { clipboard }
 	}
 
-	pub(crate) fn text(self, _: Cow<'_, str>) -> Result<(), Error> {
-		Err(Error::ClipboardNotSupported)
+	pub(crate) fn text(self, text: Cow<'_, str>) -> Result<(), Error> {
+		let ctx = ndk_context::android_context();
+		let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.unwrap();
+		let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+		let mut env = vm.attach_current_thread().unwrap();
+
+		let clipboard = env.new_string("clipboard")?;
+
+		let clipboard_manager = env
+			.call_method(
+				context,
+				"getSystemService",
+				"(Ljava/lang/String;)Ljava/lang/Object;",
+				&[(&clipboard).into()],
+			)?
+			.l()?;
+
+		let label = env.new_string("label")?;
+		let text = env.new_string(text)?;
+
+		let clip_data = env.call_static_method(
+			"android/content/ClipData",
+			"newPlainText",
+			"(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;",
+			&[(&label).into(), (&text).into()],
+		)?;
+
+		env.call_method(
+			clipboard_manager,
+			"setPrimaryClip",
+			"(Landroid/content/ClipData;)V",
+			&[(&clip_data).into()],
+		)?;
+
+		Ok(())
 	}
 
 	pub(crate) fn html(self, _: Cow<'_, str>, _: Option<Cow<'_, str>>) -> Result<(), Error> {
