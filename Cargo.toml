@@ -18,10 +18,10 @@ wayland-data-control = ["wl-clipboard-rs"]
 [dependencies]
 
 [dev-dependencies]
-env_logger = "0.10.2"
+env_logger = "0.11"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.48.0", optional = true, features = [
+windows-sys = { version = "0.59.0", optional = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_DataExchange",
@@ -37,13 +37,13 @@ image = { version = "0.25", optional = true, default-features = false, features 
 objc2 = { version = "0.5.1", features = ["relax-void-encoding"] }
 objc2-foundation = { version = "0.2.0", features = ["NSArray", "NSString", "NSEnumerator", "NSGeometry"] }
 objc2-app-kit = { version = "0.2.0", features = ["NSPasteboard", "NSPasteboardItem", "NSImage"] }
-core-graphics = { version = "0.23", optional = true }
+core-graphics = { version = "0.24", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["tiff"] }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
 log = "0.4"
 x11rb = { version = "0.13" }
-wl-clipboard-rs = { version = "0.8", optional = true }
+wl-clipboard-rs = { version = "0.9", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 parking_lot = "0.12"
 
