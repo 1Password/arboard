@@ -1,5 +1,9 @@
 # Changelog
 
+### Changed
+- Updated `objc2` to `v0.6`.
+- Raised MSRV to 1.71.0.
+
 ## 3.4.1 on 2024-12-09
 
 ### Added
@@ -97,11 +101,11 @@ from a `write` call to a X11 and Wayland or clipboard
 - Updated `wl-clipboard-rs` to the version `0.6`.
 - Updated `x11rb` to the version `0.10`.
 - Cleaned up spelling in documentation
-- (Breaking) Functions that used to accept `String` now take `Into<Cow<'a>, str>` instead. 
+- (Breaking) Functions that used to accept `String` now take `Into<Cow<'a>, str>` instead.
 This avoids cloning the string more times then necessary on platforms that can.
 - (Breaking) `Error` is now marked as `#[non_exhaustive]`.
 - (Breaking) Removed all platform specific modules and clipboard structures from the public API.
-If you were using these directly, the recommended replacement is using `arboard::Clipboard` and 
+If you were using these directly, the recommended replacement is using `arboard::Clipboard` and
 the new platform-specific extension traits instead.
 - (Breaking) On Windows, the clipboard is now opened once per call to `Clipboard::new()` instead of on
 each operation. This means that instances of `Clipboard` should be dropped once you're performed the

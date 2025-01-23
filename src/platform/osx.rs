@@ -12,8 +12,8 @@ and conditions of the chosen license apply to this file.
 use crate::common::ImageData;
 use crate::common::{private, Error};
 use objc2::{
-	msg_send_id,
-	rc::{autoreleasepool, Id},
+	msg_send,
+	rc::{autoreleasepool, Retained},
 	runtime::ProtocolObject,
 	ClassType,
 };
@@ -30,65 +30,67 @@ fn image_from_pixels(
 	pixels: Vec<u8>,
 	width: usize,
 	height: usize,
-) -> Result<Id<objc2_app_kit::NSImage>, Box<dyn std::error::Error>> {
-	use core_graphics::{
-		base::{kCGBitmapByteOrderDefault, kCGImageAlphaLast, kCGRenderingIntentDefault, CGFloat},
-		color_space::CGColorSpace,
-		data_provider::{CGDataProvider, CustomData},
-		image::{CGImage, CGImageRef},
-	};
+) -> Result<Retained<objc2_app_kit::NSImage>, Box<dyn std::error::Error>> {
+	use objc2::AllocAnyThread;
 	use objc2_app_kit::NSImage;
+	use objc2_core_foundation::CGFloat;
+	use objc2_core_graphics::{
+		CGBitmapInfo, CGColorRenderingIntent, CGColorSpaceCreateDeviceRGB,
+		CGDataProviderCreateWithData, CGImageAlphaInfo, CGImageCreate,
+	};
 	use objc2_foundation::NSSize;
-	use std::ffi::c_void;
+	use std::{
+		ffi::c_void,
+		ptr::{self, slice_from_raw_parts_mut, NonNull},
+	};
 
-	#[derive(Debug)]
-	struct PixelArray {
-		data: Vec<u8>,
+	unsafe extern "C-unwind" fn release(_info: *mut c_void, data: NonNull<c_void>, size: usize) {
+		let data = data.cast::<u8>();
+		let slice = slice_from_raw_parts_mut(data.as_ptr(), size);
+		// SAFETY: This is the same slice that we got from `Box::into_raw`.
+		drop(unsafe { Box::from_raw(slice) })
 	}
 
-	impl CustomData for PixelArray {
-		unsafe fn ptr(&self) -> *const u8 {
-			self.data.as_ptr()
-		}
-		unsafe fn len(&self) -> usize {
-			self.data.len()
-		}
+	let provider = {
+		let pixels: Box<[u8]> = pixels.into();
+		let len = pixels.len();
+		let pixels: *mut [u8] = Box::into_raw(pixels);
+		// Convert slice pointer to thin pointer.
+		let data_ptr = pixels.cast::<c_void>();
+
+		// SAFETY: The data pointer and length are valid.
+		// The info pointer can safely be NULL, we don't use it in the `release` callback.
+		unsafe { CGDataProviderCreateWithData(ptr::null_mut(), data_ptr, len, Some(release)) }
 	}
+	.unwrap();
 
-	let colorspace = CGColorSpace::create_device_rgb();
-	let pixel_data: Box<Box<dyn CustomData>> = Box::new(Box::new(PixelArray { data: pixels }));
-	let provider = unsafe { CGDataProvider::from_custom_data(pixel_data) };
+	let colorspace = unsafe { CGColorSpaceCreateDeviceRGB() }.unwrap();
 
-	let cg_image = CGImage::new(
-		width,
-		height,
-		8,
-		32,
-		4 * width,
-		&colorspace,
-		kCGBitmapByteOrderDefault | kCGImageAlphaLast,
-		&provider,
-		false,
-		kCGRenderingIntentDefault,
-	);
-
-	// Convert the owned `CGImage` into a reference `&CGImageRef`, and pass
-	// that as `*const c_void`, since `CGImageRef` does not implement
-	// `RefEncode`.
-	let cg_image: *const CGImageRef = &*cg_image;
-	let cg_image: *const c_void = cg_image.cast();
+	let cg_image = unsafe {
+		CGImageCreate(
+			width,
+			height,
+			8,
+			32,
+			4 * width,
+			Some(&colorspace),
+			CGBitmapInfo::ByteOrderDefault | CGBitmapInfo(CGImageAlphaInfo::Last.0),
+			Some(&provider),
+			ptr::null_mut(),
+			false,
+			CGColorRenderingIntent::RenderingIntentDefault,
+		)
+	}
+	.unwrap();
 
 	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
-	// XXX: Use `NSImage::initWithCGImage_size` once `objc2-app-kit` supports
-	// CoreGraphics.
-	let image: Id<NSImage> =
-		unsafe { msg_send_id![NSImage::alloc(), initWithCGImage: cg_image, size:size] };
+	let image = unsafe { NSImage::initWithCGImage_size(NSImage::alloc(), &cg_image, size) };
 
 	Ok(image)
 }
 
 pub(crate) struct Clipboard {
-	pasteboard: Id<NSPasteboard>,
+	pasteboard: Retained<NSPasteboard>,
 }
 
 unsafe impl Send for Clipboard {}
@@ -107,8 +109,8 @@ impl Clipboard {
 		// documented not to.
 		//
 		// Otherwise we'd just use `NSPasteboard::generalPasteboard()` here.
-		let pasteboard: Option<Id<NSPasteboard>> =
-			unsafe { msg_send_id![NSPasteboard::class(), generalPasteboard] };
+		let pasteboard: Option<Retained<NSPasteboard>> =
+			unsafe { msg_send![NSPasteboard::class(), generalPasteboard] };
 
 		if let Some(pasteboard) = pasteboard {
 			Ok(Clipboard { pasteboard })
@@ -216,7 +218,7 @@ impl<'clipboard> Get<'clipboard> {
 			let image_data = unsafe { self.clipboard.pasteboard.dataForType(NSPasteboardTypeTIFF) }
 				.ok_or(Error::ContentNotAvailable)?;
 
-			let data = Cursor::new(image_data.bytes());
+			let data = Cursor::new(image_data.to_vec());
 
 			let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
 			reader.decode().map_err(|_| Error::ConversionFailure)
@@ -246,8 +248,9 @@ impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {
 		self.clipboard.clear();
 
-		let string_array =
-			NSArray::from_vec(vec![ProtocolObject::from_id(NSString::from_str(&data))]);
+		let string_array = NSArray::from_retained_slice(&[ProtocolObject::from_retained(
+			NSString::from_str(&data),
+		)]);
 		let success = unsafe { self.clipboard.pasteboard.writeObjects(&string_array) };
 
 		add_clipboard_exclusions(self.clipboard, self.exclude_from_history);
@@ -301,7 +304,7 @@ impl<'clipboard> Set<'clipboard> {
 
 		self.clipboard.clear();
 
-		let image_array = NSArray::from_vec(vec![ProtocolObject::from_id(image)]);
+		let image_array = NSArray::from_retained_slice(&[ProtocolObject::from_retained(image)]);
 		let success = unsafe { self.clipboard.pasteboard.writeObjects(&image_array) };
 
 		add_clipboard_exclusions(self.clipboard, self.exclude_from_history);
