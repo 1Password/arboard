@@ -334,7 +334,16 @@ mod tests {
 
 			ctx.set().html(html, None).unwrap();
 
-			assert_eq!(ctx.get().html().unwrap(), html);
+			if cfg!(target_os = "macos") {
+				// Copying HTML on macOS adds wrapper content to work around
+				// historical platform bugs. We control this wrapper, so we are
+				// able to check that the full user data still appears and at what
+				// position in the final copy contents.
+				let content = ctx.get().html().unwrap();
+				assert!(content.ends_with(&format!("{html}</body></html>")));
+			} else {
+				assert_eq!(ctx.get().html().unwrap(), html);
+			}
 		}
 		#[cfg(feature = "image-data")]
 		{

@@ -353,18 +353,6 @@ fn add_clipboard_exclusions(clipboard: &mut Clipboard, exclude_from_history: boo
 	}
 }
 
-fn extract_html(html: String) -> Option<String> {
-	let start_tag = "<body>";
-	let end_tag = "</body>";
-
-	// Locate the start index of the <body> tag
-	let start_index = html.find(start_tag)? + start_tag.len();
-	// Locate the end index of the </body> tag
-	let end_index = html.find(end_tag)?;
-
-	Some(html[start_index..end_index].to_string())
-}
-
 /// Apple-specific extensions to the [`Set`](crate::Set) builder.
 pub trait SetExtApple: private::Sealed {
 	/// Excludes the data which will be set on the clipboard from being added to
