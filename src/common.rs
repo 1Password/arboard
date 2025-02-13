@@ -148,6 +148,27 @@ impl ImageData<'_> {
 			bytes: self.bytes.clone().into_owned().into(),
 		}
 	}
+
+	pub(crate) fn encode_as_png(&self) -> Result<Vec<u8>, Error> {
+		use image::ImageEncoder as _;
+
+		if self.bytes.is_empty() || self.width == 0 || self.height == 0 {
+			return Err(Error::ConversionFailure);
+		}
+
+		let mut png_bytes = Vec::new();
+		let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+		encoder
+			.write_image(
+				self.bytes.as_ref(),
+				self.width as u32,
+				self.height as u32,
+				image::ExtendedColorType::Rgba8,
+			)
+			.map_err(|_| Error::ConversionFailure)?;
+
+		Ok(png_bytes)
+	}
 }
 
 #[cfg(any(windows, all(unix, not(target_os = "macos"))))]

@@ -12,10 +12,11 @@ rust-version = "1.67.1"
 
 [features]
 default = ["image-data"]
-image-data = ["core-graphics", "image", "windows-sys"]
+image-data = ["image", "windows-sys"]
 wayland-data-control = ["wl-clipboard-rs"]
 
 [dependencies]
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 
 [dev-dependencies]
 env_logger = "0.10.2"
@@ -30,21 +31,17 @@ windows-sys = { version = "0.48.0", optional = true, features = [
 ]}
 clipboard-win = "5.3.1"
 log = "0.4"
-image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Use `relax-void-encoding`, as that allows us to pass `c_void` instead of implementing `Encode` correctly for `&CGImageRef`
 objc2 = { version = "0.5.1", features = ["relax-void-encoding"] }
 objc2-foundation = { version = "0.2.0", features = ["NSArray", "NSString", "NSEnumerator", "NSGeometry"] }
 objc2-app-kit = { version = "0.2.0", features = ["NSPasteboard", "NSPasteboardItem", "NSImage"] }
-core-graphics = { version = "0.23", optional = true }
-image = { version = "0.25", optional = true, default-features = false, features = ["tiff"] }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
 log = "0.4"
 x11rb = { version = "0.13" }
 wl-clipboard-rs = { version = "0.8", optional = true }
-image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
 parking_lot = "0.12"
 
 [[example]]
