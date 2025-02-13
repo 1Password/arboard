@@ -30,7 +30,7 @@ fn image_from_pixels(
 	pixels: Vec<u8>,
 	width: usize,
 	height: usize,
-) -> Result<Retained<objc2_app_kit::NSImage>, Box<dyn std::error::Error>> {
+) -> Retained<objc2_app_kit::NSImage> {
 	use objc2::AllocAnyThread;
 	use objc2_app_kit::NSImage;
 	use objc2_core_foundation::CGFloat;
@@ -84,9 +84,7 @@ fn image_from_pixels(
 	.unwrap();
 
 	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
-	let image = unsafe { NSImage::initWithCGImage_size(NSImage::alloc(), &cg_image, size) };
-
-	Ok(image)
+	unsafe { NSImage::initWithCGImage_size(NSImage::alloc(), &cg_image, size) }
 }
 
 pub(crate) struct Clipboard {
@@ -305,8 +303,7 @@ impl<'clipboard> Set<'clipboard> {
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, data: ImageData) -> Result<(), Error> {
 		let pixels = data.bytes.into();
-		let image = image_from_pixels(pixels, data.width, data.height)
-			.map_err(|_| Error::ConversionFailure)?;
+		let image = image_from_pixels(pixels, data.width, data.height);
 
 		self.clipboard.clear();
 
