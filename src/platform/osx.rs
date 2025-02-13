@@ -41,14 +41,14 @@ fn image_from_pixels(
 	use objc2_foundation::NSSize;
 	use std::{
 		ffi::c_void,
-		ptr::{self, slice_from_raw_parts_mut, NonNull},
+		ptr::{self, NonNull},
 	};
 
 	unsafe extern "C-unwind" fn release(_info: *mut c_void, data: NonNull<c_void>, size: usize) {
 		let data = data.cast::<u8>();
-		let slice = slice_from_raw_parts_mut(data.as_ptr(), size);
+		let slice = NonNull::slice_from_raw_parts(data, size);
 		// SAFETY: This is the same slice that we got from `Box::into_raw`.
-		drop(unsafe { Box::from_raw(slice) })
+		drop(unsafe { Box::from_raw(slice.as_ptr()) })
 	}
 
 	let provider = {
