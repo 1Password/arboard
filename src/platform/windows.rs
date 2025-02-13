@@ -40,7 +40,7 @@ mod image_data {
 		Error::unknown(format!("{}: {}", message, os_error))
 	}
 
-	unsafe fn global_unlock_checked(hdata: isize) {
+	unsafe fn global_unlock_checked(hdata: HGLOBAL) {
 		// If the memory object is unlocked after decrementing the lock count, the function
 		// returns zero and GetLastError returns NO_ERROR. If it fails, the return value is
 		// zero and GetLastError returns a value other than NO_ERROR.
@@ -119,7 +119,7 @@ mod image_data {
 			}
 		}
 
-		if unsafe { SetClipboardData(CF_DIBV5 as u32, hdata as _) } == 0 {
+		if unsafe { SetClipboardData(CF_DIBV5 as u32, hdata as _) }.failure() {
 			unsafe { DeleteObject(hdata as _) };
 			Err(last_error("SetClipboardData failed with error"))
 		} else {
@@ -156,7 +156,7 @@ mod image_data {
 			global_unlock_checked(hdata);
 		}
 
-		if unsafe { SetClipboardData(format_id, hdata as _) } == 0 {
+		if unsafe { SetClipboardData(format_id, hdata as _) }.failure() {
 			unsafe { DeleteObject(hdata as _) };
 			Err(last_error("SetClipboardData failed with error"))
 		} else {
@@ -166,7 +166,7 @@ mod image_data {
 
 	unsafe fn global_alloc(bytes: usize) -> Result<HGLOBAL, Error> {
 		let hdata = GlobalAlloc(GHND, bytes);
-		if hdata == 0 {
+		if hdata.is_null() {
 			Err(last_error("Could not allocate global memory object"))
 		} else {
 			Ok(hdata)
@@ -225,7 +225,7 @@ mod image_data {
 					biHeight: -h,
 					biBitCount: 32,
 					biPlanes: 1,
-					biCompression: BI_RGB as u32,
+					biCompression: BI_RGB,
 					biSizeImage: 0,
 					biXPelsPerMeter: 0,
 					biYPelsPerMeter: 0,
@@ -261,8 +261,8 @@ mod image_data {
 
 	fn get_screen_device_context() -> Result<HDC, Error> {
 		// SAFETY: Calling `GetDC` with `NULL` is safe.
-		let hdc = unsafe { GetDC(0) };
-		if hdc == 0 {
+		let hdc = unsafe { GetDC(ResultValue::NULL) };
+		if hdc.failure() {
 			Err(Error::unknown("Failed to get the device context. GetDC returned null"))
 		} else {
 			Ok(hdc)
@@ -282,7 +282,7 @@ mod image_data {
 			header as _,
 			DIB_RGB_COLORS,
 		);
-		if hbitmap == 0 {
+		if hbitmap.failure() {
 			Err(Error::unknown(
 				"Failed to create the HBITMAP while reading DIBV5. CreateDIBitmap returned null",
 			))
@@ -305,6 +305,32 @@ mod image_data {
 			Err(Error::unknown("Could not get the bitmap bits, GetDIBits returned 0"))
 		} else {
 			Ok(lines)
+		}
+	}
+
+	/// An abstraction trait over the different ways a Win32 function may return
+	/// a value with a failure marker.
+	///
+	/// This is primarily to abstract over changes in `windows-sys` versions and unify how
+	/// error handling is done in the above image code.
+	trait ResultValue: Sized {
+		const NULL: Self;
+		fn failure(self) -> bool;
+	}
+
+	// windows-sys >= 0.59
+	impl<T> ResultValue for *mut T {
+		const NULL: Self = core::ptr::null_mut();
+		fn failure(self) -> bool {
+			self == Self::NULL
+		}
+	}
+
+	// `windows-sys` 0.52
+	impl ResultValue for isize {
+		const NULL: Self = 0;
+		fn failure(self) -> bool {
+			self == Self::NULL
 		}
 	}
 
