@@ -26,7 +26,7 @@ jobs:
         os: [macos-latest, windows-latest, ubuntu-latest]
         # Latest stable and MSRV. We only run checks with all features enabled
         # for the MSRV build to keep CI fast, since other configurations should also work.
-        rust_version: [stable, "1.67.1"]
+        rust_version: [stable, "1.71.0"]
     steps:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
