@@ -19,10 +19,11 @@ default = ["image-data"]
 image-data = [
     "dep:objc2-core-graphics",
     "dep:objc2-core-foundation",
-    "dep:image",
-    "dep:windows-sys",
+    "image",
+    "windows-sys",
+    "core-graphics",
 ]
-wayland-data-control = ["dep:wl-clipboard-rs"]
+wayland-data-control = ["wl-clipboard-rs"]
 
 # For backwards compat
 core-graphics = ["dep:objc2-core-graphics"]
