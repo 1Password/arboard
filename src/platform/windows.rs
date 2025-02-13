@@ -567,6 +567,19 @@ impl<'clipboard> Get<'clipboard> {
 		String::from_utf16(&out[..bytes_read]).map_err(|_| Error::ConversionFailure)
 	}
 
+	pub(crate) fn html(self) -> Result<String, Error> {
+		let _clipboard_assertion = self.clipboard?;
+
+		let format = clipboard_win::register_format("HTML Format")
+			.ok_or_else(|| Error::unknown("unable to register HTML format"))?;
+
+		let mut out: Vec<u8> = Vec::new();
+		clipboard_win::raw::get_html(format.get(), &mut out)
+			.map_err(|_| Error::unknown("failed to read clipboard string"))?;
+
+		String::from_utf8(out).map_err(|_| Error::ConversionFailure)
+	}
+
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		const FORMAT: u32 = clipboard_win::formats::CF_DIBV5;

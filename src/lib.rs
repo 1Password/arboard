@@ -192,6 +192,11 @@ impl Get<'_> {
 	pub fn image(self) -> Result<ImageData<'static>, Error> {
 		self.platform.image()
 	}
+
+	/// Completes the "get" operation by fetching HTML from the clipboard.
+	pub fn html(self) -> Result<String, Error> {
+		self.platform.html()
+	}
 }
 
 /// A builder for an operation that sets a value to the clipboard.
@@ -321,6 +326,24 @@ mod tests {
 
 			ctx.set_html(html, Some(alt_text)).unwrap();
 			assert_eq!(ctx.get_text().unwrap(), alt_text);
+		}
+		{
+			let mut ctx = Clipboard::new().unwrap();
+
+			let html = "<b>hello</b> <i>world</i>!";
+
+			ctx.set().html(html, None).unwrap();
+
+			if cfg!(target_os = "macos") {
+				// Copying HTML on macOS adds wrapper content to work around
+				// historical platform bugs. We control this wrapper, so we are
+				// able to check that the full user data still appears and at what
+				// position in the final copy contents.
+				let content = ctx.get().html().unwrap();
+				assert!(content.ends_with(&format!("{html}</body></html>")));
+			} else {
+				assert_eq!(ctx.get().html().unwrap(), html);
+			}
 		}
 		#[cfg(feature = "image-data")]
 		{

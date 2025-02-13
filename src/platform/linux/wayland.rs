@@ -53,10 +53,12 @@ impl Clipboard {
 		Ok(Self {})
 	}
 
-	pub(crate) fn get_text(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
-		use wl_clipboard_rs::paste::MimeType;
-
-		let result = get_contents(selection.try_into()?, Seat::Unspecified, MimeType::Text);
+	fn string_for_mime(
+		&mut self,
+		selection: LinuxClipboardKind,
+		mime: paste::MimeType,
+	) -> Result<String, Error> {
+		let result = get_contents(selection.try_into()?, Seat::Unspecified, mime);
 		match result {
 			Ok((mut pipe, _)) => {
 				let mut contents = vec![];
@@ -74,6 +76,10 @@ impl Clipboard {
 		}
 	}
 
+	pub(crate) fn get_text(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
+		self.string_for_mime(selection, paste::MimeType::Text)
+	}
+
 	pub(crate) fn set_text(
 		&self,
 		text: Cow<'_, str>,
@@ -89,6 +95,10 @@ impl Clipboard {
 			other => into_unknown(other),
 		})?;
 		Ok(())
+	}
+
+	pub(crate) fn get_html(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
+		self.string_for_mime(selection, paste::MimeType::Specific("text/html"))
 	}
 
 	pub(crate) fn set_html(
