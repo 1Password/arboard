@@ -218,7 +218,8 @@ impl<'clipboard> Get<'clipboard> {
 			let image_data = unsafe { self.clipboard.pasteboard.dataForType(NSPasteboardTypeTIFF) }
 				.ok_or(Error::ContentNotAvailable)?;
 
-			let data = Cursor::new(image_data.to_vec());
+			// SAFETY: The data is not modified while in use here.
+			let data = Cursor::new(unsafe { image_data.as_bytes_unchecked() });
 
 			let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
 			reader.decode().map_err(|_| Error::ConversionFailure)
