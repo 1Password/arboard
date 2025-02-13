@@ -207,8 +207,7 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn html(self) -> Result<String, Error> {
-		let html = unsafe { self.clipboard.string_from_type(NSPasteboardTypeHTML) }?;
-		extract_html(html).ok_or(Error::ConversionFailure)
+		unsafe { self.clipboard.string_from_type(NSPasteboardTypeHTML) }
 	}
 
 	#[cfg(feature = "image-data")]
