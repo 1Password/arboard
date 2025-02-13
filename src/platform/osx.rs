@@ -52,7 +52,7 @@ fn image_from_pixels(
 	}
 
 	let provider = {
-		let pixels: Box<[u8]> = pixels.into();
+		let pixels = pixels.into_boxed_slice();
 		let len = pixels.len();
 		let pixels: *mut [u8] = Box::into_raw(pixels);
 		// Convert slice pointer to thin pointer.
