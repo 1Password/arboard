@@ -49,6 +49,12 @@ jobs:
       - name: Run `cargo clippy` with all features
         run: cargo clippy --verbose --all-features -- -D warnings -D clippy::dbg_macro
 
+      - name: Run `cargo clippy` with dependency version checks
+        if: ${{ matrix.rust_version == 'stable' }}
+        run: |
+          cargo update -p windows-sys
+          cargo clippy --verbose --all-features -- -D warnings -D clippy::dbg_macro 
+
   test:
     needs: clippy
     runs-on: ${{ matrix.os }}
