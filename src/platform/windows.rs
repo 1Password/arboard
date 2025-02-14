@@ -20,12 +20,12 @@ mod image_data {
 	use image::codecs::png::PngEncoder;
 	use image::ExtendedColorType;
 	use image::ImageEncoder;
-	use std::{convert::TryInto, ffi::c_void, io, mem::size_of, ptr::copy_nonoverlapping};
+	use std::{convert::TryInto, io, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
-		Foundation::HGLOBAL,
+		Foundation::{HANDLE, HGLOBAL},
 		Graphics::Gdi::{
 			CreateDIBitmap, DeleteObject, GetDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
-			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC,
+			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
 			LCS_GM_IMAGES, RGBQUAD,
 		},
 		System::{
@@ -102,10 +102,14 @@ mod image_data {
 			let data_ptr = global_lock(hdata)?;
 			let _unlock = ScopeGuard::new(|| global_unlock_checked(hdata));
 
-			copy_nonoverlapping::<u8>((&header) as *const _ as *const u8, data_ptr, header_size);
+			copy_nonoverlapping::<u8>(
+				(&header as *const BITMAPV5HEADER).cast(),
+				data_ptr,
+				header_size,
+			);
 
 			// Not using the `add` function, because that has a restriction, that the result cannot overflow isize
-			let pixels_dst = (data_ptr as usize + header_size) as *mut u8;
+			let pixels_dst = data_ptr.add(header_size);
 			copy_nonoverlapping::<u8>(image.bytes.as_ptr(), pixels_dst, image.bytes.len());
 
 			let dst_pixels_slice = std::slice::from_raw_parts_mut(pixels_dst, image.bytes.len());
@@ -119,8 +123,8 @@ mod image_data {
 			}
 		}
 
-		if unsafe { SetClipboardData(CF_DIBV5 as u32, hdata as _) }.failure() {
-			unsafe { DeleteObject(hdata as _) };
+		if unsafe { SetClipboardData(CF_DIBV5 as u32, hdata as HANDLE) }.failure() {
+			unsafe { DeleteObject(hdata as HGDIOBJ) };
 			Err(last_error("SetClipboardData failed with error"))
 		} else {
 			Ok(())
@@ -156,8 +160,8 @@ mod image_data {
 			global_unlock_checked(hdata);
 		}
 
-		if unsafe { SetClipboardData(format_id, hdata as _) }.failure() {
-			unsafe { DeleteObject(hdata as _) };
+		if unsafe { SetClipboardData(format_id, hdata as HANDLE) }.failure() {
+			unsafe { DeleteObject(hdata as HGDIOBJ) };
 			Err(last_error("SetClipboardData failed with error"))
 		} else {
 			Ok(())
@@ -174,7 +178,7 @@ mod image_data {
 	}
 
 	unsafe fn global_lock(hmem: HGLOBAL) -> Result<*mut u8, Error> {
-		let data_ptr = GlobalLock(hmem) as *mut u8;
+		let data_ptr = GlobalLock(hmem).cast::<u8>();
 		if data_ptr.is_null() {
 			Err(last_error("Could not lock the global memory object"))
 		} else {
@@ -195,7 +199,7 @@ mod image_data {
 		if dibv5.len() < header_size {
 			return Err(Error::unknown("When reading the DIBV5 data, it contained fewer bytes than the BITMAPV5HEADER size. This is invalid."));
 		}
-		let header = unsafe { &*(dibv5.as_ptr() as *const BITMAPV5HEADER) };
+		let header = unsafe { &*(dibv5.as_ptr().cast::<BITMAPV5HEADER>()) };
 
 		let has_profile =
 			header.bV5CSType == PROFILE_LINKED || header.bV5CSType == PROFILE_EMBEDDED;
@@ -207,9 +211,9 @@ mod image_data {
 		};
 
 		unsafe {
-			let image_bytes = dibv5.as_ptr().offset(pixel_data_start) as *const _;
+			let image_bytes = dibv5.as_ptr().offset(pixel_data_start);
 			let hdc = get_screen_device_context()?;
-			let hbitmap = create_bitmap_from_dib(hdc, header as _, image_bytes)?;
+			let hbitmap = create_bitmap_from_dib(hdc, header, image_bytes)?;
 			// Now extract the pixels in a desired format
 			let w = header.bV5Width;
 			let h = header.bV5Height.abs();
@@ -237,9 +241,9 @@ mod image_data {
 			let lines = convert_bitmap_to_rgb(
 				hdc,
 				hbitmap,
-				h as _,
-				result_bytes.as_mut_ptr() as _,
-				&mut output_header as _,
+				h,
+				result_bytes.as_mut_slice(),
+				&mut output_header,
 			)?;
 			let read_len = lines as usize * w as usize * 4;
 			assert!(
@@ -272,14 +276,14 @@ mod image_data {
 	unsafe fn create_bitmap_from_dib(
 		hdc: HDC,
 		header: *const BITMAPV5HEADER,
-		image_bytes: *const c_void,
+		image_bytes: *const u8,
 	) -> Result<HBITMAP, Error> {
 		let hbitmap = CreateDIBitmap(
 			hdc,
-			header as _,
+			header.cast(),
 			CBM_INIT as u32,
-			image_bytes,
-			header as _,
+			image_bytes.cast(),
+			header.cast(),
 			DIB_RGB_COLORS,
 		);
 		if hbitmap.failure() {
@@ -296,11 +300,19 @@ mod image_data {
 	unsafe fn convert_bitmap_to_rgb(
 		hdc: HDC,
 		hbitmap: HBITMAP,
-		lines: u32,
-		dst: *mut c_void,
-		header: *mut BITMAPINFO,
+		lines: i32,
+		dst: &mut [u8],
+		header: &mut BITMAPINFO,
 	) -> Result<i32, Error> {
-		let lines = GetDIBits(hdc, hbitmap, 0, lines, dst, header, DIB_RGB_COLORS);
+		let lines = GetDIBits(
+			hdc,
+			hbitmap,
+			0,
+			lines as u32,
+			dst.as_mut_ptr().cast(),
+			header,
+			DIB_RGB_COLORS,
+		);
 		if lines == 0 {
 			Err(Error::unknown("Could not get the bitmap bits, GetDIBits returned 0"))
 		} else {
