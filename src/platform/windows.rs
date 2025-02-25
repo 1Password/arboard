@@ -635,6 +635,16 @@ impl<'clipboard> Get<'clipboard> {
 
 		image_data::read_cf_dibv5(&data)
 	}
+
+	pub(crate) fn file_list(self) -> Result<Vec<String>, Error> {
+		let _clipboard_assertion = self.clipboard?;
+
+		let mut file_list = Vec::new();
+		clipboard_win::raw::get_file_list(&mut file_list)
+			.map_err(|_| Error::ContentNotAvailable)?;
+
+		Ok(file_list)
+	}
 }
 
 pub(crate) struct Set<'clipboard> {

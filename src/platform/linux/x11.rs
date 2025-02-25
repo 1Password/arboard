@@ -77,6 +77,7 @@ x11rb::atom_manager! {
 		TEXT_MIME_UNKNOWN: b"text/plain",
 
 		HTML: b"text/html",
+		URI_LIST: b"text/uri-list",
 
 		PNG_MIME: b"image/png",
 
@@ -940,6 +941,14 @@ impl Clipboard {
 		let encoded = encode_as_png(&image)?;
 		let data = vec![ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME }];
 		self.inner.write(data, selection, wait)
+	}
+
+	pub(crate) fn get_file_list(&self, selection: LinuxClipboardKind) -> Result<Vec<String>> {
+		let result = self.inner.read(&[self.inner.atoms.URI_LIST], selection)?;
+
+		String::from_utf8(result.bytes)
+			.map_err(|_| Error::ConversionFailure)
+			.map(|res| res.lines().map(|s| s.to_string()).collect())
 	}
 }
 

@@ -197,6 +197,10 @@ impl Get<'_> {
 	pub fn html(self) -> Result<String, Error> {
 		self.platform.html()
 	}
+
+	pub fn file_list(self) -> Result<Vec<String>, Error> {
+		self.platform.file_list()
+	}
 }
 
 /// A builder for an operation that sets a value to the clipboard.

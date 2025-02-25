@@ -237,6 +237,10 @@ impl<'clipboard> Get<'clipboard> {
 			bytes: rgba.into_raw().into(),
 		})
 	}
+
+	pub(crate) fn file_list(self) -> Result<Vec<String>, Error> {
+		todo!()
+	}
 }
 
 pub(crate) struct Set<'clipboard> {

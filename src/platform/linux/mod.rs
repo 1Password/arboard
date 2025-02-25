@@ -130,6 +130,14 @@ impl<'clipboard> Get<'clipboard> {
 			Clipboard::WlDataControl(clipboard) => clipboard.get_html(self.selection),
 		}
 	}
+
+	pub(crate) fn file_list(self) -> Result<Vec<String>, Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.get_file_list(self.selection),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(_) => todo!(),
+		}
+	}
 }
 
 /// Linux-specific extensions to the [`Get`](super::Get) builder.
