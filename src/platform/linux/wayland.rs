@@ -72,7 +72,7 @@ impl Clipboard {
 
 			Err(PasteError::PrimarySelectionUnsupported) => Err(Error::ClipboardNotSupported),
 
-			Err(err) => Err(Error::Unknown { description: err.to_string() }),
+			Err(err) => Err(into_unknown(err)),
 		}
 	}
 
@@ -163,7 +163,7 @@ impl Clipboard {
 				Err(Error::ContentNotAvailable)
 			}
 
-			Err(err) => Err(Error::Unknown { description: err.to_string() }),
+			Err(err) => Err(into_unknown(err)),
 		}
 	}
 
