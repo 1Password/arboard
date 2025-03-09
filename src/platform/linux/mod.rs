@@ -38,6 +38,10 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 	Ok(png_bytes)
 }
 
+fn extract_paths_from_uri_list(uri_list: String) -> Vec<PathBuf> {
+	uri_list.lines().filter_map(|s| s.strip_prefix("file://").map(PathBuf::from)).collect()
+}
+
 /// Clipboard selection
 ///
 /// Linux has a concept of clipboard "selections" which tend to be used in different contexts. This
@@ -132,7 +136,11 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
-		todo!()
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.get_file_list(self.selection),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.get_file_list(self.selection),
+		}
 	}
 }
 
