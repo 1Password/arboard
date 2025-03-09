@@ -11,7 +11,7 @@ and conditions of the chosen license apply to this file.
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
 use crate::common::{private, Error};
-use std::{borrow::Cow, marker::PhantomData, thread, time::Duration};
+use std::{borrow::Cow, marker::PhantomData, path::PathBuf, thread, time::Duration};
 
 #[cfg(feature = "image-data")]
 mod image_data {
@@ -634,6 +634,10 @@ impl<'clipboard> Get<'clipboard> {
 			.map_err(|_| Error::unknown("failed to read clipboard image data"))?;
 
 		image_data::read_cf_dibv5(&data)
+	}
+
+	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
+		todo!()
 	}
 }
 

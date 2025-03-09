@@ -10,7 +10,7 @@ and conditions of the chosen license apply to this file.
 #![warn(unreachable_pub)]
 
 mod common;
-use std::borrow::Cow;
+use std::{borrow::Cow, path::PathBuf};
 
 pub use common::Error;
 #[cfg(feature = "image-data")]
@@ -196,6 +196,11 @@ impl Get<'_> {
 	/// Completes the "get" operation by fetching HTML from the clipboard.
 	pub fn html(self) -> Result<String, Error> {
 		self.platform.html()
+	}
+
+	/// Completes the "get" operation by fetching a list of file paths from the clipboard.
+	pub fn file_list(self) -> Result<Vec<PathBuf>, Error> {
+		self.platform.file_list()
 	}
 }
 

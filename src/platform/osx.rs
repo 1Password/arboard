@@ -22,6 +22,7 @@ use objc2_foundation::{ns_string, NSArray, NSString};
 use std::{
 	borrow::Cow,
 	panic::{RefUnwindSafe, UnwindSafe},
+	path::PathBuf,
 };
 
 /// Returns an NSImage object on success.
@@ -236,6 +237,10 @@ impl<'clipboard> Get<'clipboard> {
 			height: height as usize,
 			bytes: rgba.into_raw().into(),
 		})
+	}
+
+	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
+		todo!()
 	}
 }
 

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, time::Instant};
+use std::{borrow::Cow, path::PathBuf, time::Instant};
 
 #[cfg(feature = "wayland-data-control")]
 use log::{trace, warn};
@@ -129,6 +129,10 @@ impl<'clipboard> Get<'clipboard> {
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_html(self.selection),
 		}
+	}
+
+	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
+		todo!()
 	}
 }
 
