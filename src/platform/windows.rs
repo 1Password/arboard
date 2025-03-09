@@ -637,7 +637,13 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
-		todo!()
+		let _clipboard_assertion = self.clipboard?;
+
+		let mut file_list = Vec::new();
+		clipboard_win::raw::get_file_list_path(&mut file_list)
+			.map_err(|_| Error::ContentNotAvailable)?;
+
+		Ok(file_list)
 	}
 }
 
