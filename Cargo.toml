@@ -58,6 +58,7 @@ objc2-foundation = { version = "0.3.0", default-features = false, features = [
     "NSString",
     "NSEnumerator",
     "NSGeometry",
+    "NSValue",
 ] }
 objc2-app-kit = { version = "0.3.0", default-features = false, features = [
     "std",
