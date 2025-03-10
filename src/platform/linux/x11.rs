@@ -134,16 +134,10 @@ impl XContext {
 	fn new() -> Result<Self> {
 		// create a new connection to an X11 server
 		let (conn, screen_num): (RustConnection, _) =
-			RustConnection::connect(None).map_err(|_| Error::Unknown {
-				description: String::from(
-					"X11 server connection timed out because it was unreachable",
-				),
+			RustConnection::connect(None).map_err(|_| {
+				Error::unknown("X11 server connection timed out because it was unreachable")
 			})?;
-		let screen = conn
-			.setup()
-			.roots
-			.get(screen_num)
-			.ok_or(Error::Unknown { description: String::from("no screen found") })?;
+		let screen = conn.setup().roots.get(screen_num).ok_or(Error::unknown("no screen found"))?;
 		let win_id = conn.generate_id().map_err(into_unknown)?;
 
 		let event_mask =
@@ -225,9 +219,7 @@ impl Inner {
 		wait: WaitConfig,
 	) -> Result<()> {
 		if self.serve_stopped.load(Ordering::Relaxed) {
-			return Err(Error::Unknown {
-                description: "The clipboard handler thread seems to have stopped. Logging messages may reveal the cause. (See the `log` crate.)".into()
-            });
+			return Err(Error::unknown("The clipboard handler thread seems to have stopped. Logging messages may reveal the cause. (See the `log` crate.)"));
 		}
 
 		let server_win = self.server.win_id;
@@ -527,9 +519,7 @@ impl Inner {
 			Ok(ReadSelNotifyResult::IncrStarted)
 		} else {
 			// this should never happen, we have sent a request only for supported types
-			Err(Error::Unknown {
-				description: String::from("incorrect type received from clipboard"),
-			})
+			Err(Error::unknown("incorrect type received from clipboard"))
 		}
 	}
 
@@ -714,9 +704,7 @@ impl Inner {
 			return Ok(());
 		}
 
-		Err(Error::Unknown {
-			description: "The handover was not finished and the condvar didn't time out, yet the condvar wait ended. This should be unreachable.".into()
-		})
+		Err(Error::unknown("The handover was not finished and the condvar didn't time out, yet the condvar wait ended. This should be unreachable."))
 	}
 }
 
