@@ -89,6 +89,7 @@ image = { version = "0.25", optional = true, default-features = false, features 
     "png",
 ] }
 parking_lot = "0.12"
+percent-encoding = "2.3.1"
 
 [[example]]
 name = "get_image"

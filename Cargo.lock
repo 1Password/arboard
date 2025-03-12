@@ -31,6 +31,7 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation",
  "parking_lot",
+ "percent-encoding",
  "windows-sys",
  "wl-clipboard-rs",
  "x11rb",
@@ -404,6 +405,12 @@ dependencies = [
  "smallvec",
  "windows-targets 0.52.6",
 ]
+
+[[package]]
+name = "percent-encoding"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
 name = "petgraph"

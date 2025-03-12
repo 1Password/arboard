@@ -2,6 +2,7 @@ use std::{borrow::Cow, path::PathBuf, time::Instant};
 
 #[cfg(feature = "wayland-data-control")]
 use log::{trace, warn};
+use percent_encoding::percent_decode_str;
 
 #[cfg(feature = "image-data")]
 use crate::ImageData;
@@ -38,8 +39,13 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 	Ok(png_bytes)
 }
 
-fn extract_paths_from_uri_list(uri_list: String) -> Vec<PathBuf> {
-	uri_list.lines().filter_map(|s| s.strip_prefix("file://").map(PathBuf::from)).collect()
+fn paths_from_uri_list(uri_list: String) -> Vec<PathBuf> {
+	uri_list
+		.lines()
+		.filter_map(|s| s.strip_prefix("file://"))
+		.filter_map(|s| percent_decode_str(s).decode_utf8().ok())
+		.map(|decoded| PathBuf::from(decoded.as_ref()))
+		.collect()
 }
 
 /// Clipboard selection
@@ -340,5 +346,30 @@ pub trait ClearExtLinux: private::Sealed {
 impl ClearExtLinux for crate::Clear<'_> {
 	fn clipboard(self, selection: LinuxClipboardKind) -> Result<(), Error> {
 		self.platform.clear_inner(selection)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_decoding_uri_list() {
+		// Test that paths_from_uri_list correctly decodes
+		// differents percent encoded characters
+		let file_list = vec![
+			"file:///tmp/bar.log",
+			"file:///tmp/test%5C.txt",
+			"file:///tmp/foo%3F.png",
+			"file:///tmp/white%20space.txt",
+		];
+
+		let paths = vec![
+			PathBuf::from("/tmp/bar.log"),
+			PathBuf::from("/tmp/test\\.txt"),
+			PathBuf::from("/tmp/foo?.png"),
+			PathBuf::from("/tmp/white space.txt"),
+		];
+		assert_eq!(paths_from_uri_list(file_list.join("\n")), paths);
 	}
 }

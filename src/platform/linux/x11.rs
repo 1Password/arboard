@@ -45,7 +45,7 @@ use x11rb::{
 
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
-use super::{extract_paths_from_uri_list, into_unknown, LinuxClipboardKind, WaitConfig};
+use super::{into_unknown, paths_from_uri_list, LinuxClipboardKind, WaitConfig};
 #[cfg(feature = "image-data")]
 use crate::ImageData;
 use crate::{common::ScopeGuard, Error};
@@ -949,7 +949,7 @@ impl Clipboard {
 
 		String::from_utf8(result.bytes)
 			.map_err(|_| Error::ConversionFailure)
-			.map(extract_paths_from_uri_list)
+			.map(paths_from_uri_list)
 	}
 }
 

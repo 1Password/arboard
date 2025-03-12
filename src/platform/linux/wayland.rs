@@ -8,7 +8,7 @@ use wl_clipboard_rs::{
 
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
-use super::{extract_paths_from_uri_list, into_unknown, LinuxClipboardKind, WaitConfig};
+use super::{into_unknown, paths_from_uri_list, LinuxClipboardKind, WaitConfig};
 use crate::common::Error;
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
@@ -187,6 +187,6 @@ impl Clipboard {
 		selection: LinuxClipboardKind,
 	) -> Result<Vec<PathBuf>, Error> {
 		self.string_for_mime(selection, paste::MimeType::Specific("text/uri-list"))
-			.map(extract_paths_from_uri_list)
+			.map(paths_from_uri_list)
 	}
 }
