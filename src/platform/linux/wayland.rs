@@ -1,5 +1,4 @@
-use std::borrow::Cow;
-use std::io::Read;
+use std::{borrow::Cow, io::Read, path::PathBuf};
 
 use wl_clipboard_rs::{
 	copy::{self, Error as CopyError, MimeSource, MimeType, Options, Source},
@@ -9,7 +8,7 @@ use wl_clipboard_rs::{
 
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
-use super::{into_unknown, LinuxClipboardKind, WaitConfig};
+use super::{into_unknown, paths_from_uri_list, LinuxClipboardKind, WaitConfig};
 use crate::common::Error;
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
@@ -181,5 +180,13 @@ impl Clipboard {
 		let source = Source::Bytes(image.into());
 		opts.copy(source, MimeType::Specific(MIME_PNG.into())).map_err(into_unknown)?;
 		Ok(())
+	}
+
+	pub(crate) fn get_file_list(
+		&mut self,
+		selection: LinuxClipboardKind,
+	) -> Result<Vec<PathBuf>, Error> {
+		self.string_for_mime(selection, paste::MimeType::Specific("text/uri-list"))
+			.map(paths_from_uri_list)
 	}
 }
