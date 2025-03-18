@@ -702,6 +702,13 @@ impl<'clipboard> Set<'clipboard> {
 		image_data::add_cf_dibv5(open_clipboard, image)?;
 		Ok(())
 	}
+
+	pub(crate) fn file_list(self, file_list: &[impl AsRef<str>]) -> Result<(), Error> {
+		let _clipboard_assertion = self.clipboard?;
+
+		clipboard_win::raw::set_file_list(file_list)
+			.map_err(|e| Error::unknown(format!("Setting file list failed with error code: {e}")))
+	}
 }
 
 fn add_clipboard_exclusions(
