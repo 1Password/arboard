@@ -1,7 +1,8 @@
-use std::{borrow::Cow, time::Instant};
+use std::{borrow::Cow, path::PathBuf, time::Instant};
 
 #[cfg(feature = "wayland-data-control")]
 use log::{trace, warn};
+use percent_encoding::percent_decode_str;
 
 #[cfg(feature = "image-data")]
 use crate::ImageData;
@@ -36,6 +37,15 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 		.map_err(|_| Error::ConversionFailure)?;
 
 	Ok(png_bytes)
+}
+
+fn paths_from_uri_list(uri_list: String) -> Vec<PathBuf> {
+	uri_list
+		.lines()
+		.filter_map(|s| s.strip_prefix("file://"))
+		.filter_map(|s| percent_decode_str(s).decode_utf8().ok())
+		.map(|decoded| PathBuf::from(decoded.as_ref()))
+		.collect()
 }
 
 /// Clipboard selection
@@ -128,6 +138,14 @@ impl<'clipboard> Get<'clipboard> {
 			Clipboard::X11(clipboard) => clipboard.get_html(self.selection),
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_html(self.selection),
+		}
+	}
+
+	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.get_file_list(self.selection),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.get_file_list(self.selection),
 		}
 	}
 }
@@ -328,5 +346,30 @@ pub trait ClearExtLinux: private::Sealed {
 impl ClearExtLinux for crate::Clear<'_> {
 	fn clipboard(self, selection: LinuxClipboardKind) -> Result<(), Error> {
 		self.platform.clear_inner(selection)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_decoding_uri_list() {
+		// Test that paths_from_uri_list correctly decodes
+		// differents percent encoded characters
+		let file_list = vec![
+			"file:///tmp/bar.log",
+			"file:///tmp/test%5C.txt",
+			"file:///tmp/foo%3F.png",
+			"file:///tmp/white%20space.txt",
+		];
+
+		let paths = vec![
+			PathBuf::from("/tmp/bar.log"),
+			PathBuf::from("/tmp/test\\.txt"),
+			PathBuf::from("/tmp/foo?.png"),
+			PathBuf::from("/tmp/white space.txt"),
+		];
+		assert_eq!(paths_from_uri_list(file_list.join("\n")), paths);
 	}
 }

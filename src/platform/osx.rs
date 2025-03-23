@@ -17,11 +17,15 @@ use objc2::{
 	runtime::ProtocolObject,
 	ClassType,
 };
-use objc2_app_kit::{NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString};
-use objc2_foundation::{ns_string, NSArray, NSString};
+use objc2_app_kit::{
+	NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString,
+	NSPasteboardURLReadingFileURLsOnlyKey,
+};
+use objc2_foundation::{ns_string, NSArray, NSDictionary, NSNumber, NSString, NSURL};
 use std::{
 	borrow::Cow,
 	panic::{RefUnwindSafe, UnwindSafe},
+	path::PathBuf,
 };
 
 /// Returns an NSImage object on success.
@@ -234,6 +238,35 @@ impl<'clipboard> Get<'clipboard> {
 			width: width as usize,
 			height: height as usize,
 			bytes: rgba.into_raw().into(),
+		})
+	}
+
+	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
+		autoreleasepool(|_| {
+			let class_array = NSArray::from_slice(&[NSURL::class()]);
+			let options = NSDictionary::from_slices(
+				&[unsafe { NSPasteboardURLReadingFileURLsOnlyKey }],
+				&[NSNumber::new_bool(true).as_ref()],
+			);
+			let objects = unsafe {
+				self.clipboard
+					.pasteboard
+					.readObjectsForClasses_options(&class_array, Some(&options))
+			};
+
+			objects
+				.map(|array| {
+					array
+						.iter()
+						.filter_map(|obj| {
+							obj.downcast::<NSURL>().ok().and_then(|url| {
+								unsafe { url.path() }.map(|p| PathBuf::from(p.to_string()))
+							})
+						})
+						.collect::<Vec<_>>()
+				})
+				.filter(|file_list| !file_list.is_empty())
+				.ok_or(Error::ContentNotAvailable)
 		})
 	}
 }
