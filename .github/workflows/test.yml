@@ -34,6 +34,10 @@ jobs:
           components: clippy
       - uses: actions/checkout@v4
 
+      - name: Add Android target
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: rustup target add aarch64-linux-android
+
       - name: Run `cargo clippy` with no features
         if: ${{ matrix.rust_version == 'stable' }}
         run: cargo clippy --verbose --no-default-features -- -D warnings -D clippy::dbg_macro
@@ -48,6 +52,15 @@ jobs:
 
       - name: Run `cargo clippy` with all features
         run: cargo clippy --verbose --all-features -- -D warnings -D clippy::dbg_macro
+      
+      - name: Run `cargo clippy` with no features on Android
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: cargo clippy --target aarch64-linux-android --verbose --no-default-features -- -D warnings -D clippy::dbg_macro
+
+      - name: Run `cargo clippy` with `image-data` feature on Android
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: cargo clippy --target aarch64-linux-android --verbose --no-default-features --features image-data -- -D warnings -D clippy::dbg_macro
+  
 
       - name: Run `cargo clippy` with dependency version checks
         if: ${{ matrix.rust_version == 'stable' }}
@@ -104,24 +117,3 @@ jobs:
     - uses: actions/checkout@v4
     - name: Check semver
       uses: obi1kenobi/cargo-semver-checks-action@v2
-
-  android:
-    needs: clippy
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust/setup-rust@v1
-        with:
-          toolchain: stable
-          override: true
-      - name: Setup Java JDK
-        uses: actions/setup-java@v4.5.0
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install Cargo NDK
-        run: cargo install cargo-ndk
-      - name: Run tests
-        run: cargo ndk --target aarch64-linux-android build
