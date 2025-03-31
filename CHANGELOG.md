@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.5.0 on 2025-03-31
+
+### Added
+- Add `file_list` to the `Get` interface
+
 ### Changed
 - Updated `objc2` to `v0.6`.
 - Raised MSRV to 1.71.0.
