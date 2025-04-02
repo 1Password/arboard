@@ -1,11 +1,14 @@
 # Changelog
 
-## 3.5.0 on 2025-03-31
+## 3.5.0 on 2025-04-01
 
 ### Added
-- Add `file_list` to the `Get` interface
+- Add `file_list` to the `Get` interface.
+- Implement `Get::html()` for all platforms.
 
 ### Changed
+- Updated `wl-clipboard-rs` to `0.9`.
+- Improved `windows-sys` version compatibility range to support `0.52` - `0.60`.
 - Updated `objc2` to `v0.6`.
 - Raised MSRV to 1.71.0.
 
