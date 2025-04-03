@@ -243,6 +243,11 @@ impl Set<'_> {
 	pub fn image(self, image: ImageData) -> Result<(), Error> {
 		self.platform.image(image)
 	}
+
+	/// Completes the "set" operation by placing a list of file paths onto the clipboard.
+	pub fn file_list(self, file_list: Vec<String>) -> Result<(), Error> {
+		self.platform.file_list(&file_list)
+	}
 }
 
 /// A builder for an operation that clears the data from the clipboard.

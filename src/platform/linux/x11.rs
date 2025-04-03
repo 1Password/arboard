@@ -16,7 +16,7 @@ use std::{
 	borrow::Cow,
 	cell::RefCell,
 	collections::{hash_map::Entry, HashMap},
-	path::PathBuf,
+	path::{Path, PathBuf},
 	sync::{
 		atomic::{AtomicBool, Ordering},
 		Arc,
@@ -45,7 +45,7 @@ use x11rb::{
 
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
-use super::{into_unknown, paths_from_uri_list, LinuxClipboardKind, WaitConfig};
+use super::{into_unknown, paths_from_uri_list, paths_to_uri_list, LinuxClipboardKind, WaitConfig};
 #[cfg(feature = "image-data")]
 use crate::ImageData;
 use crate::{common::ScopeGuard, Error};
@@ -938,6 +938,19 @@ impl Clipboard {
 		String::from_utf8(result.bytes)
 			.map_err(|_| Error::ConversionFailure)
 			.map(paths_from_uri_list)
+	}
+
+	pub(crate) fn set_file_list(
+		&self,
+		file_list: &[impl AsRef<Path>],
+		selection: LinuxClipboardKind,
+		wait: WaitConfig,
+	) -> Result<()> {
+		let files = paths_to_uri_list(file_list)?;
+
+		let data =
+			vec![ClipboardData { bytes: files.into_bytes(), format: self.inner.atoms.URI_LIST }];
+		self.inner.write(data, selection, wait)
 	}
 }
 
