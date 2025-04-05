@@ -11,7 +11,25 @@ and conditions of the chosen license apply to this file.
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
 use crate::common::{private, Error};
-use std::{borrow::Cow, marker::PhantomData, path::PathBuf, thread, time::Duration};
+use std::{
+	borrow::Cow,
+	io,
+	marker::PhantomData,
+	mem::size_of,
+	path::{Path, PathBuf},
+	thread,
+	time::Duration,
+};
+use windows_sys::Win32::{
+	Foundation::{GlobalFree, HANDLE, HGLOBAL, POINT},
+	Globalization::{MultiByteToWideChar, CP_UTF8},
+	System::{
+		DataExchange::SetClipboardData,
+		Memory::{GlobalAlloc, GlobalLock, GHND},
+		Ole::CF_HDROP,
+	},
+	UI::Shell::DROPFILES,
+};
 
 #[cfg(feature = "image-data")]
 mod image_data {
@@ -28,11 +46,7 @@ mod image_data {
 			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
 			LCS_GM_IMAGES, RGBQUAD,
 		},
-		System::{
-			DataExchange::SetClipboardData,
-			Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND},
-			Ole::CF_DIBV5,
-		},
+		System::{DataExchange::SetClipboardData, Memory::GlobalUnlock, Ole::CF_DIBV5},
 	};
 
 	fn last_error(message: &str) -> Error {
@@ -168,24 +182,6 @@ mod image_data {
 		}
 	}
 
-	unsafe fn global_alloc(bytes: usize) -> Result<HGLOBAL, Error> {
-		let hdata = GlobalAlloc(GHND, bytes);
-		if hdata.is_null() {
-			Err(last_error("Could not allocate global memory object"))
-		} else {
-			Ok(hdata)
-		}
-	}
-
-	unsafe fn global_lock(hmem: HGLOBAL) -> Result<*mut u8, Error> {
-		let data_ptr = GlobalLock(hmem).cast::<u8>();
-		if data_ptr.is_null() {
-			Err(last_error("Could not lock the global memory object"))
-		} else {
-			Ok(data_ptr)
-		}
-	}
-
 	pub(super) fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
 		// The DIBV5 format is a BITMAPV5HEADER followed by the pixel data according to
 		// https://docs.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats
@@ -317,32 +313,6 @@ mod image_data {
 			Err(Error::unknown("Could not get the bitmap bits, GetDIBits returned 0"))
 		} else {
 			Ok(lines)
-		}
-	}
-
-	/// An abstraction trait over the different ways a Win32 function may return
-	/// a value with a failure marker.
-	///
-	/// This is primarily to abstract over changes in `windows-sys` versions and unify how
-	/// error handling is done in the above image code.
-	trait ResultValue: Sized {
-		const NULL: Self;
-		fn failure(self) -> bool;
-	}
-
-	// windows-sys >= 0.59
-	impl<T> ResultValue for *mut T {
-		const NULL: Self = core::ptr::null_mut();
-		fn failure(self) -> bool {
-			self == Self::NULL
-		}
-	}
-
-	// `windows-sys` 0.52
-	impl ResultValue for isize {
-		const NULL: Self = 0;
-		fn failure(self) -> bool {
-			self == Self::NULL
 		}
 	}
 
@@ -484,6 +454,55 @@ mod image_data {
 		let _converted = unsafe { rgba_to_win(&mut data) };
 		let _converted = unsafe { win_to_rgba(&mut data) };
 		assert_eq!(data, DATA);
+	}
+}
+
+unsafe fn global_alloc(bytes: usize) -> Result<HGLOBAL, Error> {
+	let hdata = GlobalAlloc(GHND, bytes);
+	if hdata.is_null() {
+		Err(last_error("Could not allocate global memory object"))
+	} else {
+		Ok(hdata)
+	}
+}
+
+unsafe fn global_lock(hmem: HGLOBAL) -> Result<*mut u8, Error> {
+	let data_ptr = GlobalLock(hmem).cast::<u8>();
+	if data_ptr.is_null() {
+		Err(last_error("Could not lock the global memory object"))
+	} else {
+		Ok(data_ptr)
+	}
+}
+
+fn last_error(message: &str) -> Error {
+	let os_error = io::Error::last_os_error();
+	Error::unknown(format!("{}: {}", message, os_error))
+}
+
+/// An abstraction trait over the different ways a Win32 function may return
+/// a value with a failure marker.
+///
+/// This is primarily to abstract over changes in `windows-sys` versions and unify how
+/// error handling is done in the above image code.
+trait ResultValue: Sized {
+	const NULL: Self;
+	fn failure(self) -> bool;
+}
+
+// windows-sys >= 0.59
+impl<T> ResultValue for *mut T {
+	const NULL: Self = core::ptr::null_mut();
+	fn failure(self) -> bool {
+		self == Self::NULL
+	}
+}
+
+// `windows-sys` 0.52
+impl ResultValue for isize {
+	const NULL: Self = 0;
+	fn failure(self) -> bool {
+		self == Self::NULL
 	}
 }
 
@@ -703,11 +722,72 @@ impl<'clipboard> Set<'clipboard> {
 		Ok(())
 	}
 
-	pub(crate) fn file_list(self, file_list: &[impl AsRef<str>]) -> Result<(), Error> {
+	pub(crate) fn file_list(self, file_list: &[impl AsRef<Path>]) -> Result<(), Error> {
+		const DROPFILES_HEADER_SIZE: usize = size_of::<DROPFILES>();
+
 		let _clipboard_assertion = self.clipboard?;
 
-		clipboard_win::raw::set_file_list(file_list)
-			.map_err(|e| Error::unknown(format!("Setting file list failed with error code: {e}")))
+		// https://learn.microsoft.com/en-us/windows/win32/shell/clipboard#cf_hdrop
+		// CF_HDROP consists of an STGMEDIUM structure that contains a global memory object.
+		// The structure's hGlobal member points to the resulting data:
+		// | DROPFILES | FILENAME | NULL | ... | nth FILENAME | NULL | NULL |
+		let dropfiles = DROPFILES {
+			pFiles: DROPFILES_HEADER_SIZE as u32,
+			pt: POINT { x: 0, y: 0 },
+			fNC: 0,
+			fWide: 1,
+		};
+
+		let mut data_len = DROPFILES_HEADER_SIZE;
+
+		let str_paths: Vec<String> = file_list
+			.iter()
+			.filter_map(|path| {
+				path.as_ref().canonicalize().ok().and_then(|abs_path| {
+					abs_path.to_str().map(|str| {
+						// Windows uses wchar_t which is 16 bit
+						data_len += (str.len() + 1) * size_of::<u16>();
+						str.to_owned()
+					})
+				})
+			})
+			.collect();
+
+		if str_paths.is_empty() {
+			return Err(Error::ConversionFailure);
+		}
+
+		data_len += size_of::<u16>();
+
+		unsafe {
+			let h_global = global_alloc(data_len)?;
+			let data_ptr = global_lock(h_global)?;
+
+			(data_ptr as *mut DROPFILES).write(dropfiles);
+
+			let mut ptr = data_ptr.add(DROPFILES_HEADER_SIZE) as *mut u16;
+			let mut offset = data_len as i32;
+
+			for str in str_paths {
+				let written =
+					MultiByteToWideChar(CP_UTF8, 0, str.as_ptr(), str.len() as i32, ptr, offset);
+				ptr = ptr.offset(written as isize);
+				// Write null character
+				ptr.write(0);
+				ptr = ptr.add(1);
+				offset -= written - 1;
+			}
+
+			// Write final null character
+			ptr.write(0);
+
+			if SetClipboardData(CF_HDROP.into(), h_global as HANDLE).failure() {
+				GlobalFree(h_global);
+				Err(last_error("SetClipboardData failed with error"))
+			} else {
+				Ok(())
+			}
+		}
 	}
 }
 
