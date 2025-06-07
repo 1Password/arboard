@@ -764,7 +764,7 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 					context.atom_name_dbg(event.target),
 				);
 				// Someone is requesting the clipboard content from us.
-				if let Err(e) = context.handle_selection_request(event).map_err(into_unknown) {
+				if let Err(e) = context.handle_selection_request(event) {
 					error!("Failed to handle selection request: {e}");
 					continue;
 				}
