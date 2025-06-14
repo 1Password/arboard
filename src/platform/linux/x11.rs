@@ -908,7 +908,7 @@ impl Clipboard {
 		let bytes = self.inner.read(&formats, selection)?.bytes;
 
 		let cursor = std::io::Cursor::new(&bytes);
-		let mut reader = image::io::Reader::new(cursor);
+		let mut reader = image::ImageReader::new(cursor);
 		reader.set_format(image::ImageFormat::Png);
 		let image = match reader.decode() {
 			Ok(img) => img.into_rgba8(),
