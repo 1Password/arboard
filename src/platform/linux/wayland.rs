@@ -54,14 +54,29 @@ fn add_clipboard_exclusions(exclude_from_history: bool, sources: &mut Vec<MimeSo
 	}
 }
 
+fn handle_copy_error(e: copy::Error) -> Error {
+	match e {
+		CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
+		other => into_unknown(other),
+	}
+}
+
+fn handle_paste_error(e: paste::Error) -> Error {
+	match e {
+		PasteError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
+		other => into_unknown(other),
+	}
+}
+
 impl Clipboard {
-	#[allow(clippy::unnecessary_wraps)]
 	pub(crate) fn new() -> Result<Self, Error> {
 		// Check if it's possible to communicate with the wayland compositor
-		if let Err(e) = is_primary_selection_supported() {
-			return Err(into_unknown(e));
+		match is_primary_selection_supported() {
+			// We don't care if the primary clipboard is supported or not, `wl-clipboard-rs` will fail
+			// if not and we don't want to duplicate more of their logic.
+			Ok(_) => Ok(Self {}),
+			Err(e) => Err(into_unknown(e)),
 		}
-		Ok(Self {})
 	}
 
 	fn string_for_mime(
@@ -76,14 +91,10 @@ impl Clipboard {
 				pipe.read_to_end(&mut contents).map_err(into_unknown)?;
 				String::from_utf8(contents).map_err(|_| Error::ConversionFailure)
 			}
-
 			Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
 				Err(Error::ContentNotAvailable)
 			}
-
-			Err(PasteError::PrimarySelectionUnsupported) => Err(Error::ClipboardNotSupported),
-
-			Err(err) => Err(into_unknown(err)),
+			Err(err) => Err(handle_paste_error(err)),
 		}
 	}
 
@@ -111,10 +122,7 @@ impl Clipboard {
 
 		add_clipboard_exclusions(exclude_from_history, &mut sources);
 
-		opts.copy_multi(sources).map_err(|e| match e {
-			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
-			other => into_unknown(other),
-		})
+		opts.copy_multi(sources).map_err(handle_copy_error)
 	}
 
 	pub(crate) fn get_html(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
@@ -155,10 +163,7 @@ impl Clipboard {
 
 		add_clipboard_exclusions(exclude_from_history, &mut sources);
 
-		opts.copy_multi(sources).map_err(|e| match e {
-			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
-			other => into_unknown(other),
-		})
+		opts.copy_multi(sources).map_err(handle_copy_error)
 	}
 
 	#[cfg(feature = "image-data")]
@@ -171,6 +176,7 @@ impl Clipboard {
 
 		let result =
 			get_contents(selection.try_into()?, Seat::Unspecified, MimeType::Specific(MIME_PNG));
+
 		match result {
 			Ok((mut pipe, _mime_type)) => {
 				let mut buffer = vec![];
@@ -193,7 +199,7 @@ impl Clipboard {
 				Err(Error::ContentNotAvailable)
 			}
 
-			Err(err) => Err(into_unknown(err)),
+			Err(err) => Err(handle_paste_error(err)),
 		}
 	}
 
@@ -220,7 +226,7 @@ impl Clipboard {
 
 		add_clipboard_exclusions(exclude_from_history, &mut sources);
 
-		opts.copy_multi(sources).map_err(into_unknown)
+		opts.copy_multi(sources).map_err(handle_copy_error)
 	}
 
 	pub(crate) fn get_file_list(
