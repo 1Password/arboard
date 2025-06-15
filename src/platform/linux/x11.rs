@@ -218,6 +218,24 @@ impl Inner {
 		})
 	}
 
+	/// Performs a "clear" operation on the clipboard, which is implemented by
+	/// relinquishing the selection to revert its owner to `None`. This gracefully
+	/// and comformly informs the X server and any clipboard managers that the
+	/// data was no longer valid and won't be offered from our window anymore.
+	///
+	/// See `ask_clipboard_manager_to_request_our_data` for more details on why
+	/// this is important and specification references.
+	fn clear(&self, selection: LinuxClipboardKind) -> Result<()> {
+		let selection = self.atom_of(selection);
+
+		self.server
+			.conn
+			.set_selection_owner(NONE, selection, Time::CURRENT_TIME)
+			.map_err(into_unknown)?;
+
+		self.server.conn.flush().map_err(into_unknown)
+	}
+
 	fn write(
 		&self,
 		data: Vec<ClipboardData>,
@@ -724,18 +742,11 @@ impl Inner {
 					//
 					// By removing the owner, the manager doesn't think it needs to pick up our window's data serving once
 					// its destroyed and cleanly lets the data disappear based off the previously advertised exclusion hint.
-					if let Err(e) = self.server.conn.set_selection_owner(
-						NONE,
-						self.atoms.CLIPBOARD,
-						Time::CURRENT_TIME,
-					) {
+					if let Err(e) = self.clear(selection) {
 						warn!("failed to release sensitive data's clipboard ownership: {e}; it may end up persisted!");
 						// This is still not an error because we werent going to handoff anything to the manager.
-						return Ok(());
 					}
 
-					// It doesn't matter if this fails, the clipboard window will be destroyed regardless.
-					let _ = self.server.conn.flush();
 					return Ok(());
 				}
 			}
@@ -922,6 +933,10 @@ impl Clipboard {
 				format: self.inner.atoms.X_KDE_PASSWORDMANAGERHINT,
 			})
 		}
+	}
+
+	pub(crate) fn clear(&self, selection: LinuxClipboardKind) -> Result<()> {
+		self.inner.clear(selection)
 	}
 
 	pub(crate) fn get_text(&self, selection: LinuxClipboardKind) -> Result<String> {

@@ -98,6 +98,11 @@ impl Clipboard {
 		}
 	}
 
+	pub(crate) fn clear(&mut self, selection: LinuxClipboardKind) -> Result<(), Error> {
+		let selection = selection.try_into()?;
+		copy::clear(selection, copy::Seat::All).map_err(handle_copy_error)
+	}
+
 	pub(crate) fn get_text(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
 		self.string_for_mime(selection, paste::MimeType::Text)
 	}
