@@ -347,10 +347,11 @@ impl<'clipboard> Clear<'clipboard> {
 	}
 
 	fn clear_inner(self, selection: LinuxClipboardKind) -> Result<(), Error> {
-		let mut set = Set::new(self.clipboard);
-		set.selection = selection;
-
-		set.text(Cow::Borrowed(""))
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.clear(selection),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.clear(selection),
+		}
 	}
 }
 
