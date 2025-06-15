@@ -221,7 +221,7 @@ impl Inner {
 	fn write(
 		&self,
 		data: Vec<ClipboardData>,
-		selection: LinuxClipboardKind,
+		clipboard_selection: LinuxClipboardKind,
 		wait: WaitConfig,
 	) -> Result<()> {
 		if self.serve_stopped.load(Ordering::Relaxed) {
@@ -230,19 +230,19 @@ impl Inner {
 
 		let server_win = self.server.win_id;
 
+		// Just setting the data, and the `serve_requests` will take care of the rest.
+		let selection = self.selection_of(clipboard_selection);
+		let mut data_guard = selection.data.write();
+		*data_guard = Some(data);
+
 		// ICCCM version 2, section 2.6.1.3 states that we should re-assert ownership whenever data
 		// changes.
 		self.server
 			.conn
-			.set_selection_owner(server_win, self.atom_of(selection), Time::CURRENT_TIME)
+			.set_selection_owner(server_win, self.atom_of(clipboard_selection), Time::CURRENT_TIME)
 			.map_err(|_| Error::ClipboardOccupied)?;
 
 		self.server.conn.flush().map_err(into_unknown)?;
-
-		// Just setting the data, and the `serve_requests` will take care of the rest.
-		let selection = self.selection_of(selection);
-		let mut data_guard = selection.data.write();
-		*data_guard = Some(data);
 
 		// Lock the mutex to both ensure that no wakers of `data_changed` can wake us between
 		// dropping the `data_guard` and calling `wait[_for]` and that we don't we wake other

@@ -114,8 +114,7 @@ impl Clipboard {
 		opts.copy_multi(sources).map_err(|e| match e {
 			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
 			other => into_unknown(other),
-		})?;
-		Ok(())
+		})
 	}
 
 	pub(crate) fn get_html(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
@@ -159,8 +158,7 @@ impl Clipboard {
 		opts.copy_multi(sources).map_err(|e| match e {
 			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
 			other => into_unknown(other),
-		})?;
-		Ok(())
+		})
 	}
 
 	#[cfg(feature = "image-data")]
