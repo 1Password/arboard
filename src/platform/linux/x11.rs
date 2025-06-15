@@ -45,7 +45,10 @@ use x11rb::{
 
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
-use super::{into_unknown, paths_from_uri_list, LinuxClipboardKind, WaitConfig};
+use super::{
+	into_unknown, paths_from_uri_list, LinuxClipboardKind, WaitConfig, KDE_EXCLUSION_HINT,
+	KDE_EXCLUSION_MIME,
+};
 #[cfg(feature = "image-data")]
 use crate::ImageData;
 use crate::{common::ScopeGuard, Error};
@@ -81,6 +84,7 @@ x11rb::atom_manager! {
 		URI_LIST: b"text/uri-list",
 
 		PNG_MIME: b"image/png",
+		X_KDE_PASSWORDMANAGERHINT: KDE_EXCLUSION_MIME.as_bytes(),
 
 		// This is just some random name for the property on our window, into which
 		// the clipboard owner writes the data we requested.
@@ -577,11 +581,13 @@ impl Inner {
 		// we are asked for a list of supported conversion targets
 		if event.target == self.atoms.TARGETS {
 			trace!("Handling TARGETS, dst property is {}", self.atom_name_dbg(event.property));
-			let mut targets = Vec::with_capacity(10);
-			targets.push(self.atoms.TARGETS);
-			targets.push(self.atoms.SAVE_TARGETS);
+
 			let data = self.selection_of(selection).data.read();
-			if let Some(data_list) = &*data {
+			let (data_targets, excluded) = if let Some(data_list) = &*data {
+				// Estimation based on current data types, plus the other UTF-8 ones, plus `SAVE_TARGETS`.
+				let mut targets = Vec::with_capacity(data_list.len() + 3);
+				let mut excluded = false;
+
 				for data in data_list {
 					targets.push(data.format);
 					if data.format == self.atoms.UTF8_STRING {
@@ -590,8 +596,32 @@ impl Inner {
 						targets.push(self.atoms.UTF8_MIME_0);
 						targets.push(self.atoms.UTF8_MIME_1);
 					}
+
+					if data.format == self.atoms.X_KDE_PASSWORDMANAGERHINT {
+						excluded = true;
+					}
 				}
+				(targets, excluded)
+			} else {
+				// If there's no data, we advertise an empty list of targets.
+				(Vec::with_capacity(2), false)
+			};
+
+			let mut targets = data_targets;
+			targets.push(self.atoms.TARGETS);
+
+			// NB: `SAVE_TARGETS` in this context is a marker atom which infomrs the clipboard manager
+			// we support this operation and _may_ use it in the future. To try and keep the manager's
+			// expectations/assumptions (if any) about when we will invoke this handoff, we go ahead and
+			// skip advertising support for the save operation entirely when the data was marked as
+			// sensitive.
+			//
+			// Note that even if we don't advertise it, some managers may respond to it anyways so this is
+			// only half of exclusion handling. See `ask_clipboard_manager_to_request_our_data` for more.
+			if !excluded {
+				targets.push(self.atoms.SAVE_TARGETS);
 			}
+
 			self.server
 				.conn
 				.change_property32(
@@ -664,13 +694,55 @@ impl Inner {
 			return Ok(());
 		}
 
-		if !self.is_owner(LinuxClipboardKind::Clipboard)? {
+		// Per the `ClipboardManager` specification, only the `CLIPBOARD` target is
+		// to be saved from other X clients, so if the caller set the `Primary` (or `Secondary`) clipboard,
+		// we wouldn't expect any clipboard manager to save that anyway.
+		let selection = LinuxClipboardKind::Clipboard;
+
+		if !self.is_owner(selection)? {
 			// We are not owning the clipboard, nothing to do.
 			return Ok(());
 		}
-		if self.selection_of(LinuxClipboardKind::Clipboard).data.read().is_none() {
-			// If we don't have any data, there's nothing to do.
-			return Ok(());
+
+		match &*self.selection_of(selection).data.read() {
+			Some(data) => {
+				// If the data we are serving intended to be excluded, then don't bother asking the clipboard
+				// manager to save it. This is for several reasons:
+				// 1. Its counter-intuitive because the caller asked for this data to be minimally retained.
+				// 2. Regardless of if `SAVE_TARGETS` was advertised, we have to assume the manager may be saving history
+				// in a more proactive way and that would also be entirely dependent on it seeing the exclusion MIME before this.
+				// 3. Due to varying behavior in clipboard managers (some save prior to `SAVE_TARGETS`), it may just
+				// generate unnessecary warning logs in our handoff path even when we know a well-behaving manager isn't
+				// trying to save our sensitive data and that is misleading to users.
+				if data.iter().any(|data| data.format == self.atoms.X_KDE_PASSWORDMANAGERHINT) {
+					// This step is the most important. Without it, some clipboard managers may think that our process
+					// crashed since the X window is destroyed without changing the selection owner first and try to save data.
+					//
+					// While this shouldn't need to happen based only on ICCCM 2.3.1 ("Voluntarily Giving Up Selection Ownership"),
+					// its documentation that destorying the owner window or terminating also reverts the owner to `None` doesn't
+					// reflect how desktop environment's X servers work in reality.
+					//
+					// By removing the owner, the manager doesn't think it needs to pick up our window's data serving once
+					// its destroyed and cleanly lets the data disappear based off the previously advertised exclusion hint.
+					if let Err(e) = self.server.conn.set_selection_owner(
+						NONE,
+						self.atoms.CLIPBOARD,
+						Time::CURRENT_TIME,
+					) {
+						warn!("failed to release sensitive data's clipboard ownership: {e}; it may end up persisted!");
+						// This is still not an error because we werent going to handoff anything to the manager.
+						return Ok(());
+					}
+
+					// It doesn't matter if this fails, the clipboard window will be destroyed regardless.
+					let _ = self.server.conn.flush();
+					return Ok(());
+				}
+			}
+			None => {
+				// If we don't have any data, there's nothing to do.
+				return Ok(());
+			}
 		}
 
 		// It's important that we lock the state before sending the request
@@ -706,7 +778,7 @@ impl Inner {
 			return Ok(());
 		}
 
-		Err(Error::unknown("The handover was not finished and the condvar didn't time out, yet the condvar wait ended. This should be unreachable."))
+		unreachable!("This is a bug! The handover was not finished and the condvar didn't time out, yet the condvar wait ended.")
 	}
 }
 
@@ -843,6 +915,15 @@ impl Clipboard {
 		Ok(Self { inner: ctx })
 	}
 
+	fn add_clipboard_exclusions(&self, exclude_from_history: bool, data: &mut Vec<ClipboardData>) {
+		if exclude_from_history {
+			data.push(ClipboardData {
+				bytes: KDE_EXCLUSION_HINT.to_vec(),
+				format: self.inner.atoms.X_KDE_PASSWORDMANAGERHINT,
+			})
+		}
+	}
+
 	pub(crate) fn get_text(&self, selection: LinuxClipboardKind) -> Result<String> {
 		let formats = [
 			self.inner.atoms.UTF8_STRING,
@@ -867,11 +948,16 @@ impl Clipboard {
 		message: Cow<'_, str>,
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
+		exclude_from_history: bool,
 	) -> Result<()> {
-		let data = vec![ClipboardData {
+		let mut data = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
+		data.push(ClipboardData {
 			bytes: message.into_owned().into_bytes(),
 			format: self.inner.atoms.UTF8_STRING,
-		}];
+		});
+
+		self.add_clipboard_exclusions(exclude_from_history, &mut data);
+
 		self.inner.write(data, selection, wait)
 	}
 
@@ -887,8 +973,16 @@ impl Clipboard {
 		alt: Option<Cow<'_, str>>,
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
+		exclude_from_history: bool,
 	) -> Result<()> {
-		let mut data = vec![];
+		let mut data = {
+			let cap = [true, alt.is_some(), exclude_from_history]
+				.map(|v| usize::from(v as u8))
+				.iter()
+				.sum();
+			Vec::with_capacity(cap)
+		};
+
 		if let Some(alt_text) = alt {
 			data.push(ClipboardData {
 				bytes: alt_text.into_owned().into_bytes(),
@@ -899,6 +993,9 @@ impl Clipboard {
 			bytes: html.into_owned().into_bytes(),
 			format: self.inner.atoms.HTML,
 		});
+
+		self.add_clipboard_exclusions(exclude_from_history, &mut data);
+
 		self.inner.write(data, selection, wait)
 	}
 
@@ -926,9 +1023,15 @@ impl Clipboard {
 		image: ImageData,
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
+		exclude_from_history: bool,
 	) -> Result<()> {
 		let encoded = encode_as_png(&image)?;
-		let data = vec![ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME }];
+		let mut data = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
+
+		data.push(ClipboardData { bytes: encoded, format: self.inner.atoms.PNG_MIME });
+
+		self.add_clipboard_exclusions(exclude_from_history, &mut data);
+
 		self.inner.write(data, selection, wait)
 	}
 

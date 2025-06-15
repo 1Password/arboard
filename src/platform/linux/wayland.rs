@@ -8,7 +8,10 @@ use wl_clipboard_rs::{
 
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
-use super::{into_unknown, paths_from_uri_list, LinuxClipboardKind, WaitConfig};
+use super::{
+	into_unknown, paths_from_uri_list, LinuxClipboardKind, WaitConfig, KDE_EXCLUSION_HINT,
+	KDE_EXCLUSION_MIME,
+};
 use crate::common::Error;
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
@@ -39,6 +42,15 @@ impl TryInto<paste::ClipboardType> for LinuxClipboardKind {
 			LinuxClipboardKind::Primary => Ok(paste::ClipboardType::Primary),
 			LinuxClipboardKind::Secondary => Err(Error::ClipboardNotSupported),
 		}
+	}
+}
+
+fn add_clipboard_exclusions(exclude_from_history: bool, sources: &mut Vec<MimeSource>) {
+	if exclude_from_history {
+		sources.push(MimeSource {
+			source: Source::Bytes(Box::from(KDE_EXCLUSION_HINT)),
+			mime_type: MimeType::Specific(String::from(KDE_EXCLUSION_MIME)),
+		});
 	}
 }
 
@@ -84,12 +96,22 @@ impl Clipboard {
 		text: Cow<'_, str>,
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
+		exclude_from_history: bool,
 	) -> Result<(), Error> {
 		let mut opts = Options::new();
 		opts.foreground(matches!(wait, WaitConfig::Forever));
 		opts.clipboard(selection.try_into()?);
-		let source = Source::Bytes(text.into_owned().into_bytes().into_boxed_slice());
-		opts.copy(source, MimeType::Text).map_err(|e| match e {
+
+		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
+
+		sources.push(MimeSource {
+			source: Source::Bytes(text.into_owned().into_bytes().into_boxed_slice()),
+			mime_type: MimeType::Text,
+		});
+
+		add_clipboard_exclusions(exclude_from_history, &mut sources);
+
+		opts.copy_multi(sources).map_err(|e| match e {
 			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
 			other => into_unknown(other),
 		})?;
@@ -106,24 +128,35 @@ impl Clipboard {
 		alt: Option<Cow<'_, str>>,
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
+		exclude_from_history: bool,
 	) -> Result<(), Error> {
-		let html_mime = MimeType::Specific(String::from("text/html"));
 		let mut opts = Options::new();
 		opts.foreground(matches!(wait, WaitConfig::Forever));
 		opts.clipboard(selection.try_into()?);
-		let html_source = Source::Bytes(html.into_owned().into_bytes().into_boxed_slice());
-		match alt {
-			Some(alt_text) => {
-				let alt_source =
-					Source::Bytes(alt_text.into_owned().into_bytes().into_boxed_slice());
-				opts.copy_multi(vec![
-					MimeSource { source: alt_source, mime_type: MimeType::Text },
-					MimeSource { source: html_source, mime_type: html_mime },
-				])
-			}
-			None => opts.copy(html_source, html_mime),
+
+		let mut sources = {
+			let cap = [true, alt.is_some(), exclude_from_history]
+				.map(|v| usize::from(v as u8))
+				.iter()
+				.sum();
+			Vec::with_capacity(cap)
+		};
+
+		if let Some(alt) = alt {
+			sources.push(MimeSource {
+				source: Source::Bytes(alt.into_owned().into_bytes().into_boxed_slice()),
+				mime_type: MimeType::Text,
+			});
 		}
-		.map_err(|e| match e {
+
+		sources.push(MimeSource {
+			source: Source::Bytes(html.into_owned().into_bytes().into_boxed_slice()),
+			mime_type: MimeType::Specific(String::from("text/html")),
+		});
+
+		add_clipboard_exclusions(exclude_from_history, &mut sources);
+
+		opts.copy_multi(sources).map_err(|e| match e {
 			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
 			other => into_unknown(other),
 		})?;
@@ -172,14 +205,24 @@ impl Clipboard {
 		image: ImageData,
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
+		exclude_from_history: bool,
 	) -> Result<(), Error> {
-		let image = encode_as_png(&image)?;
 		let mut opts = Options::new();
 		opts.foreground(matches!(wait, WaitConfig::Forever));
 		opts.clipboard(selection.try_into()?);
-		let source = Source::Bytes(image.into());
-		opts.copy(source, MimeType::Specific(MIME_PNG.into())).map_err(into_unknown)?;
-		Ok(())
+
+		let image = encode_as_png(&image)?;
+
+		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
+
+		sources.push(MimeSource {
+			source: Source::Bytes(image.into()),
+			mime_type: MimeType::Specific(String::from(MIME_PNG)),
+		});
+
+		add_clipboard_exclusions(exclude_from_history, &mut sources);
+
+		opts.copy_multi(sources).map_err(into_unknown)
 	}
 
 	pub(crate) fn get_file_list(
