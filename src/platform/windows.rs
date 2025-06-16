@@ -573,36 +573,20 @@ impl<'clipboard> Get<'clipboard> {
 			return Err(Error::ContentNotAvailable);
 		}
 
-		let text_size = clipboard_win::raw::size(FORMAT)
-			.ok_or_else(|| Error::unknown("failed to read clipboard text size"))?;
-
-		// Allocate the specific number of WTF-16 characters we need to receive.
-		// This division is always accurate because Windows uses 16-bit characters.
-		let mut out: Vec<u16> = vec![0u16; text_size.get() / 2];
-
-		let bytes_read = {
-			// SAFETY: The source slice has a greater alignment than the resulting one.
-			let out: &mut [u8] =
-				unsafe { std::slice::from_raw_parts_mut(out.as_mut_ptr().cast(), out.len() * 2) };
-
-			let mut bytes_read = clipboard_win::raw::get(FORMAT, out)
-				.map_err(|_| Error::unknown("failed to read clipboard string"))?;
-
-			// Convert the number of bytes read to the number of `u16`s
-			bytes_read /= 2;
-
-			// Remove the NUL terminator, if it existed.
-			if let Some(last) = out.last().copied() {
-				if last == 0 {
-					bytes_read -= 1;
-				}
-			}
-
-			bytes_read
-		};
-
-		// Create a UTF-8 string from WTF-16 data, if it was valid.
-		String::from_utf16(&out[..bytes_read]).map_err(|_| Error::ConversionFailure)
+		// NB: Its important that whatever functionality decodes the text buffer from the clipboard
+		// uses `WideCharToMultiByte` with `CP_UTF8` (or an equivalent) in order to handle when both "text"
+		// and a locale identifier were placed on the clipboard. It is probable this occurs when an application
+		// is running with a codepage that isn't the current system's, such as under a locale emulator.
+		//
+		// In these cases, Windows decodes the text buffer with whatever codepage that identifier is for
+		// when creating the `CF_UNICODETEXT` buffer. Therefore, the buffer could then be in any format,
+		// not nessecarily wide UTF-16. We need to then undo that, taking the wide data and mapping it into
+		// the UTF-8 space as best as possible.
+		//
+		// (locale-specific text data, locale id) -> app -> system -> arboard (locale-specific text data) -> UTF-8
+		let mut out = Vec::new();
+		clipboard_win::raw::get_string(&mut out).map_err(|_| Error::ContentNotAvailable)?;
+		String::from_utf8(out).map_err(|_| Error::ConversionFailure)
 	}
 
 	pub(crate) fn html(self) -> Result<String, Error> {
