@@ -39,8 +39,8 @@ fn image_from_pixels(
 	use objc2_app_kit::NSImage;
 	use objc2_core_foundation::CGFloat;
 	use objc2_core_graphics::{
-		CGBitmapInfo, CGColorRenderingIntent, CGColorSpaceCreateDeviceRGB,
-		CGDataProviderCreateWithData, CGImageAlphaInfo, CGImageCreate,
+		CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage,
+		CGImageAlphaInfo,
 	};
 	use objc2_foundation::NSSize;
 	use std::{
@@ -64,14 +64,14 @@ fn image_from_pixels(
 
 		// SAFETY: The data pointer and length are valid.
 		// The info pointer can safely be NULL, we don't use it in the `release` callback.
-		unsafe { CGDataProviderCreateWithData(ptr::null_mut(), data_ptr, len, Some(release)) }
+		unsafe { CGDataProvider::with_data(ptr::null_mut(), data_ptr, len, Some(release)) }
 	}
 	.unwrap();
 
-	let colorspace = unsafe { CGColorSpaceCreateDeviceRGB() }.unwrap();
+	let colorspace = unsafe { CGColorSpace::new_device_rgb() }.unwrap();
 
 	let cg_image = unsafe {
-		CGImageCreate(
+		CGImage::new(
 			width,
 			height,
 			8,
@@ -227,7 +227,7 @@ impl<'clipboard> Get<'clipboard> {
 			// SAFETY: The data is not modified while in use here.
 			let data = Cursor::new(unsafe { image_data.as_bytes_unchecked() });
 
-			let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
+			let reader = image::ImageReader::with_format(data, image::ImageFormat::Tiff);
 			reader.decode().map_err(|_| Error::ConversionFailure)
 		})?;
 
