@@ -37,7 +37,7 @@ mod image_data {
 
 	fn last_error(message: &str) -> Error {
 		let os_error = io::Error::last_os_error();
-		Error::unknown(format!("{}: {}", message, os_error))
+		Error::unknown(format!("{message}: {os_error}"))
 	}
 
 	unsafe fn global_unlock_checked(hdata: HGLOBAL) {
@@ -839,18 +839,6 @@ fn wrap_html(ctn: &str) -> String {
 	let n_end_frag = n_start_frag + ctn.len();
 	let n_end_html = n_end_frag + c_end_frag.len();
 	format!(
-		"{}{}{:010}{}{:010}{}{:010}{}{:010}{}{}{}",
-		h_version,
-		h_start_html,
-		n_start_html,
-		h_end_html,
-		n_end_html,
-		h_start_frag,
-		n_start_frag,
-		h_end_frag,
-		n_end_frag,
-		c_start_frag,
-		ctn,
-		c_end_frag,
+		"{h_version}{h_start_html}{n_start_html:010}{h_end_html}{n_end_html:010}{h_start_frag}{n_start_frag:010}{h_end_frag}{n_end_frag:010}{c_start_frag}{ctn}{c_end_frag}"
 	)
 }
