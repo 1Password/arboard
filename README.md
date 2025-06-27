@@ -37,6 +37,41 @@ Wayland environment. It is recommended to enable `XWayland` for these cases. If 
 an isolated sandbox, such as Flatpak or Snap, you'll need to expose the X11 socket to the application
 _in addition_ to the Wayland communication interface.
 
+### Clipboard Ownership
+
+Some apps and users may notice that sometimes values copied to a Linux clipboard with this crate vanish
+before anyone gets the chance to paste, or just aren't available when you expect them to be. The root behind
+these problems is _selection ownership_.
+
+X11 and Wayland put the responsibility for answering paste requests and serving data on the application
+which originally copied it onto the clipboard. This usually means the app using `arboard`. Nothing you copy
+to the clipboard is sent anywhere to start. It stays inside `arboard` until something else on the system requests it,
+which is very different to how the clipboard works on other platforms like macOS or Windows.
+
+Note that `arboard` may attempt to warn you about these conditions when compiled in debug mode, to improve the debugging
+experience. Even if you don't see these warnings, you should double check the lifetime of the `Clipboard` in your code.
+
+In some cases, an environment may have a clipboard manager installed. These services monitor the clipboard contents and
+do their best to retain a copy when needed to smooth over clipboard ownership changes. A clipboar manager can make contents
+available even after a process previously owning it exits.
+
+In order to keep the contents around longer, make sure that you don't `Drop` your `Clipboard` object right away or
+terminate the copying process too fast. This is why, at times, adding a call to `sleep()` near the set operation
+makes it behave more reliabily: the background thread `arboard` uses for serving clipboard contents has more time to run
+and let other apps (including clipboard managers) make requests for the contents. However `sleep` isn't the recommended approach.
+
+If your application is exiting, you must make sure there is a clipboard manager running on the system. If nothing is listening for 
+the clipboard ownership transfer, or made a copy previously, the data will be lost. Note that this isn't a complete 
+guarantee as races are possible if your program's main thread is exiting. If you would like to fully synchronize the clipboard "paste"
+before exiting, you can use the [wait](https://docs.rs/arboard/latest/arboard/trait.SetExtLinux.html#tymethod.wait) method when setting
+contents on the clipboard. This will block the calling thread until another app has requested, and then received, the data.
+
+If your application is longer-running (ie a GUI, TUI, etc), it is highly recommended that you either store the `Clipboard` object in some 
+long-lived data structure (like app context, etc) or utilize `wait` method mentioned above, and/or threading to make sure another 
+app can request the clipboard data later.
+
+We welcome suggestions to improve on the above issues in ways that don't degrade other use cases.
+
 ## Example
 
 ```rust
