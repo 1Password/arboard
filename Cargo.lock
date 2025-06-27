@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "arboard"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "clipboard-win",
  "env_logger",
