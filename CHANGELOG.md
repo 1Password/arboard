@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.6.0 on 2025-06-27
+
+### Added
+- Add support for excluding data from clipboard history on Linux.
+- `arboard`, in debug builds, now attempts to call out clipboard lifetime mishandling.
+  - This is a debugging feature, and as such has no absolute or promised behavior.
+
+### Changed
+- The background thread in the X11 backend no longer exits on every selection request failure.
+
+### Fixed
+- Handled cases where using an unsupported Primary clipboard on Wayland would return the wrong error.
+- Clearing the clipboard on Linux now behaves correctly when interacting with other apps on the system.
+- Pasting text with an explicit locale ID on Windows now works as intended.
+
 ## 3.5.0 on 2025-04-01
 
 ### Added

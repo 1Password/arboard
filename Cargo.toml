@@ -1,6 +1,6 @@
 [package]
 name = "arboard"
-version = "3.5.0"
+version = "3.6.0"
 description = "Image and text handling for the OS clipboard."
 repository = "https://github.com/1Password/arboard"
 license = "MIT OR Apache-2.0"
