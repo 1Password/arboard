@@ -22,13 +22,13 @@ environments that exist in the wild today. `arboard` will use the `Clipboard` se
 but the [LinuxClipboardKind](https://docs.rs/arboard/latest/arboard/enum.LinuxClipboardKind.html)
 selector lets you operate on the `Primary` or `Secondary` clipboard selections (if supported).
 
-However, Wayland is becoming the majority default as of 2025 (with some distributions)
+However, Wayland is becoming the majority default as of 2025. Some distributions are
 even considering the removal of X by default. To support Wayland correctly, `arboard` users
 should enable the `wayland-data-control` feature. If enabled, it will be prioritized over the X clipboard.
 
 Wayland support is not enabled by default because it may be counterintuitive 
-to some users: it relies on the data-control extension protocols,
-which _are not_ support all Wayland compositors. You can check compositor support on `wayland.app`:
+to some users: it relies on the data-control protocol extension(s), which _are not_
+supported by all Wayland compositors. You can check compositor support on `wayland.app`:
 - [ext-data-control-v1](https://wayland.app/protocols/ext-data-control-v1)
 - [wlr-data-control-unstable-v1](https://wayland.app/protocols/wlr-data-control-unstable-v1)
 
