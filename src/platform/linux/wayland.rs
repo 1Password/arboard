@@ -186,7 +186,7 @@ impl Clipboard {
 			Ok((mut pipe, _mime_type)) => {
 				let mut buffer = vec![];
 				pipe.read_to_end(&mut buffer).map_err(into_unknown)?;
-				let image = image::io::Reader::new(Cursor::new(buffer))
+				let image = image::ImageReader::new(Cursor::new(buffer))
 					.with_guessed_format()
 					.map_err(|_| Error::ConversionFailure)?
 					.decode()
