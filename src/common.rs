@@ -30,7 +30,7 @@ pub enum Error {
 	/// - Using the Secondary clipboard on Wayland
 	ClipboardNotSupported,
 
-	/// The native clipboard is not accessible due to being held by an other party.
+	/// The native clipboard is not accessible due to being held by another party.
 	///
 	/// This "other party" could be a different process or it could be within
 	/// the same program. So for example you may get this error when trying
@@ -57,7 +57,7 @@ impl std::fmt::Display for Error {
 		match self {
 			Error::ContentNotAvailable => f.write_str("The clipboard contents were not available in the requested format or the clipboard is empty."),
 			Error::ClipboardNotSupported => f.write_str("The selected clipboard is not supported with the current system configuration."),
-			Error::ClipboardOccupied => f.write_str("The native clipboard is not accessible due to being held by an other party."),
+			Error::ClipboardOccupied => f.write_str("The native clipboard is not accessible due to being held by another party."),
 			Error::ConversionFailure => f.write_str("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format."),
 			Error::Unknown { description } => f.write_fmt(format_args!("Unknown error while interacting with the clipboard: {description}")),
 		}
