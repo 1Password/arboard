@@ -36,7 +36,7 @@ jobs:
 
       - name: Add Android target
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: rustup target add aarch64-linux-android
+        run: rustup target add x86_64-linux-android
 
       - name: Run `cargo clippy` with no features
         if: ${{ matrix.rust_version == 'stable' }}
@@ -55,12 +55,11 @@ jobs:
       
       - name: Run `cargo clippy` with no features on Android
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: cargo clippy --target aarch64-linux-android --verbose --no-default-features -- -D warnings -D clippy::dbg_macro
+        run: cargo clippy --target x86_64-linux-android --verbose --no-default-features -- -D warnings -D clippy::dbg_macro
 
       - name: Run `cargo clippy` with `image-data` feature on Android
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: cargo clippy --target aarch64-linux-android --verbose --no-default-features --features image-data -- -D warnings -D clippy::dbg_macro
-  
+        run: cargo clippy --target x86_64-linux-android --verbose --no-default-features --features image-data -- -D warnings -D clippy::dbg_macro
 
       - name: Run `cargo clippy` with dependency version checks
         if: ${{ matrix.rust_version == 'stable' }}
@@ -117,3 +116,56 @@ jobs:
     - uses: actions/checkout@v4
     - name: Check semver
       uses: obi1kenobi/cargo-semver-checks-action@v2
+
+  android_emulator:
+    needs: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Install `cargo-apk`
+        run: cargo install cargo-apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Gradle cache
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: AVD cache
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-29
+
+      - name: create AVD and generate snapshot for caching
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          target: default
+          profile: Nexus 6
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: false
+          script: echo "Generated AVD snapshot for caching."
+
+      - name: Run android example
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          force-avd-creation: false
+          arch: x86_64
+          target: default
+          profile: Nexus 6
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: ./tools/android_test.sh

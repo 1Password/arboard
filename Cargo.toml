@@ -98,3 +98,15 @@ required-features = ["image-data"]
 [[example]]
 name = "set_image"
 required-features = ["image-data"]
+
+[[example]]
+name = "android"
+crate-type = ["cdylib"]
+
+[target.'cfg(target_os = "android")'.dev-dependencies]
+android-activity = { version = "0.6.0", features = [ "native-activity" ] }
+ndk = "0.9"
+ndk-sys = "0.6"
+
+[package.metadata.android.sdk]
+target_sdk_version = 29
