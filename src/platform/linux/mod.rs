@@ -1,8 +1,12 @@
-use std::{borrow::Cow, path::PathBuf, time::Instant};
+use std::{
+	borrow::Cow,
+	path::{Path, PathBuf},
+	time::Instant,
+};
 
 #[cfg(feature = "wayland-data-control")]
 use log::{trace, warn};
-use percent_encoding::percent_decode_str;
+use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, CONTROLS};
 
 #[cfg(feature = "image-data")]
 use crate::ImageData;
@@ -50,6 +54,39 @@ fn paths_from_uri_list(uri_list: String) -> Vec<PathBuf> {
 		.filter_map(|s| percent_decode_str(s).decode_utf8().ok())
 		.map(|decoded| PathBuf::from(decoded.as_ref()))
 		.collect()
+}
+
+fn paths_to_uri_list(file_list: &[impl AsRef<Path>]) -> Result<String, Error> {
+	// The characters that require encoding, which includes £ and € but they can't be added to the set.
+	const ASCII_SET: &AsciiSet = &CONTROLS
+		.add(b'#')
+		.add(b';')
+		.add(b'?')
+		.add(b'[')
+		.add(b']')
+		.add(b' ')
+		.add(b'\"')
+		.add(b'%')
+		.add(b'<')
+		.add(b'>')
+		.add(b'\\')
+		.add(b'^')
+		.add(b'`')
+		.add(b'{')
+		.add(b'|')
+		.add(b'}');
+
+	file_list
+		.iter()
+		.filter_map(|path| {
+			path.as_ref().canonicalize().ok().and_then(|abs_path| {
+				abs_path
+					.to_str()
+					.map(|str| format!("file://{}", utf8_percent_encode(str, ASCII_SET)))
+			})
+		})
+		.reduce(|uri_list, uri| uri_list + "\n" + &uri)
+		.ok_or(Error::ConversionFailure)
 }
 
 /// Clipboard selection
@@ -237,6 +274,19 @@ impl<'clipboard> Set<'clipboard> {
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => {
 				clipboard.set_image(image, self.selection, self.wait, self.exclude_from_history)
+			}
+		}
+	}
+
+	pub(crate) fn file_list(self, file_list: &[impl AsRef<Path>]) -> Result<(), Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => {
+				clipboard.set_file_list(file_list, self.selection, self.wait)
+			}
+
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => {
+				clipboard.set_file_list(file_list, self.selection, self.wait)
 			}
 		}
 	}
