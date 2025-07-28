@@ -15,20 +15,20 @@ use std::{
 	borrow::Cow,
 	io,
 	marker::PhantomData,
-	mem::size_of,
+	os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
 	path::{Path, PathBuf},
 	thread,
 	time::Duration,
 };
 use windows_sys::Win32::{
-	Foundation::{GlobalFree, HANDLE, HGLOBAL, POINT},
-	Globalization::{MultiByteToWideChar, CP_UTF8},
+	Foundation::{GetLastError, GlobalFree, HANDLE, HGLOBAL, POINT, S_OK},
+	Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS, VOLUME_NAME_DOS},
 	System::{
 		DataExchange::SetClipboardData,
 		Memory::{GlobalAlloc, GlobalLock, GHND},
 		Ole::CF_HDROP,
 	},
-	UI::Shell::DROPFILES,
+	UI::Shell::{PathCchStripPrefix, DROPFILES},
 };
 
 #[cfg(feature = "image-data")]
@@ -40,19 +40,13 @@ mod image_data {
 	use image::ImageEncoder;
 	use std::{convert::TryInto, io, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
-		Foundation::{HANDLE, HGLOBAL},
 		Graphics::Gdi::{
 			CreateDIBitmap, DeleteObject, GetDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
 			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
 			LCS_GM_IMAGES, RGBQUAD,
 		},
-		System::{DataExchange::SetClipboardData, Memory::GlobalUnlock, Ole::CF_DIBV5},
+		System::{Memory::GlobalUnlock, Ole::CF_DIBV5},
 	};
-
-	fn last_error(message: &str) -> Error {
-		let os_error = io::Error::last_os_error();
-		Error::unknown(format!("{message}: {os_error}"))
-	}
 
 	unsafe fn global_unlock_checked(hdata: HGLOBAL) {
 		// If the memory object is unlocked after decrementing the lock count, the function
@@ -477,7 +471,7 @@ unsafe fn global_lock(hmem: HGLOBAL) -> Result<*mut u8, Error> {
 
 fn last_error(message: &str) -> Error {
 	let os_error = io::Error::last_os_error();
-	Error::unknown(format!("{}: {}", message, os_error))
+	Error::unknown(format!("{message}: {os_error}"))
 }
 
 /// An abstraction trait over the different ways a Win32 function may return
@@ -723,7 +717,7 @@ impl<'clipboard> Set<'clipboard> {
 	}
 
 	pub(crate) fn file_list(self, file_list: &[impl AsRef<Path>]) -> Result<(), Error> {
-		const DROPFILES_HEADER_SIZE: usize = size_of::<DROPFILES>();
+		const DROPFILES_HEADER_SIZE: usize = std::mem::size_of::<DROPFILES>();
 
 		let _clipboard_assertion = self.clipboard?;
 
@@ -740,24 +734,23 @@ impl<'clipboard> Set<'clipboard> {
 
 		let mut data_len = DROPFILES_HEADER_SIZE;
 
-		let str_paths: Vec<String> = file_list
+		let paths: Vec<_> = file_list
 			.iter()
 			.filter_map(|path| {
-				path.as_ref().canonicalize().ok().and_then(|abs_path| {
-					abs_path.to_str().map(|str| {
-						// Windows uses wchar_t which is 16 bit
-						data_len += (str.len() + 1) * size_of::<u16>();
-						str.to_owned()
-					})
+				to_final_path_wide(path.as_ref()).map(|wide| {
+					// Windows uses wchar_t which is 16 bit
+					data_len += wide.len() * std::mem::size_of::<u16>();
+					wide
 				})
 			})
 			.collect();
 
-		if str_paths.is_empty() {
+		if paths.is_empty() {
 			return Err(Error::ConversionFailure);
 		}
 
-		data_len += size_of::<u16>();
+		// Add space for the final null character
+		data_len += std::mem::size_of::<u16>();
 
 		unsafe {
 			let h_global = global_alloc(data_len)?;
@@ -766,16 +759,12 @@ impl<'clipboard> Set<'clipboard> {
 			(data_ptr as *mut DROPFILES).write(dropfiles);
 
 			let mut ptr = data_ptr.add(DROPFILES_HEADER_SIZE) as *mut u16;
-			let mut offset = data_len as i32;
 
-			for str in str_paths {
-				let written =
-					MultiByteToWideChar(CP_UTF8, 0, str.as_ptr(), str.len() as i32, ptr, offset);
-				ptr = ptr.offset(written as isize);
-				// Write null character
-				ptr.write(0);
-				ptr = ptr.add(1);
-				offset -= written - 1;
+			for wide_path in paths {
+				for wchar in wide_path {
+					ptr.write(wchar);
+					ptr = ptr.add(1);
+				}
 			}
 
 			// Write final null character
@@ -912,4 +901,102 @@ fn wrap_html(ctn: &str) -> String {
 	format!(
 		"{h_version}{h_start_html}{n_start_html:010}{h_end_html}{n_end_html:010}{h_start_frag}{n_start_frag:010}{h_end_frag}{n_end_frag:010}{c_start_frag}{ctn}{c_end_frag}"
 	)
+}
+
+/// Given a file path attempt to open it and call GetFinalPathNameByHandleW,
+/// on success return the final path as a NULL terminated u16 Vec
+fn to_final_path_wide(p: &Path) -> Option<Vec<u16>> {
+	let file = std::fs::OpenOptions::new()
+		// No read or write permissions are necessary
+		.access_mode(0)
+		// This flag is so we can open directories too
+		.custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+		.open(p)
+		.ok()?;
+
+	fill_utf16_buf(
+		|buf, sz| unsafe {
+			GetFinalPathNameByHandleW(file.as_raw_handle() as HANDLE, buf, sz, VOLUME_NAME_DOS)
+		},
+		|buf| {
+			let mut wide = Vec::with_capacity(buf.len() + 1);
+			wide.extend_from_slice(buf);
+			wide.push(0);
+
+			let hr = unsafe { PathCchStripPrefix(wide.as_mut_ptr(), wide.len()) };
+			// On success truncate invalid data
+			if hr == S_OK {
+				if let Some(end) = wide.iter().position(|c| *c == 0) {
+					// Retain NULL character
+					wide.truncate(end + 1)
+				}
+			}
+			wide
+		},
+	)
+}
+
+fn fill_utf16_buf<F1, F2, T>(mut f1: F1, f2: F2) -> Option<T>
+where
+	F1: FnMut(*mut u16, u32) -> u32,
+	F2: FnOnce(&[u16]) -> T,
+{
+	// Start off with a stack buf but then spill over to the heap if we end up
+	// needing more space.
+	//
+	// This initial size also works around `GetFullPathNameW` returning
+	// incorrect size hints for some short paths:
+	// https://github.com/dylni/normpath/issues/5
+	let mut stack_buf: [std::mem::MaybeUninit<u16>; 512] = [std::mem::MaybeUninit::uninit(); 512];
+	let mut heap_buf: Vec<std::mem::MaybeUninit<u16>> = Vec::new();
+	unsafe {
+		let mut n = stack_buf.len();
+		loop {
+			let buf = if n <= stack_buf.len() {
+				&mut stack_buf[..]
+			} else {
+				let extra = n - heap_buf.len();
+				heap_buf.reserve(extra);
+				// We used `reserve` and not `reserve_exact`, so in theory we
+				// may have gotten more than requested. If so, we'd like to use
+				// it... so long as we won't cause overflow.
+				n = heap_buf.capacity().min(u32::MAX as usize);
+				// Safety: MaybeUninit<u16> does not need initialization
+				heap_buf.set_len(n);
+				&mut heap_buf[..]
+			};
+
+			// This function is typically called on windows API functions which
+			// will return the correct length of the string, but these functions
+			// also return the `0` on error. In some cases, however, the
+			// returned "correct length" may actually be 0!
+			//
+			// To handle this case we call `SetLastError` to reset it to 0 and
+			// then check it again if we get the "0 error value". If the "last
+			// error" is still 0 then we interpret it as a 0 length buffer and
+			// not an actual error.
+			windows_sys::Win32::Foundation::SetLastError(0);
+			let k = match f1(buf.as_mut_ptr().cast::<u16>(), n as u32) {
+				0 if GetLastError() == 0 => 0,
+				0 => return None,
+				n => n,
+			} as usize;
+			if k == n && GetLastError() == windows_sys::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER
+			{
+				n = n.saturating_mul(2).min(u32::MAX as usize);
+			} else if k > n {
+				n = k;
+			} else if k == n {
+				// It is impossible to reach this point.
+				// On success, k is the returned string length excluding the null.
+				// On failure, k is the required buffer length including the null.
+				// Therefore k never equals n.
+				unreachable!();
+			} else {
+				// Safety: First `k` values are initialized.
+				let slice = std::slice::from_raw_parts(buf.as_ptr() as *const u16, k);
+				return Some(f2(slice));
+			}
+		}
+	}
 }
