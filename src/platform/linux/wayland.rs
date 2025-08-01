@@ -238,7 +238,21 @@ impl Clipboard {
 		&mut self,
 		selection: LinuxClipboardKind,
 	) -> Result<Vec<PathBuf>, Error> {
-		self.string_for_mime(selection, paste::MimeType::Specific("text/uri-list"))
-			.map(paths_from_uri_list)
+		let result = get_contents(
+			selection.try_into()?,
+			Seat::Unspecified,
+			paste::MimeType::Specific("text/uri-list"),
+		);
+		match result {
+			Ok((mut pipe, _)) => {
+				let mut contents = vec![];
+				pipe.read_to_end(&mut contents).map_err(into_unknown)?;
+				Ok(paths_from_uri_list(contents))
+			}
+			Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
+				Err(Error::ContentNotAvailable)
+			}
+			Err(err) => Err(handle_paste_error(err)),
+		}
 	}
 }

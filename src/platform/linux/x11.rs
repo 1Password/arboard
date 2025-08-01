@@ -1059,9 +1059,7 @@ impl Clipboard {
 	pub(crate) fn get_file_list(&self, selection: LinuxClipboardKind) -> Result<Vec<PathBuf>> {
 		let result = self.inner.read(&[self.inner.atoms.URI_LIST], selection)?;
 
-		String::from_utf8(result.bytes)
-			.map_err(|_| Error::ConversionFailure)
-			.map(paths_from_uri_list)
+		Ok(paths_from_uri_list(result.bytes))
 	}
 }
 
