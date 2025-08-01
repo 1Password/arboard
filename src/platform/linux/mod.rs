@@ -2,7 +2,7 @@ use std::{borrow::Cow, path::PathBuf, time::Instant};
 
 #[cfg(feature = "wayland-data-control")]
 use log::{trace, warn};
-use percent_encoding::percent_decode_str;
+use percent_encoding::percent_decode;
 
 #[cfg(feature = "image-data")]
 use crate::ImageData;
@@ -43,11 +43,11 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 	Ok(png_bytes)
 }
 
-fn paths_from_uri_list(uri_list: String) -> Vec<PathBuf> {
+fn paths_from_uri_list(uri_list: Vec<u8>) -> Vec<PathBuf> {
 	uri_list
-		.lines()
-		.filter_map(|s| s.strip_prefix("file://"))
-		.filter_map(|s| percent_decode_str(s).decode_utf8().ok())
+		.split(|char| *char == b'\n')
+		.filter_map(|line| line.strip_prefix(b"file://"))
+		.filter_map(|s| percent_decode(s).decode_utf8().ok())
 		.map(|decoded| PathBuf::from(decoded.as_ref()))
 		.collect()
 }
@@ -405,6 +405,6 @@ mod tests {
 			PathBuf::from("/tmp/foo?.png"),
 			PathBuf::from("/tmp/white space.txt"),
 		];
-		assert_eq!(paths_from_uri_list(file_list.join("\n")), paths);
+		assert_eq!(paths_from_uri_list(file_list.join("\n").into()), paths);
 	}
 }
