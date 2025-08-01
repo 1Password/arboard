@@ -68,6 +68,25 @@ fn handle_paste_error(e: paste::Error) -> Error {
 	}
 }
 
+fn handle_clipboard_read<T, F: FnOnce(Vec<u8>) -> Result<T, Error>>(
+	selection: LinuxClipboardKind,
+	mime: paste::MimeType,
+	into_requested_data: F,
+) -> Result<T, Error> {
+	let result = get_contents(selection.try_into()?, Seat::Unspecified, mime);
+	match result {
+		Ok((mut pipe, _)) => {
+			let mut buffer = vec![];
+			pipe.read_to_end(&mut buffer).map_err(into_unknown)?;
+			into_requested_data(buffer)
+		}
+		Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
+			Err(Error::ContentNotAvailable)
+		}
+		Err(err) => Err(handle_paste_error(err)),
+	}
+}
+
 impl Clipboard {
 	pub(crate) fn new() -> Result<Self, Error> {
 		// Check if it's possible to communicate with the wayland compositor
@@ -79,32 +98,15 @@ impl Clipboard {
 		}
 	}
 
-	fn string_for_mime(
-		&mut self,
-		selection: LinuxClipboardKind,
-		mime: paste::MimeType,
-	) -> Result<String, Error> {
-		let result = get_contents(selection.try_into()?, Seat::Unspecified, mime);
-		match result {
-			Ok((mut pipe, _)) => {
-				let mut contents = vec![];
-				pipe.read_to_end(&mut contents).map_err(into_unknown)?;
-				String::from_utf8(contents).map_err(|_| Error::ConversionFailure)
-			}
-			Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
-				Err(Error::ContentNotAvailable)
-			}
-			Err(err) => Err(handle_paste_error(err)),
-		}
-	}
-
 	pub(crate) fn clear(&mut self, selection: LinuxClipboardKind) -> Result<(), Error> {
 		let selection = selection.try_into()?;
 		copy::clear(selection, copy::Seat::All).map_err(handle_copy_error)
 	}
 
 	pub(crate) fn get_text(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
-		self.string_for_mime(selection, paste::MimeType::Text)
+		handle_clipboard_read(selection, paste::MimeType::Text, |contents| {
+			String::from_utf8(contents).map_err(|_| Error::ConversionFailure)
+		})
 	}
 
 	pub(crate) fn set_text(
@@ -131,7 +133,9 @@ impl Clipboard {
 	}
 
 	pub(crate) fn get_html(&mut self, selection: LinuxClipboardKind) -> Result<String, Error> {
-		self.string_for_mime(selection, paste::MimeType::Specific("text/html"))
+		handle_clipboard_read(selection, paste::MimeType::Specific("text/html"), |contents| {
+			String::from_utf8(contents).map_err(|_| Error::ConversionFailure)
+		})
 	}
 
 	pub(crate) fn set_html(
@@ -177,35 +181,21 @@ impl Clipboard {
 		selection: LinuxClipboardKind,
 	) -> Result<ImageData<'static>, Error> {
 		use std::io::Cursor;
-		use wl_clipboard_rs::paste::MimeType;
 
-		let result =
-			get_contents(selection.try_into()?, Seat::Unspecified, MimeType::Specific(MIME_PNG));
+		handle_clipboard_read(selection, paste::MimeType::Specific(MIME_PNG), |buffer| {
+			let image = image::io::Reader::new(Cursor::new(buffer))
+				.with_guessed_format()
+				.map_err(|_| Error::ConversionFailure)?
+				.decode()
+				.map_err(|_| Error::ConversionFailure)?;
+			let image = image.into_rgba8();
 
-		match result {
-			Ok((mut pipe, _mime_type)) => {
-				let mut buffer = vec![];
-				pipe.read_to_end(&mut buffer).map_err(into_unknown)?;
-				let image = image::io::Reader::new(Cursor::new(buffer))
-					.with_guessed_format()
-					.map_err(|_| Error::ConversionFailure)?
-					.decode()
-					.map_err(|_| Error::ConversionFailure)?;
-				let image = image.into_rgba8();
-
-				Ok(ImageData {
-					width: image.width() as usize,
-					height: image.height() as usize,
-					bytes: image.into_raw().into(),
-				})
-			}
-
-			Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
-				Err(Error::ContentNotAvailable)
-			}
-
-			Err(err) => Err(handle_paste_error(err)),
-		}
+			Ok(ImageData {
+				width: image.width() as usize,
+				height: image.height() as usize,
+				bytes: image.into_raw().into(),
+			})
+		})
 	}
 
 	#[cfg(feature = "image-data")]
@@ -238,21 +228,8 @@ impl Clipboard {
 		&mut self,
 		selection: LinuxClipboardKind,
 	) -> Result<Vec<PathBuf>, Error> {
-		let result = get_contents(
-			selection.try_into()?,
-			Seat::Unspecified,
-			paste::MimeType::Specific("text/uri-list"),
-		);
-		match result {
-			Ok((mut pipe, _)) => {
-				let mut contents = vec![];
-				pipe.read_to_end(&mut contents).map_err(into_unknown)?;
-				Ok(paths_from_uri_list(contents))
-			}
-			Err(PasteError::ClipboardEmpty) | Err(PasteError::NoMimeType) => {
-				Err(Error::ContentNotAvailable)
-			}
-			Err(err) => Err(handle_paste_error(err)),
-		}
+		handle_clipboard_read(selection, paste::MimeType::Specific("text/uri-list"), |contents| {
+			Ok(paths_from_uri_list(contents))
+		})
 	}
 }
