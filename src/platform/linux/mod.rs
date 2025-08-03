@@ -1,12 +1,13 @@
 use std::{
 	borrow::Cow,
+	os::unix::ffi::OsStrExt,
 	path::{Path, PathBuf},
 	time::Instant,
 };
 
 #[cfg(feature = "wayland-data-control")]
 use log::{trace, warn};
-use percent_encoding::{percent_decode, utf8_percent_encode, AsciiSet, CONTROLS};
+use percent_encoding::{percent_decode, percent_encode, AsciiSet, CONTROLS};
 
 #[cfg(feature = "image-data")]
 use crate::ImageData;
@@ -79,10 +80,8 @@ fn paths_to_uri_list(file_list: &[impl AsRef<Path>]) -> Result<String, Error> {
 	file_list
 		.iter()
 		.filter_map(|path| {
-			path.as_ref().canonicalize().ok().and_then(|abs_path| {
-				abs_path
-					.to_str()
-					.map(|str| format!("file://{}", utf8_percent_encode(str, ASCII_SET)))
+			path.as_ref().canonicalize().ok().map(|path| {
+				format!("file://{}", percent_encode(path.as_os_str().as_bytes(), ASCII_SET))
 			})
 		})
 		.reduce(|uri_list, uri| uri_list + "\n" + &uri)
@@ -280,14 +279,20 @@ impl<'clipboard> Set<'clipboard> {
 
 	pub(crate) fn file_list(self, file_list: &[impl AsRef<Path>]) -> Result<(), Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => {
-				clipboard.set_file_list(file_list, self.selection, self.wait)
-			}
+			Clipboard::X11(clipboard) => clipboard.set_file_list(
+				file_list,
+				self.selection,
+				self.wait,
+				self.exclude_from_history,
+			),
 
 			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => {
-				clipboard.set_file_list(file_list, self.selection, self.wait)
-			}
+			Clipboard::WlDataControl(clipboard) => clipboard.set_file_list(
+				file_list,
+				self.selection,
+				self.wait,
+				self.exclude_from_history,
+			),
 		}
 	}
 }

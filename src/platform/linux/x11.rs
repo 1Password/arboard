@@ -1067,11 +1067,14 @@ impl Clipboard {
 		file_list: &[impl AsRef<Path>],
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
+		exclude_from_history: bool,
 	) -> Result<()> {
 		let files = paths_to_uri_list(file_list)?;
+		let mut data = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
 
-		let data =
-			vec![ClipboardData { bytes: files.into_bytes(), format: self.inner.atoms.URI_LIST }];
+		data.push(ClipboardData { bytes: files.into_bytes(), format: self.inner.atoms.URI_LIST });
+		self.add_clipboard_exclusions(exclude_from_history, &mut data);
+
 		self.inner.write(data, selection, wait)
 	}
 }

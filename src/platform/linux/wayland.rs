@@ -23,6 +23,8 @@ use crate::common::ImageData;
 #[cfg(feature = "image-data")]
 const MIME_PNG: &str = "image/png";
 
+const MIME_URI: &str = "text/uri-list";
+
 pub(crate) struct Clipboard {}
 
 impl TryInto<copy::ClipboardType> for LinuxClipboardKind {
@@ -232,7 +234,7 @@ impl Clipboard {
 		&mut self,
 		selection: LinuxClipboardKind,
 	) -> Result<Vec<PathBuf>, Error> {
-		handle_clipboard_read(selection, paste::MimeType::Specific("text/uri-list"), |contents| {
+		handle_clipboard_read(selection, paste::MimeType::Specific(MIME_URI), |contents| {
 			Ok(paths_from_uri_list(contents))
 		})
 	}
@@ -242,17 +244,22 @@ impl Clipboard {
 		file_list: &[impl AsRef<Path>],
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
+		exclude_from_history: bool,
 	) -> Result<(), Error> {
 		let files = paths_to_uri_list(file_list)?;
-		let uri_mime = MimeType::Specific(String::from("text/uri-list"));
+
 		let mut opts = Options::new();
 		opts.foreground(matches!(wait, WaitConfig::Forever));
 		opts.clipboard(selection.try_into()?);
-		let source = Source::Bytes(files.into_bytes().into_boxed_slice());
-		opts.copy(source, uri_mime).map_err(|e| match e {
-			CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
-			other => into_unknown(other),
-		})?;
-		Ok(())
+
+		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
+		sources.push(MimeSource {
+			source: Source::Bytes(files.into_bytes().into_boxed_slice()),
+			mime_type: MimeType::Specific(String::from(MIME_URI)),
+		});
+
+		add_clipboard_exclusions(exclude_from_history, &mut sources);
+
+		opts.copy_multi(sources).map_err(handle_copy_error)
 	}
 }
