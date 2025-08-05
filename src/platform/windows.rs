@@ -25,7 +25,7 @@ use windows_sys::Win32::{
 	Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS, VOLUME_NAME_DOS},
 	System::{
 		DataExchange::SetClipboardData,
-		Memory::{GlobalAlloc, GlobalLock, GHND},
+		Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND},
 		Ole::CF_HDROP,
 	},
 	UI::Shell::{PathCchStripPrefix, DROPFILES},
@@ -38,27 +38,15 @@ mod image_data {
 	use image::codecs::png::PngEncoder;
 	use image::ExtendedColorType;
 	use image::ImageEncoder;
-	use std::{convert::TryInto, io, mem::size_of, ptr::copy_nonoverlapping};
+	use std::{convert::TryInto, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
 		Graphics::Gdi::{
 			CreateDIBitmap, DeleteObject, GetDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
 			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
 			LCS_GM_IMAGES, RGBQUAD,
 		},
-		System::{Memory::GlobalUnlock, Ole::CF_DIBV5},
+		System::Ole::CF_DIBV5,
 	};
-
-	unsafe fn global_unlock_checked(hdata: HGLOBAL) {
-		// If the memory object is unlocked after decrementing the lock count, the function
-		// returns zero and GetLastError returns NO_ERROR. If it fails, the return value is
-		// zero and GetLastError returns a value other than NO_ERROR.
-		if GlobalUnlock(hdata) == 0 {
-			let err = io::Error::last_os_error();
-			if err.raw_os_error() != Some(0) {
-				log::error!("Failed calling GlobalUnlock when writing data: {}", err);
-			}
-		}
-	}
 
 	pub(super) fn add_cf_dibv5(
 		_open_clipboard: OpenClipboard,
@@ -469,6 +457,18 @@ unsafe fn global_lock(hmem: HGLOBAL) -> Result<*mut u8, Error> {
 	}
 }
 
+unsafe fn global_unlock_checked(hdata: HGLOBAL) {
+	// If the memory object is unlocked after decrementing the lock count, the function
+	// returns zero and GetLastError returns NO_ERROR. If it fails, the return value is
+	// zero and GetLastError returns a value other than NO_ERROR.
+	if GlobalUnlock(hdata) == 0 {
+		let err = io::Error::last_os_error();
+		if err.raw_os_error() != Some(0) {
+			log::error!("Failed calling GlobalUnlock when writing data: {}", err);
+		}
+	}
+}
+
 fn last_error(message: &str) -> Error {
 	let os_error = io::Error::last_os_error();
 	Error::unknown(format!("{message}: {os_error}"))
@@ -477,8 +477,8 @@ fn last_error(message: &str) -> Error {
 /// An abstraction trait over the different ways a Win32 function may return
 /// a value with a failure marker.
 ///
-/// This is primarily to abstract over changes in `windows-sys` versions and unify how
-/// error handling is done in the above image code.
+/// This trait helps unify error handling across varying `windows-sys` versions,
+/// providing a consistent interface for representing NULL values.
 trait ResultValue: Sized {
 	const NULL: Self;
 	fn failure(self) -> bool;
@@ -761,14 +761,14 @@ impl<'clipboard> Set<'clipboard> {
 			let mut ptr = data_ptr.add(DROPFILES_HEADER_SIZE) as *mut u16;
 
 			for wide_path in paths {
-				for wchar in wide_path {
-					ptr.write(wchar);
-					ptr = ptr.add(1);
-				}
+				std::ptr::copy_nonoverlapping::<u16>(wide_path.as_ptr(), ptr, wide_path.len());
+				ptr = ptr.add(wide_path.len());
 			}
 
 			// Write final null character
 			ptr.write(0);
+
+			global_unlock_checked(h_global);
 
 			if SetClipboardData(CF_HDROP.into(), h_global as HANDLE).failure() {
 				GlobalFree(h_global);
@@ -936,6 +936,7 @@ fn to_final_path_wide(p: &Path) -> Option<Vec<u16>> {
 	)
 }
 
+/// <https://github.com/rust-lang/rust/blob/f34ba774c78ea32b7c40598b8ad23e75cdac42a6/library/std/src/sys/pal/windows/mod.rs#L211>
 fn fill_utf16_buf<F1, F2, T>(mut f1: F1, f2: F2) -> Option<T>
 where
 	F1: FnMut(*mut u16, u32) -> u32,
