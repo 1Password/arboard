@@ -16,7 +16,7 @@ use std::{
 	borrow::Cow,
 	cell::RefCell,
 	collections::{hash_map::Entry, HashMap},
-	path::PathBuf,
+	path::{Path, PathBuf},
 	sync::{
 		atomic::{AtomicBool, Ordering},
 		Arc,
@@ -46,8 +46,8 @@ use x11rb::{
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
 use super::{
-	into_unknown, paths_from_uri_list, LinuxClipboardKind, WaitConfig, KDE_EXCLUSION_HINT,
-	KDE_EXCLUSION_MIME,
+	into_unknown, paths_from_uri_list, paths_to_uri_list, LinuxClipboardKind, WaitConfig,
+	KDE_EXCLUSION_HINT, KDE_EXCLUSION_MIME,
 };
 #[cfg(feature = "image-data")]
 use crate::ImageData;
@@ -1060,6 +1060,22 @@ impl Clipboard {
 		let result = self.inner.read(&[self.inner.atoms.URI_LIST], selection)?;
 
 		Ok(paths_from_uri_list(result.bytes))
+	}
+
+	pub(crate) fn set_file_list(
+		&self,
+		file_list: &[impl AsRef<Path>],
+		selection: LinuxClipboardKind,
+		wait: WaitConfig,
+		exclude_from_history: bool,
+	) -> Result<()> {
+		let files = paths_to_uri_list(file_list)?;
+		let mut data = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
+
+		data.push(ClipboardData { bytes: files.into_bytes(), format: self.inner.atoms.URI_LIST });
+		self.add_clipboard_exclusions(exclude_from_history, &mut data);
+
+		self.inner.write(data, selection, wait)
 	}
 }
 
