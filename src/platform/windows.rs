@@ -17,16 +17,18 @@ use std::{borrow::Cow, marker::PhantomData, path::PathBuf, thread, time::Duratio
 mod image_data {
 	use super::*;
 	use crate::common::ScopeGuard;
+	use image::codecs::bmp::BmpDecoder;
+	use image::codecs::png::PngDecoder;
 	use image::codecs::png::PngEncoder;
+	use image::DynamicImage;
 	use image::ExtendedColorType;
+	use image::ImageDecoder;
 	use image::ImageEncoder;
 	use std::{convert::TryInto, io, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
 		Foundation::{HANDLE, HGLOBAL},
 		Graphics::Gdi::{
-			CreateDIBitmap, DeleteObject, GetDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
-			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
-			LCS_GM_IMAGES, RGBQUAD,
+			DeleteObject, BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, HGDIOBJ, LCS_GM_IMAGES,
 		},
 		System::{
 			DataExchange::SetClipboardData,
@@ -186,138 +188,81 @@ mod image_data {
 		}
 	}
 
-	pub(super) fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
+	// https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapv5header
+	// According to the docs, when bV5Compression is BI_RGB, "the high byte in each DWORD
+	// is not used".
+	// This seems to not be respected in the real world. For example, Chrome, and Chromium
+	// & Electron-based programs send us BI_RGB headers, but with bitCount=32 - and important
+	// transparency bytes in the alpha channel.
+	//
+	// Apparently, it's our job as the consumer to do the right thing. This method fiddles
+	// with the header a bit in these cases, then `image` handles the rest.
+	fn maybe_tweak_header(dibv5: &mut [u8]) {
+		const BITCOUNT_OFFSET: usize = 14;
+
+		let bitcount =
+			u16::from_le_bytes(dibv5[BITCOUNT_OFFSET..BITCOUNT_OFFSET + 2].try_into().unwrap());
+
+		const COMPRESSION_OFFSET: usize = 16;
+		const MASK_OFFSET: usize = 40;
+
+		let read_u32 = |offset: usize| -> u32 {
+			let slice = &dibv5[offset..offset + 4];
+			u32::from_le_bytes(slice.try_into().unwrap())
+		};
+
+		let compression = read_u32(COMPRESSION_OFFSET);
+		let red_mask = read_u32(MASK_OFFSET);
+		let green_mask = read_u32(MASK_OFFSET + 4);
+		let blue_mask = read_u32(MASK_OFFSET + 8);
+		let alpha_mask = read_u32(MASK_OFFSET + 12);
+
+		let mut set = |offset: usize, val: u32| {
+			dibv5[offset..offset + 4].copy_from_slice(val.to_le_bytes().as_slice());
+		};
+
+		if bitcount == 32 && compression == BI_RGB && alpha_mask == 0xff000000 {
+			set(COMPRESSION_OFFSET, BI_BITFIELDS);
+			if red_mask == 0 && green_mask == 0 && blue_mask == 0 {
+				set(MASK_OFFSET, 0xff0000);
+				set(MASK_OFFSET + 4, 0xff00);
+				set(MASK_OFFSET + 8, 0xff);
+			}
+		}
+	}
+
+	pub(super) fn read_cf_dibv5(dibv5: &mut [u8]) -> Result<ImageData<'static>, Error> {
 		// The DIBV5 format is a BITMAPV5HEADER followed by the pixel data according to
 		// https://docs.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats
 
-		// These constants are missing in windows-rs
-		const PROFILE_EMBEDDED: u32 = 0x4D42_4544;
-		const PROFILE_LINKED: u32 = 0x4C49_4E4B;
-
-		// so first let's get a pointer to the header
 		let header_size = size_of::<BITMAPV5HEADER>();
 		if dibv5.len() < header_size {
 			return Err(Error::unknown("When reading the DIBV5 data, it contained fewer bytes than the BITMAPV5HEADER size. This is invalid."));
 		}
-		let header = unsafe { &*(dibv5.as_ptr().cast::<BITMAPV5HEADER>()) };
+		maybe_tweak_header(dibv5);
 
-		let has_profile =
-			header.bV5CSType == PROFILE_LINKED || header.bV5CSType == PROFILE_EMBEDDED;
+		let decoder = BmpDecoder::new_without_file_header(std::io::Cursor::new(&*dibv5))
+			.map_err(|_| Error::unknown("Failed to read bitmap header"))?;
+		let (width, height) = decoder.dimensions();
+		let bytes = DynamicImage::from_decoder(decoder)
+			.map_err(|_| Error::unknown("Failed to read bitmap"))?
+			.into_rgba8()
+			.into_raw();
 
-		let pixel_data_start = if has_profile {
-			header.bV5ProfileData as isize + header.bV5ProfileSize as isize
-		} else {
-			header_size as isize
-		};
-
-		unsafe {
-			let image_bytes = dibv5.as_ptr().offset(pixel_data_start);
-			let hdc = get_screen_device_context()?;
-			let hbitmap = create_bitmap_from_dib(hdc, header, image_bytes)?;
-			// Now extract the pixels in a desired format
-			let w = header.bV5Width;
-			let h = header.bV5Height.abs();
-			let result_size = w as usize * h as usize * 4;
-
-			let mut result_bytes = Vec::<u8>::with_capacity(result_size);
-
-			let mut output_header = BITMAPINFO {
-				bmiColors: [RGBQUAD { rgbRed: 0, rgbGreen: 0, rgbBlue: 0, rgbReserved: 0 }],
-				bmiHeader: BITMAPINFOHEADER {
-					biSize: size_of::<BITMAPINFOHEADER>() as u32,
-					biWidth: w,
-					biHeight: -h,
-					biBitCount: 32,
-					biPlanes: 1,
-					biCompression: BI_RGB,
-					biSizeImage: 0,
-					biXPelsPerMeter: 0,
-					biYPelsPerMeter: 0,
-					biClrUsed: 0,
-					biClrImportant: 0,
-				},
-			};
-
-			let lines = convert_bitmap_to_rgb(
-				hdc,
-				hbitmap,
-				h,
-				result_bytes.as_mut_slice(),
-				&mut output_header,
-			)?;
-			let read_len = lines as usize * w as usize * 4;
-			assert!(
-				read_len <= result_bytes.capacity(),
-				"Segmentation fault. Read more bytes than allocated to pixel buffer",
-			);
-			result_bytes.set_len(read_len);
-
-			let result_bytes = win_to_rgba(&mut result_bytes);
-
-			let result = ImageData {
-				bytes: Cow::Owned(result_bytes),
-				width: w as usize,
-				height: h as usize,
-			};
-			Ok(result)
-		}
+		Ok(ImageData { width: width as usize, height: height as usize, bytes: bytes.into() })
 	}
 
-	fn get_screen_device_context() -> Result<HDC, Error> {
-		// SAFETY: Calling `GetDC` with `NULL` is safe.
-		let hdc = unsafe { GetDC(ResultValue::NULL) };
-		if hdc.failure() {
-			Err(Error::unknown("Failed to get the device context. GetDC returned null"))
-		} else {
-			Ok(hdc)
-		}
-	}
+	pub(super) fn read_png(data: &[u8]) -> Result<ImageData<'static>, Error> {
+		let decoder = PngDecoder::new(std::io::Cursor::new(data))
+			.map_err(|_| Error::unknown("Failed to read PNG header"))?;
+		let (width, height) = decoder.dimensions();
 
-	unsafe fn create_bitmap_from_dib(
-		hdc: HDC,
-		header: *const BITMAPV5HEADER,
-		image_bytes: *const u8,
-	) -> Result<HBITMAP, Error> {
-		let hbitmap = CreateDIBitmap(
-			hdc,
-			header.cast(),
-			CBM_INIT as u32,
-			image_bytes.cast(),
-			header.cast(),
-			DIB_RGB_COLORS,
-		);
-		if hbitmap.failure() {
-			Err(Error::unknown(
-				"Failed to create the HBITMAP while reading DIBV5. CreateDIBitmap returned null",
-			))
-		} else {
-			Ok(hbitmap)
-		}
-	}
+		let bytes = DynamicImage::from_decoder(decoder)
+			.map_err(|_| Error::unknown("Failed to decode PNG"))?
+			.into_rgba8()
+			.into_raw();
 
-	/// Copies the bitmap image into given buffer with DIB RGB format and
-	/// returns the number of scan lines copied from the bitmap.
-	unsafe fn convert_bitmap_to_rgb(
-		hdc: HDC,
-		hbitmap: HBITMAP,
-		lines: i32,
-		dst: &mut [u8],
-		header: &mut BITMAPINFO,
-	) -> Result<i32, Error> {
-		let lines = GetDIBits(
-			hdc,
-			hbitmap,
-			0,
-			lines as u32,
-			dst.as_mut_ptr().cast(),
-			header,
-			DIB_RGB_COLORS,
-		);
-		if lines == 0 {
-			Err(Error::unknown("Could not get the bitmap bits, GetDIBits returned 0"))
-		} else {
-			Ok(lines)
-		}
+		Ok(ImageData { width: width as usize, height: height as usize, bytes: bytes.into() })
 	}
 
 	/// An abstraction trait over the different ways a Win32 function may return
@@ -411,6 +356,7 @@ mod image_data {
 	/// Safety: the `bytes` slice must have a length that's a multiple of 4
 	#[allow(clippy::identity_op, clippy::erasing_op)]
 	#[must_use]
+	#[cfg(test)]
 	unsafe fn win_to_rgba(bytes: &mut [u8]) -> Vec<u8> {
 		// Check safety invariants to catch obvious bugs.
 		debug_assert_eq!(bytes.len() % 4, 0);
@@ -484,6 +430,80 @@ mod image_data {
 		let _converted = unsafe { rgba_to_win(&mut data) };
 		let _converted = unsafe { win_to_rgba(&mut data) };
 		assert_eq!(data, DATA);
+	}
+
+	#[test]
+	fn firefox_dibv5() {
+		// A 5x5 sample of https://commons.wikimedia.org/wiki/File:PNG_transparency_demonstration_1.png
+		let mut raw = vec![
+			124, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0, 1, 0, 24, 0, 0, 0, 0, 0, 80, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0, 0,
+			255, 66, 71, 82, 115, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 36, 47, 144, 42, 68, 110, 48, 74, 66, 52, 74,
+			49, 57, 80, 55, 0, 36, 53, 138, 45, 79, 98, 52, 82, 58, 56, 84, 52, 62, 91, 58, 0, 37,
+			64, 129, 48, 88, 88, 54, 90, 54, 60, 96, 55, 66, 104, 62, 0, 40, 75, 120, 50, 96, 74,
+			55, 99, 51, 62, 106, 57, 68, 113, 62, 0, 42, 89, 107, 50, 104, 60, 57, 108, 49, 64,
+			114, 56, 71, 123, 65, 0,
+		];
+
+		let before = raw.clone();
+		let image = read_cf_dibv5(&mut raw).unwrap();
+
+		// Not expecting any header fiddling to happen here. This is a bitmap in 24-bit format, with a header
+		// that says as much
+		assert_eq!(raw, before);
+
+		assert_eq!(image.width, 5);
+		assert_eq!(image.height, 5);
+
+		const EXPECTED: &[u8] = &[
+			107, 89, 42, 255, 60, 104, 50, 255, 49, 108, 57, 255, 56, 114, 64, 255, 65, 123, 71,
+			255, 120, 75, 40, 255, 74, 96, 50, 255, 51, 99, 55, 255, 57, 106, 62, 255, 62, 113, 68,
+			255, 129, 64, 37, 255, 88, 88, 48, 255, 54, 90, 54, 255, 55, 96, 60, 255, 62, 104, 66,
+			255, 138, 53, 36, 255, 98, 79, 45, 255, 58, 82, 52, 255, 52, 84, 56, 255, 58, 91, 62,
+			255, 144, 47, 36, 255, 110, 68, 42, 255, 66, 74, 48, 255, 49, 74, 52, 255, 55, 80, 57,
+			255,
+		];
+		assert_eq!(image.bytes, EXPECTED);
+	}
+
+	#[test]
+	fn chrome_dibv5() {
+		// A 5x5 sample of https://commons.wikimedia.org/wiki/File:PNG_transparency_demonstration_1.png
+		// (interestingly, the same sample as in the Firefox test - despite the pixel data being
+		// materially different!)
+		let mut raw = vec![
+			124, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0, 1, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255,
+			32, 110, 105, 87, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 38, 145, 192, 38, 65, 111, 158, 46, 73, 68,
+			107, 50, 73, 50, 92, 55, 79, 55, 100, 31, 46, 139, 190, 41, 76, 100, 152, 49, 81, 60,
+			110, 53, 83, 53, 108, 60, 91, 60, 118, 32, 59, 131, 187, 44, 86, 89, 150, 51, 89, 56,
+			121, 57, 95, 57, 127, 63, 103, 63, 139, 35, 71, 122, 186, 46, 95, 76, 150, 52, 99, 54,
+			136, 59, 105, 59, 146, 65, 113, 65, 156, 37, 86, 109, 184, 46, 103, 63, 155, 52, 107,
+			53, 152, 60, 114, 60, 162, 68, 123, 68, 174,
+		];
+
+		let before = raw.clone();
+		let image = read_cf_dibv5(&mut raw).unwrap();
+
+		// Chrome's header is dodgy. Expect that we fiddled with it.
+		assert_ne!(raw, before);
+
+		assert_eq!(image.width, 5);
+		assert_eq!(image.height, 5);
+
+		const EXPECTED: &[u8] = &[
+			109, 86, 37, 184, 63, 103, 46, 155, 53, 107, 52, 152, 60, 114, 60, 162, 68, 123, 68,
+			174, 122, 71, 35, 186, 76, 95, 46, 150, 54, 99, 52, 136, 59, 105, 59, 146, 65, 113, 65,
+			156, 131, 59, 32, 187, 89, 86, 44, 150, 56, 89, 51, 121, 57, 95, 57, 127, 63, 103, 63,
+			139, 139, 46, 31, 190, 100, 76, 41, 152, 60, 81, 49, 110, 53, 83, 53, 108, 60, 91, 60,
+			118, 145, 38, 32, 192, 111, 65, 38, 158, 68, 73, 46, 107, 50, 73, 50, 92, 55, 79, 55,
+			100,
+		];
+		assert_eq!(image.bytes, EXPECTED);
 	}
 }
 
@@ -604,20 +624,24 @@ impl<'clipboard> Get<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
-		const FORMAT: u32 = clipboard_win::formats::CF_DIBV5;
-
 		let _clipboard_assertion = self.clipboard?;
+		let mut data = Vec::new();
 
-		if !clipboard_win::is_format_avail(FORMAT) {
+		let png_format: Option<u32> = clipboard_win::register_format("PNG").map(From::from);
+		if let Some(id) = png_format.filter(|&id| clipboard_win::is_format_avail(id)) {
+			// Looks like PNG is available! Let's try it
+			clipboard_win::raw::get_vec(id, &mut data)
+				.map_err(|_| Error::unknown("failed to read clipboard PNG data"))?;
+			return image_data::read_png(&data);
+		}
+
+		if !clipboard_win::is_format_avail(clipboard_win::formats::CF_DIBV5) {
 			return Err(Error::ContentNotAvailable);
 		}
 
-		let mut data = Vec::new();
-
-		clipboard_win::raw::get_vec(FORMAT, &mut data)
+		clipboard_win::raw::get_vec(clipboard_win::formats::CF_DIBV5, &mut data)
 			.map_err(|_| Error::unknown("failed to read clipboard image data"))?;
-
-		image_data::read_cf_dibv5(&data)
+		image_data::read_cf_dibv5(&mut data)
 	}
 
 	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
