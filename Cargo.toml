@@ -43,7 +43,7 @@ windows-sys = { version = ">=0.52.0, <0.60.0", features = [
 clipboard-win = { version = "5.3.1", features = ["std"] }
 log = "0.4"
 image = { version = "0.25", optional = true, default-features = false, features = [
-    "png",
+    "png", "bmp"
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

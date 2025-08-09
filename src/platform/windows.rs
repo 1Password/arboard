@@ -35,15 +35,16 @@ use windows_sys::Win32::{
 mod image_data {
 	use super::*;
 	use crate::common::ScopeGuard;
+	use image::codecs::bmp::BmpDecoder;
 	use image::codecs::png::PngEncoder;
+	use image::DynamicImage;
 	use image::ExtendedColorType;
+	use image::ImageDecoder;
 	use image::ImageEncoder;
 	use std::{convert::TryInto, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
 		Graphics::Gdi::{
-			CreateDIBitmap, DeleteObject, GetDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
-			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
-			LCS_GM_IMAGES, RGBQUAD,
+			DeleteObject, BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, HGDIOBJ, LCS_GM_IMAGES,
 		},
 		System::Ole::CF_DIBV5,
 	};
@@ -164,138 +165,68 @@ mod image_data {
 		}
 	}
 
-	pub(super) fn read_cf_dibv5(dibv5: &[u8]) -> Result<ImageData<'static>, Error> {
+	// https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapv5header
+	// According to the docs, when bV5Compression is BI_RGB, "the high byte in each DWORD
+	// is not used".
+	// This seems to not be respected in the real world. For example, Chrome, and Chromium
+	// & Electron-based programs send us BI_RGB headers, but with bitCount=32 - and important
+	// transparency bytes in the alpha channel.
+	//
+	// Apparently, it's our job as the consumer to do the right thing. This method fiddles
+	// with the header a bit in these cases, then `image` handles the rest.
+	fn maybe_tweak_header(dibv5: &mut [u8]) {
+		const BITCOUNT_OFFSET: usize = 14;
+
+		let bitcount =
+			u16::from_le_bytes(dibv5[BITCOUNT_OFFSET..BITCOUNT_OFFSET + 2].try_into().unwrap());
+
+		const COMPRESSION_OFFSET: usize = 16;
+		const MASK_OFFSET: usize = 40;
+
+		let read_u32 = |offset: usize| -> u32 {
+			let slice = &dibv5[offset..offset + 4];
+			u32::from_le_bytes(slice.try_into().unwrap())
+		};
+
+		let compression = read_u32(COMPRESSION_OFFSET);
+		let red_mask = read_u32(MASK_OFFSET);
+		let green_mask = read_u32(MASK_OFFSET + 4);
+		let blue_mask = read_u32(MASK_OFFSET + 8);
+		let alpha_mask = read_u32(MASK_OFFSET + 12);
+
+		let mut set = |offset: usize, val: u32| {
+			dibv5[offset..offset + 4].copy_from_slice(val.to_le_bytes().as_slice());
+		};
+
+		if bitcount == 32 && compression == BI_RGB && alpha_mask == 0xff000000 {
+			set(COMPRESSION_OFFSET, BI_BITFIELDS);
+			if red_mask == 0 && green_mask == 0 && blue_mask == 0 {
+				set(MASK_OFFSET, 0xff0000);
+				set(MASK_OFFSET + 4, 0xff00);
+				set(MASK_OFFSET + 8, 0xff);
+			}
+		}
+	}
+
+	pub(super) fn read_cf_dibv5(dibv5: &mut [u8]) -> Result<ImageData<'static>, Error> {
 		// The DIBV5 format is a BITMAPV5HEADER followed by the pixel data according to
 		// https://docs.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats
 
-		// These constants are missing in windows-rs
-		const PROFILE_EMBEDDED: u32 = 0x4D42_4544;
-		const PROFILE_LINKED: u32 = 0x4C49_4E4B;
-
-		// so first let's get a pointer to the header
 		let header_size = size_of::<BITMAPV5HEADER>();
 		if dibv5.len() < header_size {
 			return Err(Error::unknown("When reading the DIBV5 data, it contained fewer bytes than the BITMAPV5HEADER size. This is invalid."));
 		}
-		let header = unsafe { &*(dibv5.as_ptr().cast::<BITMAPV5HEADER>()) };
+		maybe_tweak_header(dibv5);
 
-		let has_profile =
-			header.bV5CSType == PROFILE_LINKED || header.bV5CSType == PROFILE_EMBEDDED;
+		let decoder = BmpDecoder::new_without_file_header(std::io::Cursor::new(&*dibv5))
+			.map_err(|_| Error::unknown("Failed to read bitmap header"))?;
+		let (width, height) = decoder.dimensions();
+		let bytes = DynamicImage::from_decoder(decoder)
+			.map_err(|_| Error::unknown("Failed to read bitmap"))?
+			.into_rgba8()
+			.into_raw();
 
-		let pixel_data_start = if has_profile {
-			header.bV5ProfileData as isize + header.bV5ProfileSize as isize
-		} else {
-			header_size as isize
-		};
-
-		unsafe {
-			let image_bytes = dibv5.as_ptr().offset(pixel_data_start);
-			let hdc = get_screen_device_context()?;
-			let hbitmap = create_bitmap_from_dib(hdc, header, image_bytes)?;
-			// Now extract the pixels in a desired format
-			let w = header.bV5Width;
-			let h = header.bV5Height.abs();
-			let result_size = w as usize * h as usize * 4;
-
-			let mut result_bytes = Vec::<u8>::with_capacity(result_size);
-
-			let mut output_header = BITMAPINFO {
-				bmiColors: [RGBQUAD { rgbRed: 0, rgbGreen: 0, rgbBlue: 0, rgbReserved: 0 }],
-				bmiHeader: BITMAPINFOHEADER {
-					biSize: size_of::<BITMAPINFOHEADER>() as u32,
-					biWidth: w,
-					biHeight: -h,
-					biBitCount: 32,
-					biPlanes: 1,
-					biCompression: BI_RGB,
-					biSizeImage: 0,
-					biXPelsPerMeter: 0,
-					biYPelsPerMeter: 0,
-					biClrUsed: 0,
-					biClrImportant: 0,
-				},
-			};
-
-			let lines = convert_bitmap_to_rgb(
-				hdc,
-				hbitmap,
-				h,
-				result_bytes.as_mut_slice(),
-				&mut output_header,
-			)?;
-			let read_len = lines as usize * w as usize * 4;
-			assert!(
-				read_len <= result_bytes.capacity(),
-				"Segmentation fault. Read more bytes than allocated to pixel buffer",
-			);
-			result_bytes.set_len(read_len);
-
-			let result_bytes = win_to_rgba(&mut result_bytes);
-
-			let result = ImageData {
-				bytes: Cow::Owned(result_bytes),
-				width: w as usize,
-				height: h as usize,
-			};
-			Ok(result)
-		}
-	}
-
-	fn get_screen_device_context() -> Result<HDC, Error> {
-		// SAFETY: Calling `GetDC` with `NULL` is safe.
-		let hdc = unsafe { GetDC(ResultValue::NULL) };
-		if hdc.failure() {
-			Err(Error::unknown("Failed to get the device context. GetDC returned null"))
-		} else {
-			Ok(hdc)
-		}
-	}
-
-	unsafe fn create_bitmap_from_dib(
-		hdc: HDC,
-		header: *const BITMAPV5HEADER,
-		image_bytes: *const u8,
-	) -> Result<HBITMAP, Error> {
-		let hbitmap = CreateDIBitmap(
-			hdc,
-			header.cast(),
-			CBM_INIT as u32,
-			image_bytes.cast(),
-			header.cast(),
-			DIB_RGB_COLORS,
-		);
-		if hbitmap.failure() {
-			Err(Error::unknown(
-				"Failed to create the HBITMAP while reading DIBV5. CreateDIBitmap returned null",
-			))
-		} else {
-			Ok(hbitmap)
-		}
-	}
-
-	/// Copies the bitmap image into given buffer with DIB RGB format and
-	/// returns the number of scan lines copied from the bitmap.
-	unsafe fn convert_bitmap_to_rgb(
-		hdc: HDC,
-		hbitmap: HBITMAP,
-		lines: i32,
-		dst: &mut [u8],
-		header: &mut BITMAPINFO,
-	) -> Result<i32, Error> {
-		let lines = GetDIBits(
-			hdc,
-			hbitmap,
-			0,
-			lines as u32,
-			dst.as_mut_ptr().cast(),
-			header,
-			DIB_RGB_COLORS,
-		);
-		if lines == 0 {
-			Err(Error::unknown("Could not get the bitmap bits, GetDIBits returned 0"))
-		} else {
-			Ok(lines)
-		}
+		Ok(ImageData { width: width as usize, height: height as usize, bytes: bytes.into() })
 	}
 
 	/// Converts the RGBA (u8) pixel data into the bitmap-native ARGB (u32)
@@ -363,6 +294,7 @@ mod image_data {
 	/// Safety: the `bytes` slice must have a length that's a multiple of 4
 	#[allow(clippy::identity_op, clippy::erasing_op)]
 	#[must_use]
+	#[cfg(test)]
 	unsafe fn win_to_rgba(bytes: &mut [u8]) -> Vec<u8> {
 		// Check safety invariants to catch obvious bugs.
 		debug_assert_eq!(bytes.len() % 4, 0);
@@ -630,7 +562,7 @@ impl<'clipboard> Get<'clipboard> {
 		clipboard_win::raw::get_vec(FORMAT, &mut data)
 			.map_err(|_| Error::unknown("failed to read clipboard image data"))?;
 
-		image_data::read_cf_dibv5(&data)
+		image_data::read_cf_dibv5(&mut data)
 	}
 
 	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
