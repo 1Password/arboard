@@ -36,6 +36,7 @@ mod image_data {
 	use super::*;
 	use crate::common::ScopeGuard;
 	use image::codecs::bmp::BmpDecoder;
+	use image::codecs::png::PngDecoder;
 	use image::codecs::png::PngEncoder;
 	use image::DynamicImage;
 	use image::ExtendedColorType;
@@ -223,6 +224,19 @@ mod image_data {
 		let (width, height) = decoder.dimensions();
 		let bytes = DynamicImage::from_decoder(decoder)
 			.map_err(|_| Error::unknown("Failed to read bitmap"))?
+			.into_rgba8()
+			.into_raw();
+
+		Ok(ImageData { width: width as usize, height: height as usize, bytes: bytes.into() })
+	}
+
+	pub(super) fn read_png(data: &[u8]) -> Result<ImageData<'static>, Error> {
+		let decoder = PngDecoder::new(std::io::Cursor::new(data))
+			.map_err(|_| Error::unknown("Failed to read PNG header"))?;
+		let (width, height) = decoder.dimensions();
+
+		let bytes = DynamicImage::from_decoder(decoder)
+			.map_err(|_| Error::unknown("Failed to decode PNG"))?
 			.into_rgba8()
 			.into_raw();
 
@@ -623,19 +637,23 @@ impl<'clipboard> Get<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
-		const FORMAT: u32 = clipboard_win::formats::CF_DIBV5;
-
 		let _clipboard_assertion = self.clipboard?;
+		let mut data = Vec::new();
 
-		if !clipboard_win::is_format_avail(FORMAT) {
+		let png_format: Option<u32> = clipboard_win::register_format("PNG").map(From::from);
+		if let Some(id) = png_format.filter(|&id| clipboard_win::is_format_avail(id)) {
+			// Looks like PNG is available! Let's try it
+			clipboard_win::raw::get_vec(id, &mut data)
+				.map_err(|_| Error::unknown("failed to read clipboard PNG data"))?;
+			return image_data::read_png(&data);
+		}
+
+		if !clipboard_win::is_format_avail(clipboard_win::formats::CF_DIBV5) {
 			return Err(Error::ContentNotAvailable);
 		}
 
-		let mut data = Vec::new();
-
-		clipboard_win::raw::get_vec(FORMAT, &mut data)
+		clipboard_win::raw::get_vec(clipboard_win::formats::CF_DIBV5, &mut data)
 			.map_err(|_| Error::unknown("failed to read clipboard image data"))?;
-
 		image_data::read_cf_dibv5(&mut data)
 	}
 
