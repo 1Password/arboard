@@ -176,36 +176,22 @@ mod image_data {
 	// Apparently, it's our job as the consumer to do the right thing. This method fiddles
 	// with the header a bit in these cases, then `image` handles the rest.
 	fn maybe_tweak_header(dibv5: &mut [u8]) {
-		const BITCOUNT_OFFSET: usize = 14;
+		assert!(dibv5.len() >= size_of::<BITMAPV5HEADER>());
+		let src = dibv5.as_mut_ptr().cast::<BITMAPV5HEADER>();
+		let mut header = unsafe { std::ptr::read_unaligned(src) };
 
-		let bitcount =
-			u16::from_le_bytes(dibv5[BITCOUNT_OFFSET..BITCOUNT_OFFSET + 2].try_into().unwrap());
-
-		const COMPRESSION_OFFSET: usize = 16;
-		const MASK_OFFSET: usize = 40;
-
-		let read_u32 = |offset: usize| -> u32 {
-			let slice = &dibv5[offset..offset + 4];
-			u32::from_le_bytes(slice.try_into().unwrap())
-		};
-
-		let compression = read_u32(COMPRESSION_OFFSET);
-		let red_mask = read_u32(MASK_OFFSET);
-		let green_mask = read_u32(MASK_OFFSET + 4);
-		let blue_mask = read_u32(MASK_OFFSET + 8);
-		let alpha_mask = read_u32(MASK_OFFSET + 12);
-
-		let mut set = |offset: usize, val: u32| {
-			dibv5[offset..offset + 4].copy_from_slice(val.to_le_bytes().as_slice());
-		};
-
-		if bitcount == 32 && compression == BI_RGB && alpha_mask == 0xff000000 {
-			set(COMPRESSION_OFFSET, BI_BITFIELDS);
-			if red_mask == 0 && green_mask == 0 && blue_mask == 0 {
-				set(MASK_OFFSET, 0xff0000);
-				set(MASK_OFFSET + 4, 0xff00);
-				set(MASK_OFFSET + 8, 0xff);
+		if header.bV5BitCount == 32
+			&& header.bV5Compression == BI_RGB
+			&& header.bV5AlphaMask == 0xff000000
+		{
+			header.bV5Compression = BI_BITFIELDS;
+			if header.bV5RedMask == 0 && header.bV5GreenMask == 0 && header.bV5BlueMask == 0 {
+				header.bV5RedMask = 0xff0000;
+				header.bV5GreenMask = 0xff00;
+				header.bV5BlueMask = 0xff;
 			}
+
+			unsafe { std::ptr::write_unaligned(src, header) };
 		}
 	}
 
