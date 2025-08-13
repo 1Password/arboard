@@ -25,7 +25,7 @@ use objc2_foundation::{ns_string, NSArray, NSDictionary, NSNumber, NSString, NSU
 use std::{
 	borrow::Cow,
 	panic::{RefUnwindSafe, UnwindSafe},
-	path::PathBuf,
+	path::{Path, PathBuf},
 };
 
 /// Returns an NSImage object on success.
@@ -350,6 +350,37 @@ impl<'clipboard> Set<'clipboard> {
 			Err(Error::unknown(
 				"Failed to write the image to the pasteboard (`writeObjects` returned NO).",
 			))
+		}
+	}
+
+	pub(crate) fn file_list(self, file_list: &[impl AsRef<Path>]) -> Result<(), Error> {
+		self.clipboard.clear();
+
+		let uri_list = file_list
+			.iter()
+			.filter_map(|path| {
+				path.as_ref().canonicalize().ok().and_then(|abs_path| {
+					abs_path.to_str().map(|str| {
+						let url = unsafe { NSURL::fileURLWithPath(&NSString::from_str(str)) };
+						ProtocolObject::from_retained(url)
+					})
+				})
+			})
+			.collect::<Vec<_>>();
+
+		if uri_list.is_empty() {
+			return Err(Error::ConversionFailure);
+		}
+
+		let objects = NSArray::from_retained_slice(&uri_list);
+		let success = unsafe { self.clipboard.pasteboard.writeObjects(&objects) };
+
+		add_clipboard_exclusions(self.clipboard, self.exclude_from_history);
+
+		if success {
+			Ok(())
+		} else {
+			Err(Error::unknown("NSPasteboard#writeObjects: returned false"))
 		}
 	}
 }

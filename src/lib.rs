@@ -10,7 +10,10 @@ and conditions of the chosen license apply to this file.
 #![warn(unreachable_pub)]
 
 mod common;
-use std::{borrow::Cow, path::PathBuf};
+use std::{
+	borrow::Cow,
+	path::{Path, PathBuf},
+};
 
 pub use common::Error;
 #[cfg(feature = "image-data")]
@@ -243,6 +246,11 @@ impl Set<'_> {
 	pub fn image(self, image: ImageData) -> Result<(), Error> {
 		self.platform.image(image)
 	}
+
+	/// Completes the "set" operation by placing a list of file paths onto the clipboard.
+	pub fn file_list(self, file_list: &[impl AsRef<Path>]) -> Result<(), Error> {
+		self.platform.file_list(file_list)
+	}
 }
 
 /// A builder for an operation that clears the data from the clipboard.
@@ -349,6 +357,19 @@ mod tests {
 			} else {
 				assert_eq!(ctx.get().html().unwrap(), html);
 			}
+		}
+		{
+			let mut ctx = Clipboard::new().unwrap();
+
+			let this_dir = env!("CARGO_MANIFEST_DIR");
+
+			let paths = &[
+				PathBuf::from(this_dir).join("README.md"),
+				PathBuf::from(this_dir).join("Cargo.toml"),
+			];
+
+			ctx.set().file_list(paths).unwrap();
+			assert_eq!(ctx.get().file_list().unwrap().as_slice(), paths);
 		}
 		#[cfg(feature = "image-data")]
 		{

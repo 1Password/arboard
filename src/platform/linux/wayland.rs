@@ -1,4 +1,8 @@
-use std::{borrow::Cow, io::Read, path::PathBuf};
+use std::{
+	borrow::Cow,
+	io::Read,
+	path::{Path, PathBuf},
+};
 
 use wl_clipboard_rs::{
 	copy::{self, Error as CopyError, MimeSource, MimeType, Options, Source},
@@ -9,8 +13,8 @@ use wl_clipboard_rs::{
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
 use super::{
-	into_unknown, paths_from_uri_list, LinuxClipboardKind, WaitConfig, KDE_EXCLUSION_HINT,
-	KDE_EXCLUSION_MIME,
+	into_unknown, paths_from_uri_list, paths_to_uri_list, LinuxClipboardKind, WaitConfig,
+	KDE_EXCLUSION_HINT, KDE_EXCLUSION_MIME,
 };
 use crate::common::Error;
 #[cfg(feature = "image-data")]
@@ -18,6 +22,8 @@ use crate::common::ImageData;
 
 #[cfg(feature = "image-data")]
 const MIME_PNG: &str = "image/png";
+
+const MIME_URI: &str = "text/uri-list";
 
 pub(crate) struct Clipboard {}
 
@@ -228,8 +234,32 @@ impl Clipboard {
 		&mut self,
 		selection: LinuxClipboardKind,
 	) -> Result<Vec<PathBuf>, Error> {
-		handle_clipboard_read(selection, paste::MimeType::Specific("text/uri-list"), |contents| {
+		handle_clipboard_read(selection, paste::MimeType::Specific(MIME_URI), |contents| {
 			Ok(paths_from_uri_list(contents))
 		})
+	}
+
+	pub(crate) fn set_file_list(
+		&self,
+		file_list: &[impl AsRef<Path>],
+		selection: LinuxClipboardKind,
+		wait: WaitConfig,
+		exclude_from_history: bool,
+	) -> Result<(), Error> {
+		let files = paths_to_uri_list(file_list)?;
+
+		let mut opts = Options::new();
+		opts.foreground(matches!(wait, WaitConfig::Forever));
+		opts.clipboard(selection.try_into()?);
+
+		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
+		sources.push(MimeSource {
+			source: Source::Bytes(files.into_bytes().into_boxed_slice()),
+			mime_type: MimeType::Specific(String::from(MIME_URI)),
+		});
+
+		add_clipboard_exclusions(exclude_from_history, &mut sources);
+
+		opts.copy_multi(sources).map_err(handle_copy_error)
 	}
 }

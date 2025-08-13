@@ -11,7 +11,25 @@ and conditions of the chosen license apply to this file.
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
 use crate::common::{private, Error};
-use std::{borrow::Cow, marker::PhantomData, path::PathBuf, thread, time::Duration};
+use std::{
+	borrow::Cow,
+	io,
+	marker::PhantomData,
+	os::windows::{fs::OpenOptionsExt, io::AsRawHandle},
+	path::{Path, PathBuf},
+	thread,
+	time::Duration,
+};
+use windows_sys::Win32::{
+	Foundation::{GetLastError, GlobalFree, HANDLE, HGLOBAL, POINT, S_OK},
+	Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS, VOLUME_NAME_DOS},
+	System::{
+		DataExchange::SetClipboardData,
+		Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND},
+		Ole::CF_HDROP,
+	},
+	UI::Shell::{PathCchStripPrefix, DROPFILES},
+};
 
 #[cfg(feature = "image-data")]
 mod image_data {
@@ -20,37 +38,15 @@ mod image_data {
 	use image::codecs::png::PngEncoder;
 	use image::ExtendedColorType;
 	use image::ImageEncoder;
-	use std::{convert::TryInto, io, mem::size_of, ptr::copy_nonoverlapping};
+	use std::{convert::TryInto, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
-		Foundation::{HANDLE, HGLOBAL},
 		Graphics::Gdi::{
 			CreateDIBitmap, DeleteObject, GetDC, GetDIBits, BITMAPINFO, BITMAPINFOHEADER,
 			BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, CBM_INIT, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
 			LCS_GM_IMAGES, RGBQUAD,
 		},
-		System::{
-			DataExchange::SetClipboardData,
-			Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND},
-			Ole::CF_DIBV5,
-		},
+		System::Ole::CF_DIBV5,
 	};
-
-	fn last_error(message: &str) -> Error {
-		let os_error = io::Error::last_os_error();
-		Error::unknown(format!("{message}: {os_error}"))
-	}
-
-	unsafe fn global_unlock_checked(hdata: HGLOBAL) {
-		// If the memory object is unlocked after decrementing the lock count, the function
-		// returns zero and GetLastError returns NO_ERROR. If it fails, the return value is
-		// zero and GetLastError returns a value other than NO_ERROR.
-		if GlobalUnlock(hdata) == 0 {
-			let err = io::Error::last_os_error();
-			if err.raw_os_error() != Some(0) {
-				log::error!("Failed calling GlobalUnlock when writing data: {}", err);
-			}
-		}
-	}
 
 	pub(super) fn add_cf_dibv5(
 		_open_clipboard: OpenClipboard,
@@ -165,24 +161,6 @@ mod image_data {
 			Err(last_error("SetClipboardData failed with error"))
 		} else {
 			Ok(())
-		}
-	}
-
-	unsafe fn global_alloc(bytes: usize) -> Result<HGLOBAL, Error> {
-		let hdata = GlobalAlloc(GHND, bytes);
-		if hdata.is_null() {
-			Err(last_error("Could not allocate global memory object"))
-		} else {
-			Ok(hdata)
-		}
-	}
-
-	unsafe fn global_lock(hmem: HGLOBAL) -> Result<*mut u8, Error> {
-		let data_ptr = GlobalLock(hmem).cast::<u8>();
-		if data_ptr.is_null() {
-			Err(last_error("Could not lock the global memory object"))
-		} else {
-			Ok(data_ptr)
 		}
 	}
 
@@ -317,32 +295,6 @@ mod image_data {
 			Err(Error::unknown("Could not get the bitmap bits, GetDIBits returned 0"))
 		} else {
 			Ok(lines)
-		}
-	}
-
-	/// An abstraction trait over the different ways a Win32 function may return
-	/// a value with a failure marker.
-	///
-	/// This is primarily to abstract over changes in `windows-sys` versions and unify how
-	/// error handling is done in the above image code.
-	trait ResultValue: Sized {
-		const NULL: Self;
-		fn failure(self) -> bool;
-	}
-
-	// windows-sys >= 0.59
-	impl<T> ResultValue for *mut T {
-		const NULL: Self = core::ptr::null_mut();
-		fn failure(self) -> bool {
-			self == Self::NULL
-		}
-	}
-
-	// `windows-sys` 0.52
-	impl ResultValue for isize {
-		const NULL: Self = 0;
-		fn failure(self) -> bool {
-			self == Self::NULL
 		}
 	}
 
@@ -484,6 +436,67 @@ mod image_data {
 		let _converted = unsafe { rgba_to_win(&mut data) };
 		let _converted = unsafe { win_to_rgba(&mut data) };
 		assert_eq!(data, DATA);
+	}
+}
+
+unsafe fn global_alloc(bytes: usize) -> Result<HGLOBAL, Error> {
+	let hdata = GlobalAlloc(GHND, bytes);
+	if hdata.is_null() {
+		Err(last_error("Could not allocate global memory object"))
+	} else {
+		Ok(hdata)
+	}
+}
+
+unsafe fn global_lock(hmem: HGLOBAL) -> Result<*mut u8, Error> {
+	let data_ptr = GlobalLock(hmem).cast::<u8>();
+	if data_ptr.is_null() {
+		Err(last_error("Could not lock the global memory object"))
+	} else {
+		Ok(data_ptr)
+	}
+}
+
+unsafe fn global_unlock_checked(hdata: HGLOBAL) {
+	// If the memory object is unlocked after decrementing the lock count, the function
+	// returns zero and GetLastError returns NO_ERROR. If it fails, the return value is
+	// zero and GetLastError returns a value other than NO_ERROR.
+	if GlobalUnlock(hdata) == 0 {
+		let err = io::Error::last_os_error();
+		if err.raw_os_error() != Some(0) {
+			log::error!("Failed calling GlobalUnlock when writing data: {}", err);
+		}
+	}
+}
+
+fn last_error(message: &str) -> Error {
+	let os_error = io::Error::last_os_error();
+	Error::unknown(format!("{message}: {os_error}"))
+}
+
+/// An abstraction trait over the different ways a Win32 function may return
+/// a value with a failure marker.
+///
+/// This trait helps unify error handling across varying `windows-sys` versions,
+/// providing a consistent interface for representing NULL values.
+trait ResultValue: Sized {
+	const NULL: Self;
+	fn failure(self) -> bool;
+}
+
+// windows-sys >= 0.59
+impl<T> ResultValue for *mut T {
+	const NULL: Self = core::ptr::null_mut();
+	fn failure(self) -> bool {
+		self == Self::NULL
+	}
+}
+
+// `windows-sys` 0.52
+impl ResultValue for isize {
+	const NULL: Self = 0;
+	fn failure(self) -> bool {
+		self == Self::NULL
 	}
 }
 
@@ -702,6 +715,74 @@ impl<'clipboard> Set<'clipboard> {
 		image_data::add_cf_dibv5(open_clipboard, image)?;
 		Ok(())
 	}
+
+	pub(crate) fn file_list(self, file_list: &[impl AsRef<Path>]) -> Result<(), Error> {
+		const DROPFILES_HEADER_SIZE: usize = std::mem::size_of::<DROPFILES>();
+
+		let clipboard_assertion = self.clipboard?;
+
+		// https://learn.microsoft.com/en-us/windows/win32/shell/clipboard#cf_hdrop
+		// CF_HDROP consists of an STGMEDIUM structure that contains a global memory object.
+		// The structure's hGlobal member points to the resulting data:
+		// | DROPFILES | FILENAME | NULL | ... | nth FILENAME | NULL | NULL |
+		let dropfiles = DROPFILES {
+			pFiles: DROPFILES_HEADER_SIZE as u32,
+			pt: POINT { x: 0, y: 0 },
+			fNC: 0,
+			fWide: 1,
+		};
+
+		let mut data_len = DROPFILES_HEADER_SIZE;
+
+		let paths: Vec<_> = file_list
+			.iter()
+			.filter_map(|path| {
+				to_final_path_wide(path.as_ref()).map(|wide| {
+					// Windows uses wchar_t which is 16 bit
+					data_len += wide.len() * std::mem::size_of::<u16>();
+					wide
+				})
+			})
+			.collect();
+
+		if paths.is_empty() {
+			return Err(Error::ConversionFailure);
+		}
+
+		// Add space for the final null character
+		data_len += std::mem::size_of::<u16>();
+
+		unsafe {
+			let h_global = global_alloc(data_len)?;
+			let data_ptr = global_lock(h_global)?;
+
+			(data_ptr as *mut DROPFILES).write(dropfiles);
+
+			let mut ptr = data_ptr.add(DROPFILES_HEADER_SIZE) as *mut u16;
+
+			for wide_path in paths {
+				std::ptr::copy_nonoverlapping::<u16>(wide_path.as_ptr(), ptr, wide_path.len());
+				ptr = ptr.add(wide_path.len());
+			}
+
+			// Write final null character
+			ptr.write(0);
+
+			global_unlock_checked(h_global);
+
+			if SetClipboardData(CF_HDROP.into(), h_global as HANDLE).failure() {
+				GlobalFree(h_global);
+				return Err(last_error("SetClipboardData failed with error"));
+			}
+		}
+
+		add_clipboard_exclusions(
+			clipboard_assertion,
+			self.exclude_from_monitoring,
+			self.exclude_from_cloud,
+			self.exclude_from_history,
+		)
+	}
 }
 
 fn add_clipboard_exclusions(
@@ -825,4 +906,103 @@ fn wrap_html(ctn: &str) -> String {
 	format!(
 		"{h_version}{h_start_html}{n_start_html:010}{h_end_html}{n_end_html:010}{h_start_frag}{n_start_frag:010}{h_end_frag}{n_end_frag:010}{c_start_frag}{ctn}{c_end_frag}"
 	)
+}
+
+/// Given a file path attempt to open it and call GetFinalPathNameByHandleW,
+/// on success return the final path as a NULL terminated u16 Vec
+fn to_final_path_wide(p: &Path) -> Option<Vec<u16>> {
+	let file = std::fs::OpenOptions::new()
+		// No read or write permissions are necessary
+		.access_mode(0)
+		// This flag is so we can open directories too
+		.custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+		.open(p)
+		.ok()?;
+
+	fill_utf16_buf(
+		|buf, sz| unsafe {
+			GetFinalPathNameByHandleW(file.as_raw_handle() as HANDLE, buf, sz, VOLUME_NAME_DOS)
+		},
+		|buf| {
+			let mut wide = Vec::with_capacity(buf.len() + 1);
+			wide.extend_from_slice(buf);
+			wide.push(0);
+
+			let hr = unsafe { PathCchStripPrefix(wide.as_mut_ptr(), wide.len()) };
+			// On success truncate invalid data
+			if hr == S_OK {
+				if let Some(end) = wide.iter().position(|c| *c == 0) {
+					// Retain NULL character
+					wide.truncate(end + 1)
+				}
+			}
+			wide
+		},
+	)
+}
+
+/// <https://github.com/rust-lang/rust/blob/f34ba774c78ea32b7c40598b8ad23e75cdac42a6/library/std/src/sys/pal/windows/mod.rs#L211>
+fn fill_utf16_buf<F1, F2, T>(mut f1: F1, f2: F2) -> Option<T>
+where
+	F1: FnMut(*mut u16, u32) -> u32,
+	F2: FnOnce(&[u16]) -> T,
+{
+	// Start off with a stack buf but then spill over to the heap if we end up
+	// needing more space.
+	//
+	// This initial size also works around `GetFullPathNameW` returning
+	// incorrect size hints for some short paths:
+	// https://github.com/dylni/normpath/issues/5
+	let mut stack_buf: [std::mem::MaybeUninit<u16>; 512] = [std::mem::MaybeUninit::uninit(); 512];
+	let mut heap_buf: Vec<std::mem::MaybeUninit<u16>> = Vec::new();
+	unsafe {
+		let mut n = stack_buf.len();
+		loop {
+			let buf = if n <= stack_buf.len() {
+				&mut stack_buf[..]
+			} else {
+				let extra = n - heap_buf.len();
+				heap_buf.reserve(extra);
+				// We used `reserve` and not `reserve_exact`, so in theory we
+				// may have gotten more than requested. If so, we'd like to use
+				// it... so long as we won't cause overflow.
+				n = heap_buf.capacity().min(u32::MAX as usize);
+				// Safety: MaybeUninit<u16> does not need initialization
+				heap_buf.set_len(n);
+				&mut heap_buf[..]
+			};
+
+			// This function is typically called on windows API functions which
+			// will return the correct length of the string, but these functions
+			// also return the `0` on error. In some cases, however, the
+			// returned "correct length" may actually be 0!
+			//
+			// To handle this case we call `SetLastError` to reset it to 0 and
+			// then check it again if we get the "0 error value". If the "last
+			// error" is still 0 then we interpret it as a 0 length buffer and
+			// not an actual error.
+			windows_sys::Win32::Foundation::SetLastError(0);
+			let k = match f1(buf.as_mut_ptr().cast::<u16>(), n as u32) {
+				0 if GetLastError() == 0 => 0,
+				0 => return None,
+				n => n,
+			} as usize;
+			if k == n && GetLastError() == windows_sys::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER
+			{
+				n = n.saturating_mul(2).min(u32::MAX as usize);
+			} else if k > n {
+				n = k;
+			} else if k == n {
+				// It is impossible to reach this point.
+				// On success, k is the returned string length excluding the null.
+				// On failure, k is the required buffer length including the null.
+				// Therefore k never equals n.
+				unreachable!();
+			} else {
+				// Safety: First `k` values are initialized.
+				let slice = std::slice::from_raw_parts(buf.as_ptr() as *const u16, k);
+				return Some(f2(slice));
+			}
+		}
+	}
 }
