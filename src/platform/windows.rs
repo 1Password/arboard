@@ -220,10 +220,10 @@ mod image_data {
 		maybe_tweak_header(dibv5);
 
 		let decoder = BmpDecoder::new_without_file_header(std::io::Cursor::new(&*dibv5))
-			.map_err(|_| Error::unknown("Failed to read bitmap header"))?;
+			.map_err(|_| Error::ConversionFailure)?;
 		let (width, height) = decoder.dimensions();
 		let bytes = DynamicImage::from_decoder(decoder)
-			.map_err(|_| Error::unknown("Failed to read bitmap"))?
+			.map_err(|_| Error::ConversionFailure)?
 			.into_rgba8()
 			.into_raw();
 
@@ -231,12 +231,12 @@ mod image_data {
 	}
 
 	pub(super) fn read_png(data: &[u8]) -> Result<ImageData<'static>, Error> {
-		let decoder = PngDecoder::new(std::io::Cursor::new(data))
-			.map_err(|_| Error::unknown("Failed to read PNG header"))?;
+		let decoder =
+			PngDecoder::new(std::io::Cursor::new(data)).map_err(|_| Error::ConversionFailure)?;
 		let (width, height) = decoder.dimensions();
 
 		let bytes = DynamicImage::from_decoder(decoder)
-			.map_err(|_| Error::unknown("Failed to decode PNG"))?
+			.map_err(|_| Error::ConversionFailure)?
 			.into_rgba8()
 			.into_raw();
 
