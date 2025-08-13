@@ -719,7 +719,7 @@ impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn file_list(self, file_list: &[impl AsRef<Path>]) -> Result<(), Error> {
 		const DROPFILES_HEADER_SIZE: usize = std::mem::size_of::<DROPFILES>();
 
-		let _clipboard_assertion = self.clipboard?;
+		let clipboard_assertion = self.clipboard?;
 
 		// https://learn.microsoft.com/en-us/windows/win32/shell/clipboard#cf_hdrop
 		// CF_HDROP consists of an STGMEDIUM structure that contains a global memory object.
@@ -772,11 +772,16 @@ impl<'clipboard> Set<'clipboard> {
 
 			if SetClipboardData(CF_HDROP.into(), h_global as HANDLE).failure() {
 				GlobalFree(h_global);
-				Err(last_error("SetClipboardData failed with error"))
-			} else {
-				Ok(())
+				return Err(last_error("SetClipboardData failed with error"));
 			}
 		}
+
+		add_clipboard_exclusions(
+			clipboard_assertion,
+			self.exclude_from_monitoring,
+			self.exclude_from_cloud,
+			self.exclude_from_history,
+		)
 	}
 }
 
