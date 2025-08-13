@@ -530,7 +530,7 @@ impl Clipboard {
 		Ok(Self(()))
 	}
 
-	fn open(&mut self) -> Result<OpenClipboard, Error> {
+	fn open(&mut self) -> Result<OpenClipboard<'_>, Error> {
 		// Attempt to open the clipboard multiple times. On Windows, its common for something else to temporarily
 		// be using it during attempts.
 		//
