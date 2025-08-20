@@ -32,7 +32,7 @@ wl-clipboard-rs = ["dep:wl-clipboard-rs"]
 env_logger = "0.10.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = ">=0.52.0, <0.60.0", features = [
+windows-sys = { version = ">=0.52.0, <0.61.0", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_DataExchange",
