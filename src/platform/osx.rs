@@ -11,43 +11,45 @@ and conditions of the chosen license apply to this file.
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
 use crate::common::{private, Error};
+#[cfg(feature = "image-data")]
+use objc2::AllocAnyThread;
 use objc2::{
 	msg_send,
 	rc::{autoreleasepool, Retained},
 	runtime::ProtocolObject,
 	ClassType,
 };
+#[cfg(feature = "image-data")]
+use objc2_app_kit::NSImage;
 use objc2_app_kit::{
 	NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString,
 	NSPasteboardURLReadingFileURLsOnlyKey,
 };
+#[cfg(feature = "image-data")]
+use objc2_core_foundation::{CGFloat, CGPoint, CGRect};
+#[cfg(feature = "image-data")]
+use objc2_core_graphics::{
+	CGBitmapContextCreate, CGBitmapInfo, CGColorRenderingIntent, CGColorSpaceCreateDeviceRGB,
+	CGContextDrawImage, CGContextFlush, CGDataProviderCreateWithData, CGImageAlphaInfo,
+	CGImageCreate, CGImageGetHeight, CGImageGetWidth,
+};
+#[cfg(feature = "image-data")]
+use objc2_foundation::NSSize;
 use objc2_foundation::{ns_string, NSArray, NSDictionary, NSNumber, NSString, NSURL};
 use std::{
 	borrow::Cow,
 	panic::{RefUnwindSafe, UnwindSafe},
 	path::{Path, PathBuf},
 };
+#[cfg(feature = "image-data")]
+use std::{
+	ffi::c_void,
+	ptr::{self, NonNull},
+};
 
 /// Returns an NSImage object on success.
 #[cfg(feature = "image-data")]
-fn image_from_pixels(
-	pixels: Vec<u8>,
-	width: usize,
-	height: usize,
-) -> Retained<objc2_app_kit::NSImage> {
-	use objc2::AllocAnyThread;
-	use objc2_app_kit::NSImage;
-	use objc2_core_foundation::CGFloat;
-	use objc2_core_graphics::{
-		CGBitmapInfo, CGColorRenderingIntent, CGColorSpaceCreateDeviceRGB,
-		CGDataProviderCreateWithData, CGImageAlphaInfo, CGImageCreate,
-	};
-	use objc2_foundation::NSSize;
-	use std::{
-		ffi::c_void,
-		ptr::{self, NonNull},
-	};
-
+fn image_from_pixels(pixels: Vec<u8>, width: usize, height: usize) -> Retained<NSImage> {
 	unsafe extern "C-unwind" fn release(_info: *mut c_void, data: NonNull<c_void>, size: usize) {
 		let data = data.cast::<u8>();
 		let slice = NonNull::slice_from_raw_parts(data, size);
@@ -144,56 +146,6 @@ impl Clipboard {
 			Err(Error::ContentNotAvailable)
 		})
 	}
-
-	// fn get_binary_contents(&mut self) -> Result<Option<ClipboardContent>, Box<dyn std::error::Error>> {
-	// 	let string_class: Id<NSObject> = {
-	// 		let cls: Id<Class> = unsafe { Id::from_ptr(class("NSString")) };
-	// 		unsafe { transmute(cls) }
-	// 	};
-	// 	let image_class: Id<NSObject> = {
-	// 		let cls: Id<Class> = unsafe { Id::from_ptr(class("NSImage")) };
-	// 		unsafe { transmute(cls) }
-	// 	};
-	// 	let url_class: Id<NSObject> = {
-	// 		let cls: Id<Class> = unsafe { Id::from_ptr(class("NSURL")) };
-	// 		unsafe { transmute(cls) }
-	// 	};
-	// 	let classes = vec![url_class, image_class, string_class];
-	// 	let classes: Id<NSArray<NSObject, Owned>> = NSArray::from_vec(classes);
-	// 	let options: Id<NSDictionary<NSObject, NSObject>> = NSDictionary::new();
-	// 	let contents: Id<NSArray<NSObject>> = unsafe {
-	// 		let obj: *mut NSArray<NSObject> =
-	// 			msg_send![self.pasteboard, readObjectsForClasses:&*classes options:&*options];
-	// 		if obj.is_null() {
-	// 			return Err(err("pasteboard#readObjectsForClasses:options: returned null"));
-	// 		}
-	// 		Id::from_ptr(obj)
-	// 	};
-	// 	if contents.count() == 0 {
-	// 		Ok(None)
-	// 	} else {
-	// 		let obj = &contents[0];
-	// 		if obj.is_kind_of(Class::get("NSString").unwrap()) {
-	// 			let s: &NSString = unsafe { transmute(obj) };
-	// 			Ok(Some(ClipboardContent::Utf8(s.as_str().to_owned())))
-	// 		} else if obj.is_kind_of(Class::get("NSImage").unwrap()) {
-	// 			let tiff: &NSArray<NSObject> = unsafe { msg_send![obj, TIFFRepresentation] };
-	// 			let len: usize = unsafe { msg_send![tiff, length] };
-	// 			let bytes: *const u8 = unsafe { msg_send![tiff, bytes] };
-	// 			let vec = unsafe { std::slice::from_raw_parts(bytes, len) };
-	// 			// Here we copy the entire &[u8] into a new owned `Vec`
-	// 			// Is there another way that doesn't copy multiple megabytes?
-	// 			Ok(Some(ClipboardContent::Tiff(vec.into())))
-	// 		} else if obj.is_kind_of(Class::get("NSURL").unwrap()) {
-	// 			let s: &NSString = unsafe { msg_send![obj, absoluteString] };
-	// 			Ok(Some(ClipboardContent::Utf8(s.as_str().to_owned())))
-	// 		} else {
-	// 			// let cls: &Class = unsafe { msg_send![obj, class] };
-	// 			// println!("{}", cls.name());
-	// 			Err(err("pasteboard#readObjectsForClasses:options: returned unknown class"))
-	// 		}
-	// 	}
-	// }
 }
 
 pub(crate) struct Get<'clipboard> {
@@ -215,30 +167,60 @@ impl<'clipboard> Get<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
-		use objc2_app_kit::NSPasteboardTypeTIFF;
-		use std::io::Cursor;
-
 		// XXX: There does not appear to be an alternative for obtaining images without the need for
 		// autorelease behavior.
-		let image = autoreleasepool(|_| {
-			let image_data = unsafe { self.clipboard.pasteboard.dataForType(NSPasteboardTypeTIFF) }
-				.ok_or(Error::ContentNotAvailable)?;
+		let image_data = autoreleasepool(|_| {
+			let image = unsafe {
+				NSImage::initWithPasteboard(NSImage::alloc(), &self.clipboard.pasteboard)
+					.and_then(|img| {
+						img.CGImageForProposedRect_context_hints(std::ptr::null_mut(), None, None)
+					})
+					.ok_or(Error::ContentNotAvailable)?
+			};
 
-			// SAFETY: The data is not modified while in use here.
-			let data = Cursor::new(unsafe { image_data.as_bytes_unchecked() });
+			let (width, height) =
+				unsafe { (CGImageGetWidth(Some(&image)), CGImageGetHeight(Some(&image))) };
 
-			let reader = image::io::Reader::with_format(data, image::ImageFormat::Tiff);
-			reader.decode().map_err(|_| Error::ConversionFailure)
+			let colorspace = unsafe { CGColorSpaceCreateDeviceRGB().unwrap() };
+			let bitmap_info = CGBitmapInfo::ByteOrderDefault
+				| CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0);
+
+			let image_byte_count = (width * height) * 4;
+
+			let mut buffer: Vec<u8> = Vec::with_capacity(image_byte_count);
+
+			// SAFETY: `buffer` has been allocated with the correct capacity.
+			let context = unsafe {
+				CGBitmapContextCreate(
+					buffer.as_mut_ptr().cast(),
+					width,
+					height,
+					8,
+					width * 4,
+					Some(&colorspace),
+					bitmap_info.bits(),
+				)
+				.ok_or(Error::ConversionFailure)?
+			};
+
+			unsafe {
+				let size = NSSize { width: width as CGFloat, height: height as CGFloat };
+				CGContextDrawImage(Some(&context), CGRect::new(CGPoint::ZERO, size), Some(&image));
+				CGContextFlush(Some(&context))
+			};
+
+			// SAFETY: The buffer was initialized with our image data and we used a flush
+			// to absolutely sure everything was drawn/written by this point.
+			unsafe {
+				buffer.set_len(image_byte_count);
+			}
+
+			Ok((buffer, width, height))
 		})?;
 
-		let rgba = image.into_rgba8();
-		let (width, height) = rgba.dimensions();
+		let (rgba, width, height) = image_data;
 
-		Ok(ImageData {
-			width: width as usize,
-			height: height as usize,
-			bytes: rgba.into_raw().into(),
-		})
+		Ok(ImageData { width: width as usize, height: height as usize, bytes: rgba.into() })
 	}
 
 	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {

@@ -59,9 +59,11 @@ objc2-foundation = { version = "0.3.0", default-features = false, features = [
 objc2-app-kit = { version = "0.3.0", default-features = false, features = [
     "std",
     "objc2-core-graphics",
+    "NSGraphicsContext",
     "NSPasteboard",
     "NSPasteboardItem",
     "NSImage",
+    "NSImageRep",
 ] }
 objc2-core-foundation = { version = "0.3.0", default-features = false, optional = true, features = [
     "std",
@@ -69,12 +71,11 @@ objc2-core-foundation = { version = "0.3.0", default-features = false, optional 
 ] }
 objc2-core-graphics = { version = "0.3.0", default-features = false, optional = true, features = [
     "std",
+    "CGBitmapContext",
+    "CGContext",
     "CGImage",
     "CGColorSpace",
     "CGDataProvider",
-] }
-image = { version = "0.25", optional = true, default-features = false, features = [
-    "tiff",
 ] }
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
