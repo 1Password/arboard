@@ -18,4 +18,5 @@ pub use osx::*;
 
 #[cfg(target_os = "android")]
 mod android;
+#[cfg(target_os = "android")]
 pub(crate) use android::*;

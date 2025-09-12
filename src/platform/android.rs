@@ -1,11 +1,16 @@
-use std::borrow::Cow;
+use std::{
+	borrow::Cow,
+	path::{Path, PathBuf},
+};
 
 use jni::{
 	objects::{JObject, JString},
 	AttachGuard, JavaVM,
 };
 
-use crate::{Error, ImageData};
+#[cfg(feature = "image-data")]
+use crate::common::ImageData;
+use crate::Error;
 
 impl From<jni::errors::Error> for Error {
 	fn from(error: jni::errors::Error) -> Self {
@@ -86,7 +91,16 @@ impl<'clipboard> Get<'clipboard> {
 		Ok(text.into())
 	}
 
+	pub(crate) fn html(self) -> Result<String, Error> {
+		Err(Error::ClipboardNotSupported)
+	}
+
+	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
+		Err(Error::ClipboardNotSupported)
+	}
+
+	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
 		Err(Error::ClipboardNotSupported)
 	}
 }
@@ -131,6 +145,10 @@ impl<'clipboard> Set<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, _: ImageData) -> Result<(), Error> {
+		Err(Error::ClipboardNotSupported)
+	}
+
+	pub(crate) fn file_list(self, _: &[impl AsRef<Path>]) -> Result<(), Error> {
 		Err(Error::ClipboardNotSupported)
 	}
 }
