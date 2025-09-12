@@ -90,6 +90,7 @@ impl std::fmt::Debug for Error {
 }
 
 impl Error {
+	#[cfg(not(target_os = "android"))]
 	pub(crate) fn unknown<M: Into<String>>(message: M) -> Self {
 		Error::Unknown { description: message.into() }
 	}
