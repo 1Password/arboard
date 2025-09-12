@@ -34,7 +34,7 @@ fn image_from_pixels(
 	pixels: Vec<u8>,
 	width: usize,
 	height: usize,
-) -> Retained<objc2_app_kit::NSImage> {
+) -> Result<Retained<objc2_app_kit::NSImage>, Error> {
 	use objc2::AllocAnyThread;
 	use objc2_app_kit::NSImage;
 	use objc2_core_foundation::CGFloat;
@@ -70,6 +70,13 @@ fn image_from_pixels(
 
 	let colorspace = unsafe { CGColorSpaceCreateDeviceRGB() }.unwrap();
 
+	// XXX: If this returns an error, try running your application from the command line or
+	// use `Console.app`. For the later, make sure that before you start streaming log messages
+	// that Action -> `Include Info Messages` and Action -> `Include Debug Messages` are both
+	// enabled in the menubar. CoreGraphics will write debugging/error information to these places.
+	//
+	// - https://redsweater.com/blog/129/coregraphics-log-jam
+	// - https://github.com/1Password/arboard/issues/204
 	let cg_image = unsafe {
 		CGImageCreate(
 			width,
@@ -85,10 +92,10 @@ fn image_from_pixels(
 			CGColorRenderingIntent::RenderingIntentDefault,
 		)
 	}
-	.unwrap();
+	.ok_or(Error::ConversionFailure)?;
 
 	let size = NSSize { width: width as CGFloat, height: height as CGFloat };
-	unsafe { NSImage::initWithCGImage_size(NSImage::alloc(), &cg_image, size) }
+	Ok(unsafe { NSImage::initWithCGImage_size(NSImage::alloc(), &cg_image, size) })
 }
 
 pub(crate) struct Clipboard {
@@ -335,7 +342,7 @@ impl<'clipboard> Set<'clipboard> {
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self, data: ImageData) -> Result<(), Error> {
 		let pixels = data.bytes.into();
-		let image = image_from_pixels(pixels, data.width, data.height);
+		let image = image_from_pixels(pixels, data.width, data.height)?;
 
 		self.clipboard.clear();
 
