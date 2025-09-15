@@ -102,7 +102,7 @@ jobs:
     steps:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: nightly-2023-10-08
+          toolchain: nightly-2024-01-08
           components: miri
 
       - name: Checkout
