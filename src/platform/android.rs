@@ -52,12 +52,12 @@ impl Clipboard {
 }
 
 pub(crate) struct Get<'clipboard> {
-	clipboard: &'clipboard Clipboard,
+	_clipboard: &'clipboard Clipboard,
 }
 
 impl<'clipboard> Get<'clipboard> {
-	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard }
+	pub(crate) fn new(_clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { _clipboard }
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
@@ -111,12 +111,12 @@ impl<'clipboard> Get<'clipboard> {
 }
 
 pub(crate) struct Set<'clipboard> {
-	clipboard: &'clipboard mut Clipboard,
+	_clipboard: &'clipboard mut Clipboard,
 }
 
 impl<'clipboard> Set<'clipboard> {
-	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard }
+	pub(crate) fn new(_clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { _clipboard }
 	}
 
 	pub(crate) fn text(self, text: Cow<'_, str>) -> Result<(), Error> {
@@ -157,12 +157,12 @@ impl<'clipboard> Set<'clipboard> {
 }
 
 pub(crate) struct Clear<'clipboard> {
-	clipboard: &'clipboard mut Clipboard,
+	_clipboard: &'clipboard mut Clipboard,
 }
 
 impl<'clipboard> Clear<'clipboard> {
-	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard }
+	pub(crate) fn new(_clipboard: &'clipboard mut Clipboard) -> Self {
+		Self { _clipboard }
 	}
 
 	pub(crate) fn clear(self) -> Result<(), Error> {
