@@ -47,7 +47,17 @@ pub(crate) struct Clipboard(());
 
 impl Clipboard {
 	pub(crate) fn new() -> Result<Self, Error> {
-		Ok(Self(()))
+		with_clipboard_access(|env, _| {
+			let version_class = env.find_class(c"android/os/Build$VERSION")?;
+			let build_sdk = env.get_static_field(version_class, c"SDK_INT", c"I")?.i()?;
+
+			// clearPrimaryClip was introduced in this version
+			if build_sdk >= 28 {
+				Ok(Self(()))
+			} else {
+				Err(Error::ClipboardNotSupported)
+			}
+		})
 	}
 }
 
