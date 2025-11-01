@@ -115,6 +115,34 @@ impl Clipboard {
 		self.set().html(html, alt_text)
 	}
 
+	/// Places RTF data onto the clipboard.
+	///
+	/// This method writes raw Rich Text Format bytes to the clipboard, under the
+	/// `public.rtf` type on macOS and equivalently on other platforms. The input is
+	/// expected to be valid UTF-8 or ASCII-compatible RTF data.
+	///
+	/// # Errors
+	///
+	/// Returns an error if the data failed to be stored on the clipboard.
+	#[cfg(target_os = "macos")]
+	pub fn set_rtf<'a, T: Into<Cow<'a, [u8]>>>(&mut self, data: T) -> Result<(), Error> {
+		self.set().rtf(data)
+	}
+
+	/// Places RTFD data onto the clipboard.
+	///
+	/// This method writes Rich Text Format Directory (RTFD) content to the clipboard.
+	/// RTFD is similar to RTF but can include embedded resources such as images or
+	/// attachments, and is only meaningfully supported on macOS.
+	///
+	/// # Errors
+	///
+	/// Returns an error if the data failed to be stored on the clipboard.
+	#[cfg(target_os = "macos")]
+	pub fn set_rtfd<'a, T: Into<Cow<'a, [u8]>>>(&mut self, data: T) -> Result<(), Error> {
+		self.set().rtfd(data)
+	}
+
 	/// Fetches image data from the clipboard, and returns the decoded pixels.
 	///
 	/// Any image data placed on the clipboard with `set_image` will be possible read back, using
@@ -233,6 +261,35 @@ impl Set<'_> {
 		let html = html.into();
 		let alt_text = alt_text.map(|e| e.into());
 		self.platform.html(html, alt_text)
+	}
+
+	/// Completes the "set" operation by placing RTF data onto the clipboard.
+	///
+	/// The RTF data must be provided as raw bytes, encoded in a way that is valid
+	/// according to the Rich Text Format specification.
+	///
+	/// # Errors
+	///
+	/// Returns an error if the data failed to be stored on the clipboard.
+	#[cfg(target_os = "macos")]
+	pub fn rtf<'a, T: Into<Cow<'a, [u8]>>>(self, data: T) -> Result<(), Error> {
+		let data = data.into();
+		self.platform.rtf(data)
+	}
+
+	/// Completes the "set" operation by placing RTFD data onto the clipboard.
+	///
+	/// RTFD (Rich Text Format Directory) is similar to RTF, but can also contain
+	/// embedded attachments such as images. On macOS, this type is represented by
+	/// `com.apple.rtfd`.
+	///
+	/// # Errors
+	///
+	/// Returns an error if the data failed to be stored on the clipboard.
+	#[cfg(target_os = "macos")]
+	pub fn rtfd<'a, T: Into<Cow<'a, [u8]>>>(self, data: T) -> Result<(), Error> {
+		let data = data.into();
+		self.platform.rtfd(data)
 	}
 
 	/// Completes the "set" operation by placing an image onto the clipboard.
