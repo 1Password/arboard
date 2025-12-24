@@ -1,5 +1,6 @@
 use std::{
 	borrow::Cow,
+	ffi::c_void,
 	os::unix::ffi::OsStrExt,
 	path::{Path, PathBuf},
 	time::Instant,
@@ -7,11 +8,16 @@ use std::{
 
 #[cfg(feature = "wayland-data-control")]
 use log::{trace, warn};
+
+#[cfg(feature = "smithay-clipboard")]
+use log::trace;
 use percent_encoding::{percent_decode, percent_encode, AsciiSet, CONTROLS};
 
 #[cfg(feature = "image-data")]
 use crate::ImageData;
 use crate::{common::private, Error};
+#[cfg(feature = "smithay-clipboard")]
+use parking_lot::Mutex;
 
 // Magic strings used in `Set::exclude_from_history()` on linux
 const KDE_EXCLUSION_MIME: &str = "x-kde-passwordManagerHint";
@@ -21,6 +27,10 @@ mod x11;
 
 #[cfg(feature = "wayland-data-control")]
 mod wayland;
+
+// Optional smithay backend (uses core Wayland wl_data_device)
+#[cfg(feature = "smithay-clipboard")]
+mod smithay;
 
 fn into_unknown<E: std::fmt::Display>(error: E) -> Error {
 	Error::Unknown { description: error.to_string() }
@@ -120,12 +130,23 @@ pub enum LinuxClipboardKind {
 pub(crate) enum Clipboard {
 	X11(x11::Clipboard),
 
+	#[cfg(feature = "smithay-clipboard")]
+	WlSmithay(Mutex<smithay::Clipboard>),
+
 	#[cfg(feature = "wayland-data-control")]
 	WlDataControl(wayland::Clipboard),
 }
 
 impl Clipboard {
 	pub(crate) fn new() -> Result<Self, Error> {
+		#[cfg(feature = "smithay-clipboard")]
+		{
+			if smithay::is_available() {
+				trace!("Using smithay clipboard backend");
+				return Ok(Self::WlSmithay(Mutex::new(smithay::Clipboard::new()?)));
+			}
+		}
+
 		#[cfg(feature = "wayland-data-control")]
 		{
 			if std::env::var_os("WAYLAND_DISPLAY").is_some() {
@@ -159,6 +180,10 @@ impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn text(self) -> Result<String, Error> {
 		match self.clipboard {
 			Clipboard::X11(clipboard) => clipboard.get_text(self.selection),
+
+			#[cfg(feature = "smithay-clipboard")]
+			Clipboard::WlSmithay(clipboard) => clipboard.lock().get_text(self.selection),
+
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_text(self.selection),
 		}
@@ -168,6 +193,10 @@ impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
 		match self.clipboard {
 			Clipboard::X11(clipboard) => clipboard.get_image(self.selection),
+
+			#[cfg(feature = "smithay-clipboard")]
+			Clipboard::WlSmithay(_) => Err(Error::ClipboardNotSupported),
+
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_image(self.selection),
 		}
@@ -176,6 +205,10 @@ impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn html(self) -> Result<String, Error> {
 		match self.clipboard {
 			Clipboard::X11(clipboard) => clipboard.get_html(self.selection),
+
+			#[cfg(feature = "smithay-clipboard")]
+			Clipboard::WlSmithay(_) => Err(Error::ClipboardNotSupported),
+
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_html(self.selection),
 		}
@@ -184,6 +217,10 @@ impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
 		match self.clipboard {
 			Clipboard::X11(clipboard) => clipboard.get_file_list(self.selection),
+
+			#[cfg(feature = "smithay-clipboard")]
+			Clipboard::WlSmithay(_) => Err(Error::ClipboardNotSupported),
+
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_file_list(self.selection),
 		}
@@ -243,6 +280,14 @@ impl<'clipboard> Set<'clipboard> {
 				clipboard.set_text(text, self.selection, self.wait, self.exclude_from_history)
 			}
 
+			#[cfg(feature = "smithay-clipboard")]
+			Clipboard::WlSmithay(clipboard) => clipboard.lock().set_text(
+				text,
+				self.selection,
+				self.wait,
+				self.exclude_from_history,
+			),
+
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => {
 				clipboard.set_text(text, self.selection, self.wait, self.exclude_from_history)
@@ -255,6 +300,9 @@ impl<'clipboard> Set<'clipboard> {
 			Clipboard::X11(clipboard) => {
 				clipboard.set_html(html, alt, self.selection, self.wait, self.exclude_from_history)
 			}
+
+			#[cfg(feature = "smithay-clipboard")]
+			Clipboard::WlSmithay(_) => Err(Error::ClipboardNotSupported),
 
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => {
@@ -269,6 +317,9 @@ impl<'clipboard> Set<'clipboard> {
 			Clipboard::X11(clipboard) => {
 				clipboard.set_image(image, self.selection, self.wait, self.exclude_from_history)
 			}
+
+			#[cfg(feature = "smithay-clipboard")]
+			Clipboard::WlSmithay(_) => Err(Error::ClipboardNotSupported),
 
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => {
@@ -285,6 +336,9 @@ impl<'clipboard> Set<'clipboard> {
 				self.wait,
 				self.exclude_from_history,
 			),
+
+			#[cfg(feature = "smithay-clipboard")]
+			Clipboard::WlSmithay(_) => Err(Error::ClipboardNotSupported),
 
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.set_file_list(
@@ -343,7 +397,7 @@ pub trait SetExtLinux: private::Sealed {
 	///
 	/// # Examples
 	///
-	/// ```
+	/// ```no_run
 	/// use arboard::{Clipboard, SetExtLinux, LinuxClipboardKind};
 	/// # fn main() -> Result<(), arboard::Error> {
 	/// let mut ctx = Clipboard::new()?;
@@ -404,6 +458,10 @@ impl<'clipboard> Clear<'clipboard> {
 	fn clear_inner(self, selection: LinuxClipboardKind) -> Result<(), Error> {
 		match self.clipboard {
 			Clipboard::X11(clipboard) => clipboard.clear(selection),
+
+			#[cfg(feature = "smithay-clipboard")]
+			Clipboard::WlSmithay(clipboard) => clipboard.lock().clear(selection),
+
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.clear(selection),
 		}
@@ -439,6 +497,16 @@ impl ClearExtLinux for crate::Clear<'_> {
 	}
 }
 
+#[cfg(feature = "smithay-clipboard")]
+/// Initialize smithay backend using a raw `wl_display` pointer.
+///
+/// # Safety
+/// `display` must be a valid pointer to a `wl_display` and must remain valid for the
+/// lifetime of the application that uses the clipboard.
+pub(crate) unsafe fn init_wayland_display(display: *mut c_void) -> Result<(), Error> {
+	smithay::init_from_display(display)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -461,5 +529,12 @@ mod tests {
 			PathBuf::from("/tmp/white space.txt"),
 		];
 		assert_eq!(paths_from_uri_list(file_list.join("\n").into()), paths);
+	}
+
+	#[cfg(feature = "smithay-clipboard")]
+	#[test]
+	fn smithay_initially_unavailable() {
+		// Unless init was called, it should report unavailable
+		assert!(!smithay::is_available());
 	}
 }

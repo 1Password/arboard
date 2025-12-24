@@ -21,6 +21,13 @@ pub use common::ImageData;
 
 mod platform;
 
+#[cfg(all(feature = "smithay-clipboard", unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
+/// Safety: `display` must be a valid pointer to a `wl_display` and must remain valid for how long
+/// the clipboard is used. Call this before creating a `Clipboard` if you want to use the smithay backend.
+pub unsafe fn init_wayland_display(display: *mut std::ffi::c_void) -> Result<(), Error> {
+	platform::init_wayland_display(display)
+}
+
 #[cfg(all(
 	unix,
 	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
@@ -274,8 +281,41 @@ mod tests {
 	use super::*;
 	use std::{sync::Arc, thread, time::Duration};
 
+	/// Check if a display server is available for clipboard operations.
+	/// Returns true if we can reasonably expect clipboard operations to work.
+	/// 
+	/// Only checks on Linux/BSD where X11/Wayland display servers are required.
+	/// Other platforms (macOS, Windows) use native APIs and don't need this check.
+	fn is_display_server_available() -> bool {
+		// On Linux/BSD, we need either X11 or Wayland to be reachable
+		#[cfg(all(
+			unix,
+			not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
+		))]
+		{
+			// Quick check: try to create a clipboard and see if it fails
+			Clipboard::new().is_ok()
+		}
+
+		// On all other platforms (macOS, Windows, etc.), clipboard uses native APIs
+		// and doesn't require a display server, so tests can always run
+		#[cfg(not(all(
+			unix,
+			not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
+		)))]
+		{
+			true
+		}
+	}
+
 	#[test]
 	fn all_tests() {
+		if !is_display_server_available() {
+			eprintln!("Skipping clipboard integration tests: no display server available.");
+			eprintln!("To run these tests, ensure DISPLAY or WAYLAND_DISPLAY is set and reachable.");
+			eprintln!("In CI, consider running under Xvfb: `xvfb-run cargo test`");
+			return;
+		}
 		let _ = env_logger::builder().is_test(true).try_init();
 		{
 			let mut ctx = Clipboard::new().unwrap();
@@ -474,6 +514,13 @@ mod tests {
 	// to be open at once without issue, as documented under [Clipboard].
 	#[test]
 	fn multiple_clipboards_at_once() {
+		if !is_display_server_available() {
+			eprintln!("Skipping clipboard integration tests: no display server available.");
+			eprintln!("To run these tests, ensure DISPLAY or WAYLAND_DISPLAY is set and reachable.");
+			eprintln!("In CI, consider running under Xvfb: `xvfb-run cargo test`");
+			return;
+		}
+
 		const THREAD_COUNT: usize = 100;
 
 		let mut handles = Vec::with_capacity(THREAD_COUNT);

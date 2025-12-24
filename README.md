@@ -37,6 +37,17 @@ Wayland environment. It is recommended to enable `XWayland` for these cases. If 
 an isolated sandbox, such as Flatpak or Snap, you'll need to expose the X11 socket to the application
 _in addition_ to the Wayland communication interface.
 
+When the `wlr-data-control` protocol is not available, for instance, on GNOME, arboard provides an optional `smithay-clipboard` feature which uses the core Wayland
+`wl_data_device` APIs (via `smithay-clipboard`). Note that `smithay` does
+not currently provide a notification for "first paste"; arboard emulates `SetExtLinux::wait()` by
+polling the clipboard contents until they change (i.e. it appears overwritten) while keeping the
+Wayland selection owner alive.
+
+Limitations of the `smithay-clipboard` backend today:
+- It currently supports **text on the `Clipboard` selection only** (no `Primary` selection, images, HTML, or file lists).
+- `exclude_from_history()` is currently a no-op on this backend.
+- `wait()`/`wait_until()` detect "overwritten" by observing a **text value change**; if another app overwrites the clipboard with the exact same text, `wait()` may not return.
+
 ### Clipboard Ownership
 
 Some apps and users may notice that sometimes values copied to a Linux clipboard with this crate vanish
@@ -64,7 +75,7 @@ If your application is exiting, you must make sure there is a clipboard manager 
 the clipboard ownership transfer, or made a copy previously, the data will be lost. Note that this isn't a complete 
 guarantee as races are possible if your program's main thread is exiting. If you would like to fully synchronize the clipboard "paste"
 before exiting, you can use the [wait](https://docs.rs/arboard/latest/arboard/trait.SetExtLinux.html#tymethod.wait) method when setting
-contents on the clipboard. This will block the calling thread until another app has requested, and then received, the data.
+contents on the clipboard. This will block the calling thread and keep serving clipboard requests until the clipboard is overwritten.
 
 If your application is longer-running (ie a GUI, TUI, etc), it is highly recommended that you either store the `Clipboard` object in some 
 long-lived data structure (like app context, etc) or utilize `wait` method mentioned above, and/or threading to make sure another 
