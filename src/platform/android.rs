@@ -4,6 +4,7 @@ use std::{
 };
 
 use jni::{
+	jni_sig, jni_str,
 	objects::{JObject, JString},
 	Env, JavaVM,
 };
@@ -33,8 +34,8 @@ where
 		let clipboard_manager = env
 			.call_method(
 				context,
-				c"getSystemService",
-				c"(Ljava/lang/String;)Ljava/lang/Object;",
+				jni_str!("getSystemService"),
+				jni_sig!("(Ljava/lang/String;)Ljava/lang/Object;"),
 				&[(&clipboard).into()],
 			)?
 			.l()?;
@@ -48,8 +49,9 @@ pub(crate) struct Clipboard(());
 impl Clipboard {
 	pub(crate) fn new() -> Result<Self, Error> {
 		with_clipboard_access(|env, _| {
-			let version_class = env.find_class(c"android/os/Build$VERSION")?;
-			let build_sdk = env.get_static_field(version_class, c"SDK_INT", c"I")?.i()?;
+			let version_class = env.load_class(jni_str!("android/os/Build$VERSION"))?;
+			let build_sdk =
+				env.get_static_field(version_class, jni_str!("SDK_INT"), jni_sig!("I"))?.i()?;
 
 			// clearPrimaryClip was introduced in this version
 			if build_sdk >= 28 {
@@ -72,34 +74,43 @@ impl<'clipboard> Get<'clipboard> {
 
 	pub(crate) fn text(self) -> Result<String, Error> {
 		with_clipboard_access(|env, clipboard_manager| {
-			if !env.call_method(&clipboard_manager, c"hasPrimaryClip", c"()Z", &[])?.z()? {
+			if !env
+				.call_method(&clipboard_manager, jni_str!("hasPrimaryClip"), jni_sig!("()Z"), &[])?
+				.z()?
+			{
 				return Err(Error::ContentNotAvailable);
 			}
 
 			let clip = env
 				.call_method(
 					clipboard_manager,
-					c"getPrimaryClip",
-					c"()Landroid/content/ClipData;",
+					jni_str!("getPrimaryClip"),
+					jni_sig!("()Landroid/content/ClipData;"),
 					&[],
 				)?
 				.l()?;
 
-			if env.call_method(&clip, c"getItemCount", c"()I", &[])?.i()? == 0 {
+			if env.call_method(&clip, jni_str!("getItemCount"), jni_sig!("()I"), &[])?.i()? == 0 {
 				return Err(Error::ContentNotAvailable);
 			}
 
 			let item = env
 				.call_method(
 					&clip,
-					c"getItemAt",
-					c"(I)Landroid/content/ClipData$Item;",
+					jni_str!("getItemAt"),
+					jni_sig!("(I)Landroid/content/ClipData$Item;"),
 					&[0.into()],
 				)?
 				.l()?;
 
-			let char_sequence =
-				env.call_method(item, c"getText", c"()Ljava/lang/CharSequence;", &[])?.l()?;
+			let char_sequence = env
+				.call_method(
+					item,
+					jni_str!("getText"),
+					jni_sig!("()Ljava/lang/CharSequence;"),
+					&[],
+				)?
+				.l()?;
 			let text = env.cast_local::<JString>(char_sequence)?.to_string();
 
 			Ok(text)
@@ -135,16 +146,18 @@ impl<'clipboard> Set<'clipboard> {
 			let text = env.new_string(text)?;
 
 			let clip_data = env.call_static_method(
-				c"android/content/ClipData",
-				c"newPlainText",
-				c"(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;",
+				jni_str!("android/content/ClipData"),
+				jni_str!("newPlainText"),
+				jni_sig!(
+					"(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;"
+				),
 				&[(&label).into(), (&text).into()],
 			)?;
 
 			env.call_method(
 				clipboard_manager,
-				c"setPrimaryClip",
-				c"(Landroid/content/ClipData;)V",
+				jni_str!("setPrimaryClip"),
+				jni_sig!("(Landroid/content/ClipData;)V"),
 				&[(&clip_data).into()],
 			)?;
 
@@ -177,7 +190,7 @@ impl<'clipboard> Clear<'clipboard> {
 
 	pub(crate) fn clear(self) -> Result<(), Error> {
 		with_clipboard_access(|env, clipboard_manager| {
-			env.call_method(clipboard_manager, c"clearPrimaryClip", c"()V", &[])?;
+			env.call_method(clipboard_manager, jni_str!("clearPrimaryClip"), jni_sig!("()V"), &[])?;
 			Ok(())
 		})
 	}
