@@ -5,7 +5,7 @@ use std::{
 };
 
 use wl_clipboard_rs::{
-	copy::{self, Error as CopyError, MimeSource, MimeType, Options, Source},
+	copy::{self, Error as CopyError, MimeSource, MimeType, Options, ServeRequests, Source},
 	paste::{self, get_contents, Error as PasteError, Seat},
 	utils::is_primary_selection_supported,
 };
@@ -63,6 +63,9 @@ fn add_clipboard_exclusions(exclude_from_history: bool, sources: &mut Vec<MimeSo
 fn options(wait: WaitConfig, selection: LinuxClipboardKind) -> Result<Options, Error> {
 	let mut opts = Options::new();
 	opts.foreground(matches!(wait, WaitConfig::Forever));
+	if matches!(wait, WaitConfig::Once) {
+		opts.serve_requests(ServeRequests::Only(1));
+	}
 	opts.clipboard(selection.try_into()?);
 	Ok(opts)
 }
