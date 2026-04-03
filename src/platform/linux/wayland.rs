@@ -60,6 +60,13 @@ fn add_clipboard_exclusions(exclude_from_history: bool, sources: &mut Vec<MimeSo
 	}
 }
 
+fn options(wait: WaitConfig, selection: LinuxClipboardKind) -> Result<Options, Error> {
+	let mut opts = Options::new();
+	opts.foreground(matches!(wait, WaitConfig::Forever));
+	opts.clipboard(selection.try_into()?);
+	Ok(opts)
+}
+
 fn handle_copy_error(e: copy::Error) -> Error {
 	match e {
 		CopyError::PrimarySelectionUnsupported => Error::ClipboardNotSupported,
@@ -122,10 +129,7 @@ impl Clipboard {
 		wait: WaitConfig,
 		exclude_from_history: bool,
 	) -> Result<(), Error> {
-		let mut opts = Options::new();
-		opts.foreground(matches!(wait, WaitConfig::Forever));
-		opts.clipboard(selection.try_into()?);
-
+		let opts = options(wait, selection)?;
 		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
 
 		sources.push(MimeSource {
@@ -152,10 +156,7 @@ impl Clipboard {
 		wait: WaitConfig,
 		exclude_from_history: bool,
 	) -> Result<(), Error> {
-		let mut opts = Options::new();
-		opts.foreground(matches!(wait, WaitConfig::Forever));
-		opts.clipboard(selection.try_into()?);
-
+		let opts = options(wait, selection)?;
 		let mut sources = {
 			let cap = [true, alt.is_some(), exclude_from_history]
 				.map(|v| usize::from(v as u8))
@@ -212,10 +213,7 @@ impl Clipboard {
 		wait: WaitConfig,
 		exclude_from_history: bool,
 	) -> Result<(), Error> {
-		let mut opts = Options::new();
-		opts.foreground(matches!(wait, WaitConfig::Forever));
-		opts.clipboard(selection.try_into()?);
-
+		let opts = options(wait, selection)?;
 		let image = encode_as_png(&image)?;
 
 		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
@@ -246,12 +244,8 @@ impl Clipboard {
 		wait: WaitConfig,
 		exclude_from_history: bool,
 	) -> Result<(), Error> {
+		let opts = options(wait, selection)?;
 		let files = paths_to_uri_list(file_list)?;
-
-		let mut opts = Options::new();
-		opts.foreground(matches!(wait, WaitConfig::Forever));
-		opts.clipboard(selection.try_into()?);
-
 		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
 		sources.push(MimeSource {
 			source: Source::Bytes(files.into_bytes().into_boxed_slice()),
