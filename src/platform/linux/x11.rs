@@ -185,6 +185,10 @@ struct Selection {
 	///
 	/// This is associated with `Self::mutex`.
 	data_changed: Condvar,
+	/// A condvar that is notified when the contents of this clipboard are served.
+	///
+	/// This is associated with `Self::mutex`.
+	data_served: Condvar,
 }
 
 #[derive(Debug, Clone)]
@@ -284,6 +288,11 @@ impl Inner {
 			WaitConfig::Until(deadline) => {
 				drop(data_guard);
 				selection.data_changed.wait_until(&mut guard, deadline);
+			}
+
+			WaitConfig::Once => {
+				drop(data_guard);
+				selection.data_served.wait(&mut guard);
 			}
 		}
 
@@ -841,6 +850,9 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 					// reason.
 					let _guard = selection.mutex.lock();
 					selection.data_changed.notify_all();
+					// If a thread is waiting for the data to be served,
+					// there's no data to be served anymore, so wake it up.
+					selection.data_served.notify_all();
 				}
 			}
 			Event::SelectionRequest(event) => {
@@ -853,6 +865,17 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 				if let Err(e) = context.handle_selection_request(event) {
 					error!("Failed to handle selection request: {e}");
 					continue;
+				}
+
+				if let Some(selection) = context.kind_of(event.selection) {
+					let selection = context.selection_of(selection);
+
+					// It is important that this mutex is locked at the time of calling
+					// `notify_all` to prevent notifications getting lost in case the sleeping
+					// thread has unlocked its `data_guard` and is just about to sleep.
+					let _guard = selection.mutex.lock();
+					// Notify a thread that's waiting on the data to be served once.
+					selection.data_served.notify_all();
 				}
 
 				// if we are in the progress of saving to the clipboard manager

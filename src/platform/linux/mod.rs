@@ -216,6 +216,9 @@ pub(crate) enum WaitConfig {
 	/// Waits until the given [`Instant`] has reached.
 	Until(Instant),
 
+	/// Waits until the clipboard conents have been retrieved once.
+	Once,
+
 	/// Waits forever until a new event is reached.
 	Forever,
 
@@ -340,6 +343,13 @@ pub trait SetExtLinux: private::Sealed {
 	/// that was previously set using it.
 	fn wait_until(self, deadline: Instant) -> Self;
 
+	/// Whether to wait for the clipboard's content to be retrieved once after setting it. This
+	/// waits until the clipboard was retrieved once.
+	///
+	/// Note: this is a superset of [`wait()`][SetExtLinux::wait] and will overwrite any state
+	/// that was previously set using it.
+	fn wait_once(self) -> Self;
+
 	/// Sets the clipboard the operation will store its data to.
 	///
 	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
@@ -383,6 +393,11 @@ impl SetExtLinux for crate::Set<'_> {
 
 	fn wait_until(mut self, deadline: Instant) -> Self {
 		self.platform.wait = WaitConfig::Until(deadline);
+		self
+	}
+
+	fn wait_once(mut self) -> Self {
+		self.platform.wait = WaitConfig::Once;
 		self
 	}
 
