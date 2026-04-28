@@ -51,6 +51,7 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 fn paths_from_uri_list(uri_list: Vec<u8>) -> Vec<PathBuf> {
 	uri_list
 		.split(|char| *char == b'\n')
+		.map(|line| line.strip_suffix(b"\r").unwrap_or(line))
 		.filter_map(|line| line.strip_prefix(b"file://"))
 		.filter_map(|s| percent_decode(s).decode_utf8().ok())
 		.map(|decoded| PathBuf::from(decoded.as_ref()))
@@ -84,7 +85,7 @@ fn paths_to_uri_list(file_list: &[impl AsRef<Path>]) -> Result<String, Error> {
 				format!("file://{}", percent_encode(path.as_os_str().as_bytes(), ASCII_SET))
 			})
 		})
-		.reduce(|uri_list, uri| uri_list + "\n" + &uri)
+		.reduce(|uri_list, uri| uri_list + "\r\n" + &uri)
 		.ok_or(Error::ConversionFailure)
 }
 
@@ -460,6 +461,6 @@ mod tests {
 			PathBuf::from("/tmp/foo?.png"),
 			PathBuf::from("/tmp/white space.txt"),
 		];
-		assert_eq!(paths_from_uri_list(file_list.join("\n").into()), paths);
+		assert_eq!(paths_from_uri_list(file_list.join("\r\n").into()), paths);
 	}
 }
