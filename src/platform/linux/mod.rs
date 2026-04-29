@@ -85,6 +85,9 @@ fn paths_to_uri_list(file_list: &[impl AsRef<Path>]) -> Result<String, Error> {
 				format!("file://{}", percent_encode(path.as_os_str().as_bytes(), ASCII_SET))
 			})
 		})
+		// Use CRLF ("\r\n") per RFC 2045 section 2.10:
+		// https://www.rfc-editor.org/rfc/rfc2045#section-2.10
+		// Ensures compliance and future-proofing.
 		.reduce(|uri_list, uri| uri_list + "\r\n" + &uri)
 		.ok_or(Error::ConversionFailure)
 }
