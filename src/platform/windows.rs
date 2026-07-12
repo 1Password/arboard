@@ -747,10 +747,9 @@ impl<'clipboard> Set<'clipboard> {
 		let paths: Vec<_> = file_list
 			.iter()
 			.filter_map(|path| {
-				to_final_path_wide(path.as_ref()).map(|wide| {
+				to_final_path_wide(path.as_ref()).inspect(|wide| {
 					// Windows uses wchar_t which is 16 bit
 					data_len += wide.len() * std::mem::size_of::<u16>();
-					wide
 				})
 			})
 			.collect();
