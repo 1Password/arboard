@@ -10,11 +10,16 @@ jobs:
   rustfmt:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
         with:
           toolchain: stable
           components: rustfmt
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -28,11 +33,16 @@ jobs:
         # for the MSRV build to keep CI fast, since other configurations should also work.
         rust_version: [stable, "1.71.0"]
     steps:
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
         with:
           toolchain: ${{ matrix.rust_version }}
           components: clippy
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Run `cargo clippy` with no features
         if: ${{ matrix.rust_version == 'stable' }}
@@ -63,11 +73,16 @@ jobs:
         # No Linux test for now as it just fails due to not having a desktop environment.
         os: [macos-latest, windows-latest]
     steps:
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
         with:
           toolchain: stable
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Run tests with no features
         run: cargo test --no-default-features
       - name: Run tests with `image-data` feature
@@ -87,13 +102,18 @@ jobs:
         # Currently, only Windows has soundness tests.
         os: [windows-latest]
     steps:
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
         with:
           toolchain: nightly-2023-10-08
           components: miri
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Check soundness
         run: cargo miri test windows --features image-data
@@ -101,6 +121,11 @@ jobs:
   semver:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - name: Harden the runner (Audit all outbound calls)
+      uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+      with:
+        egress-policy: audit
+
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
     - name: Check semver
-      uses: obi1kenobi/cargo-semver-checks-action@v2
+      uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
