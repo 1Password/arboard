@@ -174,6 +174,11 @@ impl Clipboard {
 }
 
 /// A builder for an operation that gets a value from the clipboard.
+///
+/// ```rs
+/// let mut clipboard = arboard::Clipboard::new().map_err(|e| format!("Cannot access clipboard: {e}"))?;
+/// let text = clipboard.get().text().map_err(|e| format!("Cannot get text: {e}"))?;
+/// ```
 #[must_use]
 pub struct Get<'clipboard> {
 	pub(crate) platform: platform::Get<'clipboard>,
@@ -208,6 +213,11 @@ impl Get<'_> {
 }
 
 /// A builder for an operation that sets a value to the clipboard.
+///
+/// ```rs
+/// let mut clipboard = arboard::Clipboard::new().map_err(|e| format!("Cannot access clipboard: {e}"))?;
+/// clipboard.set().text("insert in clipboard").map_err(|e| format!("Cannot set text: {e}"))?;
+/// ```
 #[must_use]
 pub struct Set<'clipboard> {
 	pub(crate) platform: platform::Set<'clipboard>,
