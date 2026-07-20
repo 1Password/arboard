@@ -19,7 +19,7 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -42,7 +42,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust_version }}
           components: clippy
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Run `cargo clippy` with no features
         if: ${{ matrix.rust_version == 'stable' }}
@@ -82,7 +82,7 @@ jobs:
         with:
           toolchain: stable
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Run tests with no features
         run: cargo test --no-default-features
       - name: Run tests with `image-data` feature
@@ -113,7 +113,7 @@ jobs:
           components: miri
 
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Check soundness
         run: cargo miri test windows --features image-data
@@ -126,6 +126,6 @@ jobs:
       with:
         egress-policy: audit
 
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
     - name: Check semver
       uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
