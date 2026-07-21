@@ -5,7 +5,7 @@ use std::{
 };
 
 use wl_clipboard_rs::{
-	copy::{self, Error as CopyError, MimeSource, MimeType, Options, Source},
+	copy::{self, Error as CopyError, MimeSource, MimeType, Options, ServeRequests, Source},
 	paste::{self, get_contents, Error as PasteError, Seat},
 	utils::is_primary_selection_supported,
 };
@@ -58,6 +58,16 @@ fn add_clipboard_exclusions(exclude_from_history: bool, sources: &mut Vec<MimeSo
 			mime_type: MimeType::Specific(String::from(KDE_EXCLUSION_MIME)),
 		});
 	}
+}
+
+fn options(wait: WaitConfig, selection: LinuxClipboardKind) -> Result<Options, Error> {
+	let mut opts = Options::new();
+	opts.foreground(matches!(wait, WaitConfig::Forever));
+	if matches!(wait, WaitConfig::Once) {
+		opts.serve_requests(ServeRequests::Only(1));
+	}
+	opts.clipboard(selection.try_into()?);
+	Ok(opts)
 }
 
 fn handle_copy_error(e: copy::Error) -> Error {
@@ -122,10 +132,7 @@ impl Clipboard {
 		wait: WaitConfig,
 		exclude_from_history: bool,
 	) -> Result<(), Error> {
-		let mut opts = Options::new();
-		opts.foreground(matches!(wait, WaitConfig::Forever));
-		opts.clipboard(selection.try_into()?);
-
+		let opts = options(wait, selection)?;
 		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
 
 		sources.push(MimeSource {
@@ -152,10 +159,7 @@ impl Clipboard {
 		wait: WaitConfig,
 		exclude_from_history: bool,
 	) -> Result<(), Error> {
-		let mut opts = Options::new();
-		opts.foreground(matches!(wait, WaitConfig::Forever));
-		opts.clipboard(selection.try_into()?);
-
+		let opts = options(wait, selection)?;
 		let mut sources = {
 			let cap = [true, alt.is_some(), exclude_from_history]
 				.map(|v| usize::from(v as u8))
@@ -212,10 +216,7 @@ impl Clipboard {
 		wait: WaitConfig,
 		exclude_from_history: bool,
 	) -> Result<(), Error> {
-		let mut opts = Options::new();
-		opts.foreground(matches!(wait, WaitConfig::Forever));
-		opts.clipboard(selection.try_into()?);
-
+		let opts = options(wait, selection)?;
 		let image = encode_as_png(&image)?;
 
 		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
@@ -246,12 +247,8 @@ impl Clipboard {
 		wait: WaitConfig,
 		exclude_from_history: bool,
 	) -> Result<(), Error> {
+		let opts = options(wait, selection)?;
 		let files = paths_to_uri_list(file_list)?;
-
-		let mut opts = Options::new();
-		opts.foreground(matches!(wait, WaitConfig::Forever));
-		opts.clipboard(selection.try_into()?);
-
 		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
 		sources.push(MimeSource {
 			source: Source::Bytes(files.into_bytes().into_boxed_slice()),
