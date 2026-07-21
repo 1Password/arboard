@@ -18,10 +18,10 @@ use objc2::{
 	ClassType,
 };
 use objc2_app_kit::{
-	NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString,
-	NSPasteboardURLReadingFileURLsOnlyKey,
+	NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeRTF, NSPasteboardTypeRTFD,
+	NSPasteboardTypeString, NSPasteboardURLReadingFileURLsOnlyKey,
 };
-use objc2_foundation::{ns_string, NSArray, NSDictionary, NSNumber, NSString, NSURL};
+use objc2_foundation::{ns_string, NSArray, NSData, NSDictionary, NSNumber, NSString, NSURL};
 use std::{
 	borrow::Cow,
 	panic::{RefUnwindSafe, UnwindSafe},
@@ -336,6 +336,40 @@ impl<'clipboard> Set<'clipboard> {
 			Ok(())
 		} else {
 			Err(Error::unknown("NSPasteboard#writeObjects: returned false"))
+		}
+	}
+
+	pub(crate) fn rtf(self, data: Cow<'_, [u8]>) -> Result<(), Error> {
+		self.clipboard.clear();
+
+		let rtf_data = NSData::with_bytes(data.as_ref());
+		let success = unsafe {
+			self.clipboard.pasteboard.setData_forType(Some(&rtf_data), NSPasteboardTypeRTF)
+		};
+
+		add_clipboard_exclusions(self.clipboard, self.exclude_from_history);
+
+		if success {
+			Ok(())
+		} else {
+			Err(Error::unknown("NSPasteboard#setData_forType(RTF): returned false"))
+		}
+	}
+
+	pub(crate) fn rtfd(self, data: Cow<'_, [u8]>) -> Result<(), Error> {
+		self.clipboard.clear();
+
+		let rtfd_data = NSData::with_bytes(data.as_ref());
+		let success = unsafe {
+			self.clipboard.pasteboard.setData_forType(Some(&rtfd_data), NSPasteboardTypeRTFD)
+		};
+
+		add_clipboard_exclusions(self.clipboard, self.exclude_from_history);
+
+		if success {
+			Ok(())
+		} else {
+			Err(Error::unknown("NSPasteboard#setData_forType(RTFD): returned false"))
 		}
 	}
 
