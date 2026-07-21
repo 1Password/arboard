@@ -52,7 +52,7 @@ Note that `arboard` may attempt to warn you about these conditions when compiled
 experience. Even if you don't see these warnings, you should double check the lifetime of the `Clipboard` in your code.
 
 In some cases, an environment may have a clipboard manager installed. These services monitor the clipboard contents and
-do their best to retain a copy when needed to smooth over clipboard ownership changes. A clipboar manager can make contents
+do their best to retain a copy when needed to smooth over clipboard ownership changes. A clipboard manager can make contents
 available even after a process previously owning it exits.
 
 In order to keep the contents around longer, make sure that you don't `Drop` your `Clipboard` object right away or
