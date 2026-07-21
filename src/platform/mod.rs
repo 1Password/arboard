@@ -15,3 +15,9 @@ pub use windows::*;
 mod osx;
 #[cfg(target_os = "macos")]
 pub use osx::*;
+
+#[cfg(target_os = "android")]
+mod dummy;
+
+#[cfg(target_os = "android")]
+pub(crate) use dummy::*;
