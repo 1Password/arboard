@@ -16,6 +16,8 @@ jobs:
           override: true
           components: rustfmt
       - uses: actions/checkout@v2
+        with:
+          persist-credentials: false
       - name: Check formatting
         uses: actions-rs/cargo@v1
         with:
@@ -38,6 +40,8 @@ jobs:
           override: true
           components: clippy
       - uses: actions/checkout@v2
+        with:
+          persist-credentials: false
 
       - name: Run `cargo clippy` with no features
         if: ${{ matrix.rust_version == 'stable' }}
@@ -80,6 +84,8 @@ jobs:
           override: true
       - name: Checkout
         uses: actions/checkout@v2
+        with:
+          persist-credentials: false
       - name: Run tests with no features
         uses: actions-rs/cargo@v1
         with:
@@ -119,6 +125,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v2
+        with:
+          persist-credentials: false
 
       - name: Check soundness
         uses: actions-rs/cargo@v1
