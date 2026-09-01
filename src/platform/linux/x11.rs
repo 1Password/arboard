@@ -46,8 +46,9 @@ use x11rb::{
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
 use super::{
-	into_unknown, paths_from_uri_list, paths_to_uri_list, LinuxClipboardKind, WaitConfig,
-	KDE_EXCLUSION_HINT, KDE_EXCLUSION_MIME,
+	gnome_copied_files_from_uri_list, into_unknown, paths_from_uri_list, paths_to_uri_list,
+	LinuxClipboardKind, WaitConfig, GNOME_COPIED_FILES_MIME, KDE_EXCLUSION_HINT,
+	KDE_EXCLUSION_MIME, URI_LIST_MIME,
 };
 #[cfg(feature = "image-data")]
 use crate::ImageData;
@@ -81,7 +82,8 @@ x11rb::atom_manager! {
 		TEXT_MIME_UNKNOWN: b"text/plain",
 
 		HTML: b"text/html",
-		URI_LIST: b"text/uri-list",
+		URI_LIST: URI_LIST_MIME.as_bytes(),
+		GNOME_COPIED_FILES: GNOME_COPIED_FILES_MIME.as_bytes(),
 
 		PNG_MIME: b"image/png",
 		X_KDE_PASSWORDMANAGERHINT: KDE_EXCLUSION_MIME.as_bytes(),
@@ -1057,7 +1059,8 @@ impl Clipboard {
 	}
 
 	pub(crate) fn get_file_list(&self, selection: LinuxClipboardKind) -> Result<Vec<PathBuf>> {
-		let result = self.inner.read(&[self.inner.atoms.URI_LIST], selection)?;
+		let formats = [self.inner.atoms.URI_LIST, self.inner.atoms.GNOME_COPIED_FILES];
+		let result = self.inner.read(&formats, selection)?;
 
 		Ok(paths_from_uri_list(result.bytes))
 	}
@@ -1070,9 +1073,14 @@ impl Clipboard {
 		exclude_from_history: bool,
 	) -> Result<()> {
 		let files = paths_to_uri_list(file_list)?;
-		let mut data = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
+		let gnome_files = gnome_copied_files_from_uri_list(&files);
+		let mut data = Vec::with_capacity(if exclude_from_history { 3 } else { 2 });
 
 		data.push(ClipboardData { bytes: files.into_bytes(), format: self.inner.atoms.URI_LIST });
+		data.push(ClipboardData {
+			bytes: gnome_files,
+			format: self.inner.atoms.GNOME_COPIED_FILES,
+		});
 		self.add_clipboard_exclusions(exclude_from_history, &mut data);
 
 		self.inner.write(data, selection, wait)

@@ -17,6 +17,9 @@ use crate::{common::private, Error};
 const KDE_EXCLUSION_MIME: &str = "x-kde-passwordManagerHint";
 const KDE_EXCLUSION_HINT: &[u8] = b"secret";
 
+const URI_LIST_MIME: &str = "text/uri-list";
+const GNOME_COPIED_FILES_MIME: &str = "x-special/gnome-copied-files";
+
 mod x11;
 
 #[cfg(feature = "wayland-data-control")]
@@ -90,6 +93,12 @@ fn paths_to_uri_list(file_list: &[impl AsRef<Path>]) -> Result<String, Error> {
 		// Ensures compliance and future-proofing.
 		.reduce(|uri_list, uri| uri_list + "\r\n" + &uri)
 		.ok_or(Error::ConversionFailure)
+}
+
+fn gnome_copied_files_from_uri_list(uri_list: &str) -> Vec<u8> {
+	// GNOME's copied-files format uses an action header followed by LF-separated URIs:
+	// https://github.com/linuxmint/nemo/blob/29fbc4b00005234dd92624a5620cc644525ba27c/libnemo-private/nemo-clipboard-monitor.c#L218-L260
+	format!("copy\n{}", uri_list.replace("\r\n", "\n")).into_bytes()
 }
 
 /// Clipboard selection
@@ -465,5 +474,31 @@ mod tests {
 			PathBuf::from("/tmp/white space.txt"),
 		];
 		assert_eq!(paths_from_uri_list(file_list.join("\r\n").into()), paths);
+	}
+
+	#[test]
+	fn test_decoding_gnome_copied_files() {
+		let file_list = b"copy\nfile:///tmp/bar.log\nfile:///tmp/white%20space.txt";
+		let paths = vec![PathBuf::from("/tmp/bar.log"), PathBuf::from("/tmp/white space.txt")];
+
+		assert_eq!(paths_from_uri_list(file_list.to_vec()), paths);
+	}
+
+	#[test]
+	fn test_decoding_gnome_cut_files() {
+		let file_list = b"cut\nfile:///tmp/bar.log\nfile:///tmp/white%20space.txt";
+		let paths = vec![PathBuf::from("/tmp/bar.log"), PathBuf::from("/tmp/white space.txt")];
+
+		assert_eq!(paths_from_uri_list(file_list.to_vec()), paths);
+	}
+
+	#[test]
+	fn test_encoding_gnome_copied_files() {
+		let uri_list = "file:///tmp/bar.log\r\nfile:///tmp/white%20space.txt";
+
+		assert_eq!(
+			gnome_copied_files_from_uri_list(uri_list),
+			b"copy\nfile:///tmp/bar.log\nfile:///tmp/white%20space.txt"
+		);
 	}
 }
