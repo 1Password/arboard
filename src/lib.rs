@@ -202,6 +202,8 @@ impl Get<'_> {
 	}
 
 	/// Completes the "get" operation by fetching a list of file paths from the clipboard.
+	///
+	/// On Linux, this does not preserve whether the source marked the files for copying or cutting.
 	pub fn file_list(self) -> Result<Vec<PathBuf>, Error> {
 		self.platform.file_list()
 	}
@@ -248,6 +250,8 @@ impl Set<'_> {
 	}
 
 	/// Completes the "set" operation by placing a list of file paths onto the clipboard.
+	///
+	/// On Linux, the files are marked for copying.
 	pub fn file_list(self, file_list: &[impl AsRef<Path>]) -> Result<(), Error> {
 		self.platform.file_list(file_list)
 	}

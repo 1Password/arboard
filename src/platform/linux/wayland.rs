@@ -13,8 +13,9 @@ use wl_clipboard_rs::{
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
 use super::{
-	into_unknown, paths_from_uri_list, paths_to_uri_list, LinuxClipboardKind, WaitConfig,
-	KDE_EXCLUSION_HINT, KDE_EXCLUSION_MIME,
+	gnome_copied_files_from_uri_list, into_unknown, paths_from_uri_list, paths_to_uri_list,
+	LinuxClipboardKind, WaitConfig, GNOME_COPIED_FILES_MIME, KDE_EXCLUSION_HINT,
+	KDE_EXCLUSION_MIME, URI_LIST_MIME,
 };
 use crate::common::Error;
 #[cfg(feature = "image-data")]
@@ -22,8 +23,6 @@ use crate::common::ImageData;
 
 #[cfg(feature = "image-data")]
 const MIME_PNG: &str = "image/png";
-
-const MIME_URI: &str = "text/uri-list";
 
 pub(crate) struct Clipboard {}
 
@@ -234,9 +233,20 @@ impl Clipboard {
 		&mut self,
 		selection: LinuxClipboardKind,
 	) -> Result<Vec<PathBuf>, Error> {
-		handle_clipboard_read(selection, paste::MimeType::Specific(MIME_URI), |contents| {
-			Ok(paths_from_uri_list(contents))
-		})
+		let read_file_list = |contents| Ok(paths_from_uri_list(contents));
+		match handle_clipboard_read(
+			selection,
+			paste::MimeType::Specific(URI_LIST_MIME),
+			read_file_list,
+		) {
+			Ok(paths) => Ok(paths),
+			Err(Error::ContentNotAvailable) => handle_clipboard_read(
+				selection,
+				paste::MimeType::Specific(GNOME_COPIED_FILES_MIME),
+				|contents| Ok(paths_from_uri_list(contents)),
+			),
+			Err(error) => Err(error),
+		}
 	}
 
 	pub(crate) fn set_file_list(
@@ -247,15 +257,20 @@ impl Clipboard {
 		exclude_from_history: bool,
 	) -> Result<(), Error> {
 		let files = paths_to_uri_list(file_list)?;
+		let gnome_files = gnome_copied_files_from_uri_list(&files);
 
 		let mut opts = Options::new();
 		opts.foreground(matches!(wait, WaitConfig::Forever));
 		opts.clipboard(selection.try_into()?);
 
-		let mut sources = Vec::with_capacity(if exclude_from_history { 2 } else { 1 });
+		let mut sources = Vec::with_capacity(if exclude_from_history { 3 } else { 2 });
 		sources.push(MimeSource {
 			source: Source::Bytes(files.into_bytes().into_boxed_slice()),
-			mime_type: MimeType::Specific(String::from(MIME_URI)),
+			mime_type: MimeType::Specific(String::from(URI_LIST_MIME)),
+		});
+		sources.push(MimeSource {
+			source: Source::Bytes(gnome_files.into_boxed_slice()),
+			mime_type: MimeType::Specific(String::from(GNOME_COPIED_FILES_MIME)),
 		});
 
 		add_clipboard_exclusions(exclude_from_history, &mut sources);
