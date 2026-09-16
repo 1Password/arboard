@@ -15,7 +15,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
+      - uses: step-security/setup-rust-toolchain@f547b7511b1e8f8d1cda8ef9f27bc365e7761fee # v2.0.0
         with:
           toolchain: stable
           components: rustfmt
@@ -38,7 +38,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
+      - uses: step-security/setup-rust-toolchain@f547b7511b1e8f8d1cda8ef9f27bc365e7761fee # v2.0.0
         with:
           toolchain: ${{ matrix.rust_version }}
           components: clippy
@@ -78,7 +78,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
+      - uses: step-security/setup-rust-toolchain@f547b7511b1e8f8d1cda8ef9f27bc365e7761fee # v2.0.0
         with:
           toolchain: stable
       - name: Checkout
@@ -107,7 +107,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
+      - uses: step-security/setup-rust-toolchain@f547b7511b1e8f8d1cda8ef9f27bc365e7761fee # v2.0.0
         with:
           toolchain: nightly-2023-10-08
           components: miri
