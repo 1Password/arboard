@@ -11,11 +11,11 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
-      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
+      - uses: step-security/setup-rust-toolchain@f547b7511b1e8f8d1cda8ef9f27bc365e7761fee # v2.0.0
         with:
           toolchain: stable
           components: rustfmt
@@ -34,11 +34,11 @@ jobs:
         rust_version: [stable, "1.71.0"]
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
-      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
+      - uses: step-security/setup-rust-toolchain@f547b7511b1e8f8d1cda8ef9f27bc365e7761fee # v2.0.0
         with:
           toolchain: ${{ matrix.rust_version }}
           components: clippy
@@ -78,11 +78,11 @@ jobs:
         os: [macos-latest, windows-latest]
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
-      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
+      - uses: step-security/setup-rust-toolchain@f547b7511b1e8f8d1cda8ef9f27bc365e7761fee # v2.0.0
         with:
           toolchain: stable
       - name: Checkout
@@ -107,11 +107,11 @@ jobs:
         os: [windows-latest]
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
 
-      - uses: step-security/setup-rust-toolchain@a8823c6cdb5668ac7528d7756acfee772bf71809 # v1.16.1
+      - uses: step-security/setup-rust-toolchain@f547b7511b1e8f8d1cda8ef9f27bc365e7761fee # v2.0.0
         with:
           toolchain: nightly-2023-10-08
           components: miri
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Harden the runner (Audit all outbound calls)
-      uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+      uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
       with:
         egress-policy: audit
 
