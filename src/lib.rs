@@ -8,6 +8,7 @@ the Apache 2.0 or the MIT license at the licensee's choice. The terms
 and conditions of the chosen license apply to this file.
 */
 #![warn(unreachable_pub)]
+#![warn(clippy::print_stdout, clippy::print_stderr)]
 
 mod common;
 use std::{

@@ -1168,8 +1168,6 @@ impl Drop for Clipboard {
 				// or log.
 				#[cfg(debug_assertions)]
 				if let Some(inner) = Arc::get_mut(&mut self.inner) {
-					use std::io::IsTerminal;
-
 					let mut change_timestamps = Vec::with_capacity(2);
 					let mut collect_changed = |sel: &mut Mutex<Option<Instant>>| {
 						if let Some(changed) = sel.get_mut() {
@@ -1191,15 +1189,7 @@ impl Drop for Clipboard {
 							return;
 						}
 
-						// If the app isn't running in a terminal don't print, use log instead.
-						// Printing has a higher chance of being seen though, so its our default.
-						// Its also close enough to a `debug_assert!` that it shouldn't come across strange.
-						let msg = format!("Clipboard was dropped very quickly after writing ({elapsed}ms); clipboard managers may not have seen the contents\nConsider keeping `Clipboard` in more persistent state somewhere or keeping the contents alive longer using `SetLinuxExt` and/or threads.");
-						if std::io::stderr().is_terminal() {
-							eprintln!("{msg}");
-						} else {
-							log::warn!("{msg}");
-						}
+						warn!("Clipboard was dropped very quickly after writing ({elapsed}ms); clipboard managers may not have seen the contents\nConsider keeping `Clipboard` in more persistent state somewhere or keeping the contents alive longer using `SetLinuxExt` and/or threads.");
 					}
 				}
 			}
