@@ -29,7 +29,7 @@ use std::{
 use log::{error, trace, warn};
 use parking_lot::{Condvar, Mutex, MutexGuard, RwLock};
 use x11rb::{
-	connection::Connection,
+	connection::{Connection, RequestConnection},
 	protocol::{
 		xproto::{
 			Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
@@ -46,13 +46,14 @@ use x11rb::{
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
 use super::{
-	gnome_copied_files_from_uri_list, into_unknown, paths_from_uri_list, paths_to_uri_list,
-	LinuxClipboardKind, WaitConfig, GNOME_COPIED_FILES_MIME, KDE_EXCLUSION_HINT,
-	KDE_EXCLUSION_MIME, URI_LIST_MIME,
+	gnome_copied_files_from_uri_list, into_unknown, nautilus_clipboard_from_uri_list,
+	paths_from_uri_list, paths_to_uri_list, LinuxClipboardKind, WaitConfig,
+	GNOME_COPIED_FILES_MIME, KDE_EXCLUSION_HINT, KDE_EXCLUSION_MIME, NAUTILUS_CLIPBOARD_MIME,
+	URI_LIST_MIME,
 };
 #[cfg(feature = "image-data")]
 use crate::ImageData;
-use crate::{common::ScopeGuard, Error};
+use crate::{common::ScopeGuard, ClipboardFormat, Error};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -84,6 +85,7 @@ x11rb::atom_manager! {
 		HTML: b"text/html",
 		URI_LIST: URI_LIST_MIME.as_bytes(),
 		GNOME_COPIED_FILES: GNOME_COPIED_FILES_MIME.as_bytes(),
+		NAUTILUS_CLIPBOARD: NAUTILUS_CLIPBOARD_MIME.as_bytes(),
 
 		PNG_MIME: b"image/png",
 		X_KDE_PASSWORDMANAGERHINT: KDE_EXCLUSION_MIME.as_bytes(),
@@ -326,7 +328,7 @@ impl Inner {
 
 		trace!("Trying to get the clipboard data.");
 		for format in formats {
-			match self.read_single(&reader, selection, *format) {
+			match self.read_single(&reader, selection, *format, false) {
 				Ok(bytes) => {
 					return Ok(ClipboardData { bytes, format: *format });
 				}
@@ -344,6 +346,7 @@ impl Inner {
 		reader: &XContext,
 		selection: LinuxClipboardKind,
 		target_format: Atom,
+		raw: bool,
 	) -> Result<Vec<u8>> {
 		// Delete the property so that we can detect (using property notify)
 		// when the selection owner receives our request.
@@ -369,6 +372,11 @@ impl Inner {
 
 		let mut incr_data: Vec<u8> = Vec::new();
 		let mut using_incr = false;
+		let mut transfer_type = if raw {
+			None
+		} else {
+			Some(if target_format == self.atoms.TARGETS { self.atoms.ATOM } else { target_format })
+		};
 
 		let mut timeout_end = Instant::now() + LONG_TIMEOUT_DUR;
 
@@ -389,7 +397,7 @@ impl Inner {
 						reader,
 						target_format,
 						&mut using_incr,
-						&mut incr_data,
+						raw,
 						event,
 					)?;
 					match result {
@@ -409,7 +417,7 @@ impl Inner {
 				Event::PropertyNotify(event) => {
 					let result = self.handle_read_property_notify(
 						reader,
-						target_format,
+						&mut transfer_type,
 						using_incr,
 						&mut incr_data,
 						&mut timeout_end,
@@ -498,7 +506,7 @@ impl Inner {
 		reader: &XContext,
 		target_format: u32,
 		using_incr: &mut bool,
-		incr_data: &mut Vec<u8>,
+		raw: bool,
 		event: SelectionNotifyEvent,
 	) -> Result<ReadSelNotifyResult> {
 		// The property being set to NONE means that the `convert_selection`
@@ -518,9 +526,9 @@ impl Inner {
 			return Ok(ReadSelNotifyResult::EventNotRecognized);
 		}
 		// request the selection
-		let mut reply = reader
+		let reply = reader
 			.conn
-			.get_property(true, event.requestor, event.property, event.target, 0, u32::MAX / 4)
+			.get_property(true, event.requestor, event.property, AtomEnum::ANY, 0, u32::MAX / 4)
 			.map_err(into_unknown)?
 			.reply()
 			.map_err(into_unknown)?;
@@ -528,32 +536,18 @@ impl Inner {
 		// trace!("Property.type: {:?}", self.atom_name(reply.type_));
 
 		// we found something
-		if reply.type_ == target_format {
+		if reply.type_ != self.atoms.INCR
+			&& (reply.type_ == target_format
+				|| (raw && reply.type_ != NONE && [8, 16, 32].contains(&reply.format))
+				|| (target_format == self.atoms.TARGETS
+					&& reply.type_ == self.atoms.ATOM
+					&& reply.format == 32))
+		{
 			Ok(ReadSelNotifyResult::GotData(reply.value))
 		} else if reply.type_ == self.atoms.INCR {
-			// Note that we call the get_property again because we are
-			// indicating that we are ready to receive the data by deleting the
-			// property, however deleting only works if the type matches the
-			// property type. But the type didn't match in the previous call.
-			reply = reader
-				.conn
-				.get_property(
-					true,
-					event.requestor,
-					event.property,
-					self.atoms.INCR,
-					0,
-					u32::MAX / 4,
-				)
-				.map_err(into_unknown)?
-				.reply()
-				.map_err(into_unknown)?;
+			// The ANY-type read deleted the INCR property, which starts the transfer.
 			log::trace!("Receiving INCR segments");
 			*using_incr = true;
-			if reply.value_len == 4 {
-				let min_data_len = reply.value32().and_then(|mut vals| vals.next()).unwrap_or(0);
-				incr_data.reserve(min_data_len as usize);
-			}
 			Ok(ReadSelNotifyResult::IncrStarted)
 		} else {
 			// this should never happen, we have sent a request only for supported types
@@ -565,7 +559,7 @@ impl Inner {
 	fn handle_read_property_notify(
 		&self,
 		reader: &XContext,
-		target_format: u32,
+		transfer_type: &mut Option<Atom>,
 		using_incr: bool,
 		incr_data: &mut Vec<u8>,
 		timeout_end: &mut Instant,
@@ -581,10 +575,17 @@ impl Inner {
 		}
 		let reply = reader
 			.conn
-			.get_property(true, event.window, event.atom, target_format, 0, u32::MAX / 4)
+			.get_property(true, event.window, event.atom, AtomEnum::ANY, 0, u32::MAX / 4)
 			.map_err(into_unknown)?
 			.reply()
 			.map_err(into_unknown)?;
+		if reply.type_ == NONE
+			|| ![8, 16, 32].contains(&reply.format)
+			|| transfer_type.is_some_and(|expected| expected != reply.type_)
+		{
+			return Err(Error::ConversionFailure);
+		}
+		*transfer_type = Some(reply.type_);
 
 		// log::trace!("Received segment. value_len {}", reply.value_len,);
 		if reply.value_len == 0 {
@@ -600,12 +601,27 @@ impl Inner {
 		Ok(false)
 	}
 
-	fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<()> {
+	fn data_for_target<'a>(
+		&self,
+		data: &'a [ClipboardData],
+		target: Atom,
+	) -> Option<&'a ClipboardData> {
+		data.iter().find(|data| data.format == target).or_else(|| {
+			// Advertised UTF-8 aliases share bytes unless the caller supplies their own.
+			if target == self.atoms.UTF8_MIME_0 || target == self.atoms.UTF8_MIME_1 {
+				data.iter().find(|data| data.format == self.atoms.UTF8_STRING)
+			} else {
+				None
+			}
+		})
+	}
+
+	fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<bool> {
 		let selection = match self.kind_of(event.selection) {
 			Some(kind) => kind,
 			None => {
 				warn!("Received a selection request to a selection other than the CLIPBOARD, PRIMARY or SECONDARY. This is unexpected.");
-				return Ok(());
+				return Ok(false);
 			}
 		};
 
@@ -671,7 +687,7 @@ impl Inner {
 			trace!("Handling request for (probably) the clipboard contents.");
 			let data = self.selection_of(selection).data.read();
 			if let Some(data_list) = &*data {
-				success = match data_list.iter().find(|d| d.format == event.target) {
+				success = match self.data_for_target(data_list, event.target) {
 					Some(data) => {
 						self.server
 							.conn
@@ -716,7 +732,8 @@ impl Inner {
 			)
 			.map_err(into_unknown)?;
 
-		self.server.conn.flush().map_err(into_unknown)
+		self.server.conn.flush().map_err(into_unknown)?;
+		Ok(success && event.target != self.atoms.TARGETS)
 	}
 
 	fn ask_clipboard_manager_to_request_our_data(&self) -> Result<()> {
@@ -864,12 +881,15 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 					context.atom_name_dbg(event.target),
 				);
 				// Someone is requesting the clipboard content from us.
-				if let Err(e) = context.handle_selection_request(event) {
-					error!("Failed to handle selection request: {e}");
-					continue;
-				}
+				let served = match context.handle_selection_request(event) {
+					Ok(served) => served,
+					Err(e) => {
+						error!("Failed to handle selection request: {e}");
+						continue;
+					}
+				};
 
-				if let Some(selection) = context.kind_of(event.selection) {
+				if let Some(selection) = context.kind_of(event.selection).filter(|_| served) {
 					let selection = context.selection_of(selection);
 
 					// It is important that this mutex is locked at the time of calling
@@ -886,7 +906,7 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 				if *handover_state == ManagerHandoverState::InProgress {
 					// Only set written, when the actual contents were written,
 					// not just a response to what TARGETS we have.
-					if event.target != context.atoms.TARGETS {
+					if served {
 						trace!("The contents were written to the clipboard manager.");
 						written = true;
 						// if we have written and notified, make sure to notify that we are done
@@ -937,6 +957,99 @@ pub(crate) struct Clipboard {
 }
 
 impl Clipboard {
+	fn raw_atom(&self, format: &ClipboardFormat) -> Result<Atom> {
+		if matches!(
+			format.native.as_str(),
+			"TARGETS"
+				| "SAVE_TARGETS"
+				| "INCR" | "MULTIPLE"
+				| "TIMESTAMP"
+				| "DELETE" | "INSERT_SELECTION"
+				| "INSERT_PROPERTY"
+		) {
+			return Err(Error::UnsupportedFormat);
+		}
+		self.intern(&format.native)
+	}
+
+	fn intern(&self, name: &str) -> Result<Atom> {
+		Ok(self
+			.inner
+			.server
+			.conn
+			.intern_atom(false, name.as_bytes())
+			.map_err(into_unknown)?
+			.reply()
+			.map_err(into_unknown)?
+			.atom)
+	}
+
+	pub(crate) fn formats(&self, selection: LinuxClipboardKind) -> Result<Vec<ClipboardFormat>> {
+		let owner = self
+			.inner
+			.server
+			.conn
+			.get_selection_owner(self.inner.atom_of(selection))
+			.map_err(into_unknown)?
+			.reply()
+			.map_err(into_unknown)?
+			.owner;
+		if owner == NONE {
+			return Ok(Vec::new());
+		}
+		let reader = XContext::new()?;
+		let bytes = self.inner.read_single(&reader, selection, self.inner.atoms.TARGETS, false)?;
+		if bytes.len() % 4 != 0 {
+			return Err(Error::ConversionFailure);
+		}
+		let atoms = bytes.chunks_exact(4).map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]));
+		let mut formats = Vec::new();
+		for atom in atoms {
+			let format = ClipboardFormat { native: self.inner.atom_name(atom)? };
+			if !formats.contains(&format) {
+				formats.push(format);
+			}
+		}
+		Ok(formats)
+	}
+
+	pub(crate) fn raw(
+		&self,
+		format: &ClipboardFormat,
+		selection: LinuxClipboardKind,
+	) -> Result<Vec<u8>> {
+		let atom = self.raw_atom(format)?;
+		if self.inner.is_owner(selection)? {
+			let data = self.inner.selection_of(selection).data.read();
+			return data
+				.as_deref()
+				.and_then(|data| self.inner.data_for_target(data, atom))
+				.map(|data| data.bytes.clone())
+				.ok_or(Error::ContentNotAvailable);
+		}
+		self.inner.read_single(&XContext::new()?, selection, atom, true)
+	}
+
+	pub(crate) fn set_formats(
+		&self,
+		data: Vec<(ClipboardFormat, Vec<u8>)>,
+		selection: LinuxClipboardKind,
+		wait: WaitConfig,
+	) -> Result<()> {
+		let data = data
+			.into_iter()
+			.map(|(format, bytes)| {
+				let format = self.raw_atom(&format)?;
+				// The server sends one ChangeProperty request, including its BIG-REQUESTS header.
+				if bytes.len() > self.inner.server.conn.maximum_request_bytes().saturating_sub(28) {
+					return Err(Error::ConversionFailure);
+				}
+				Ok(ClipboardData { format, bytes })
+			})
+			.collect::<Result<Vec<_>>>()?;
+		self.inner.write(data, selection, wait)
+	}
+
 	pub(crate) fn new() -> Result<Self> {
 		let mut global_cb = CLIPBOARD.lock();
 		if let Some(global_cb) = &*global_cb {
@@ -1082,10 +1195,14 @@ impl Clipboard {
 	}
 
 	pub(crate) fn get_file_list(&self, selection: LinuxClipboardKind) -> Result<Vec<PathBuf>> {
-		let formats = [self.inner.atoms.URI_LIST, self.inner.atoms.GNOME_COPIED_FILES];
+		let formats = [
+			self.inner.atoms.URI_LIST,
+			self.inner.atoms.GNOME_COPIED_FILES,
+			self.inner.atoms.NAUTILUS_CLIPBOARD,
+		];
 		let result = self.inner.read(&formats, selection)?;
 
-		Ok(paths_from_uri_list(result.bytes))
+		paths_from_uri_list(result.bytes)
 	}
 
 	pub(crate) fn set_file_list(
@@ -1097,12 +1214,17 @@ impl Clipboard {
 	) -> Result<()> {
 		let files = paths_to_uri_list(file_list)?;
 		let gnome_files = gnome_copied_files_from_uri_list(&files);
-		let mut data = Vec::with_capacity(if exclude_from_history { 3 } else { 2 });
+		let nautilus_files = nautilus_clipboard_from_uri_list(&files);
+		let mut data = Vec::with_capacity(if exclude_from_history { 4 } else { 3 });
 
 		data.push(ClipboardData { bytes: files.into_bytes(), format: self.inner.atoms.URI_LIST });
 		data.push(ClipboardData {
 			bytes: gnome_files,
 			format: self.inner.atoms.GNOME_COPIED_FILES,
+		});
+		data.push(ClipboardData {
+			bytes: nautilus_files,
+			format: self.inner.atoms.NAUTILUS_CLIPBOARD,
 		});
 		self.add_clipboard_exclusions(exclude_from_history, &mut data);
 
