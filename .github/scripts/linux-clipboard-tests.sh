@@ -4,6 +4,13 @@ set -euo pipefail
 backend="${1:?Specify x11 or wayland}"
 shift
 
+run_tests() {
+    # The legacy aggregate assumes a desktop clipboard manager. Native-client
+    # integration covers transfers without one; all other library tests run here.
+    timeout 180s cargo test "$@" --lib -- --skip tests::all_tests
+    timeout 180s cargo test "$@" --test linux_clipboard -- --nocapture
+}
+
 case "$backend" in
     x11)
         unset DISPLAY WAYLAND_DISPLAY
@@ -25,7 +32,7 @@ case "$backend" in
             sleep 0.05
         done
         : "${DISPLAY:?Xvfb did not allocate a display}"
-        timeout 180s cargo test "$@" --test linux_clipboard -- --nocapture
+        run_tests "$@"
         ;;
     wayland)
         unset DISPLAY WAYLAND_DISPLAY
@@ -53,7 +60,7 @@ case "$backend" in
             sleep 0.05
         done
         : "${WAYLAND_DISPLAY:?The compositor did not create a Wayland socket}"
-        timeout 180s cargo test "$@" --test linux_clipboard -- --nocapture
+        run_tests "$@"
         ;;
     *)
         echo "Unknown backend: $backend" >&2

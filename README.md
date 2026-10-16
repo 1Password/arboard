@@ -91,6 +91,9 @@ fn main() {
 
 The Linux integration tests exchange clipboard data with independent native clients.
 They require an isolated display and replace its clipboard contents.
+The script also runs library tests under the isolated display. It excludes the legacy
+`tests::all_tests` aggregate, which assumes a clipboard manager. Native macOS and
+Windows CI still run that aggregate.
 
 Build the test container:
 
