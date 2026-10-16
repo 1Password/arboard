@@ -143,6 +143,7 @@ They also require `pbcopy`, PowerShell, `xclip`, or `wl-copy`.
 Run `cargo test --test watcher -- --ignored` to execute them.
 They overwrite the clipboard and fail if the native service is unavailable.
 The default test suite reports these tests as ignored; it does not silently skip them.
+The macOS and Windows CI jobs explicitly run the native watcher test with all features.
 On Linux, `bash tools/test_watchers_linux.sh` starts isolated Xvfb and Sway servers.
 It tests native changes, external writes, shutdown, server disconnection, and missing XFixes support.
 It requires Cargo, Xvfb, Sway, `xclip`, `wl-copy`, and `timeout`.
