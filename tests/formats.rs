@@ -484,7 +484,10 @@ fn linux(clipboard: &mut Clipboard, custom: &ClipboardFormat) {
 		std::thread::sleep(std::time::Duration::from_millis(5));
 	}
 	assert!(
-		matches!(result.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)),
+		matches!(
+			result.recv_timeout(std::time::Duration::from_millis(50)),
+			Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+		),
 		"A single-request write must wait for a reader"
 	);
 	let status = std::process::Command::new(std::env::current_exe().unwrap())
