@@ -217,6 +217,7 @@ impl ClipboardWatcher {
 	/// Stops the worker, discards pending changes, wakes waits, and joins the worker thread.
 	///
 	/// This method is idempotent. A pending native error remains available to the next wait.
+	/// If this call stops the watcher first, errors from an in-flight poll are discarded.
 	/// Returns an error only if the worker thread could not be joined.
 	pub fn stop(&self) -> Result<(), Error> {
 		self.shared.finish(None);
@@ -231,11 +232,11 @@ impl ClipboardWatcher {
 impl Shared {
 	fn finish(&self, error: Option<Error>) {
 		let mut state = self.state.lock().unwrap();
-		state.stopped = true;
-		state.changed = false;
-		if error.is_some() {
+		if !state.stopped {
 			state.error = error;
 		}
+		state.stopped = true;
+		state.changed = false;
 		self.wake.notify_all();
 	}
 }
@@ -412,6 +413,34 @@ mod tests {
 			stopped_rx.recv_timeout(Duration::from_secs(3)).unwrap();
 			thread.join().unwrap();
 		}
+	}
+
+	#[test]
+	fn stopped_remains_terminal_after_in_flight_poll_error() {
+		let (entered_tx, entered_rx) = mpsc::channel();
+		let (release_tx, release_rx) = mpsc::channel();
+		let watcher = Arc::new(
+			ClipboardWatcher::spawn(move || {
+				Ok(move || {
+					entered_tx.send(()).unwrap();
+					release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+					Err(Error::ClipboardOccupied)
+				})
+			})
+			.unwrap(),
+		);
+		assert_eq!(watcher.wait().unwrap(), ClipboardEvent::Changed);
+		entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+		let stopping = watcher.clone();
+		let stopper = thread::spawn(move || stopping.stop().unwrap());
+		assert_eq!(
+			watcher.wait_timeout(Duration::from_secs(3)).unwrap(),
+			Some(ClipboardEvent::Stopped)
+		);
+		release_tx.send(()).unwrap();
+		stopper.join().unwrap();
+		assert_eq!(watcher.wait().unwrap(), ClipboardEvent::Stopped);
+		assert_eq!(watcher.wait_timeout(Duration::ZERO).unwrap(), Some(ClipboardEvent::Stopped));
 	}
 
 	#[test]
