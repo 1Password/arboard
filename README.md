@@ -87,6 +87,51 @@ fn main() {
 }
 ```
 
+## Native formats and combined writes
+
+Run `cargo run --example formats` to publish text, HTML, RTF, and custom bytes together.
+The example also shows format discovery, presence checks, native names, and standalone byte writes.
+It replaces the system clipboard contents.
+
+Use `ClipboardFormat::register` for native names. Windows standard formats use numeric identifiers,
+not MIME strings. Use `ClipboardFormat::from_windows_id` for these identifiers.
+Format identities remain valid only within the native OS session.
+
+Use `clipboard.get().formats()` to list formats without data transfer.
+Use `contains` for a presence check and `raw` for native bytes.
+Windows raw access supports documented global-memory formats, not bitmap, palette, or metafile handles.
+X11 raw writes larger than one native property request fail before the clipboard changes.
+Raw reads preserve native terminators and can include zero-filled Windows allocation padding.
+The OS can supply synthesized formats. Native macOS byte reads can combine multiple text items.
+The existing typed text getter still returns the first text item.
+Run `cargo run --example get_raw -- NATIVE_FORMAT` to write native bytes to standard output.
+
+Use `clipboard.set().formats(...)` for one write with several representations.
+The typed HTML variant adds native headers. The RTF variant accepts non-UTF-8 bytes.
+Raw variants require the complete native encoding.
+This API does not convert images or file lists in a combined write.
+Use their existing typed setters, or supply encoded native bytes.
+
+The setter prepares data before it clears or replaces the clipboard once.
+It rejects duplicate native identities, including conflicts with privacy markers.
+An OS failure can leave partial contents. The API does not promise rollback.
+All privacy, Linux selection, and Linux wait options apply to combined writes.
+Discovery and presence checks are snapshots; another application can change the clipboard before a read.
+
+Linux file lists support URI lists, GNOME copied files, and Nautilus clipboard data.
+Local file URIs accept an empty host or `localhost`.
+Remote hosts, malformed escapes, and unescaped query or fragment separators return a conversion error.
+Percent escapes preserve non-UTF-8 filename bytes. Other URI schemes and header lines are ignored.
+File writes fail if any path cannot resolve; they do not silently omit that path.
+Run `cargo run --example file_list -- Cargo.toml` to show these native file representations.
+
+The integration tests require a native clipboard. They fail when no backend is available.
+On Linux, run `xvfb-run -a cargo test --test formats --all-features` for X11.
+With Python 3 and `xclip`, run `xvfb-run -a python3 tools/test-raw-x11.py` for an incremental raw transfer.
+For Wayland, install Sway, then run
+`bash tools/with-wayland.sh cargo test --test formats --all-features`.
+The helper creates a private headless compositor and removes it after the command.
+
 ## Credits
 
 This crate is a combined effort by 1Password staff and `@ArturKovacs`, the crate's past

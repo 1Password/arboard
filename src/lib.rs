@@ -10,6 +10,8 @@ and conditions of the chosen license apply to this file.
 #![warn(unreachable_pub)]
 
 mod common;
+mod formats;
+pub use formats::{ClipboardContent, ClipboardFormat};
 use std::{
 	borrow::Cow,
 	path::{Path, PathBuf},
@@ -185,6 +187,40 @@ pub struct Get<'clipboard> {
 }
 
 impl Get<'_> {
+	/// Lists the formats offered by the selected clipboard without reading their data.
+	///
+	/// An empty clipboard returns an empty list. The clipboard can change after this call.
+	/// See `cargo run --example formats`.
+	pub fn formats(self) -> Result<Vec<ClipboardFormat>, Error> {
+		self.platform.formats()
+	}
+
+	/// Checks whether the selected clipboard offers a native format without reading its data.
+	///
+	/// This is a snapshot, not a guarantee that a later read succeeds.
+	pub fn contains(self, format: &ClipboardFormat) -> Result<bool, Error> {
+		Ok(self.formats()?.contains(format))
+	}
+
+	/// Reads native bytes without additional encoding or decoding.
+	///
+	/// Windows supports only global-memory byte formats. Handle-backed formats return
+	/// [`Error::UnsupportedFormat`]. Windows data can include allocation padding and terminators.
+	/// The OS can supply synthesized formats. On macOS, native pasteboard reads can combine
+	/// multiple text items. Use [`Self::text`] to read only the first text item.
+	/// X11 protocol targets such as `TARGETS` do not support raw access.
+	pub fn raw(self, format: &ClipboardFormat) -> Result<Vec<u8>, Error> {
+		self.platform.raw(format)
+	}
+
+	/// Reads RTF bytes without requiring UTF-8.
+	///
+	/// Uses `text/rtf` on Linux, `public.rtf` on macOS, and `Rich Text Format` on Windows.
+	/// Native terminators and allocation padding remain in the result.
+	pub fn rtf(self) -> Result<Vec<u8>, Error> {
+		self.raw(&ClipboardFormat::rtf()?)
+	}
+
 	/// Completes the "get" operation by fetching UTF-8 text from the clipboard.
 	pub fn text(self) -> Result<String, Error> {
 		self.platform.text()
@@ -226,6 +262,46 @@ pub struct Set<'clipboard> {
 }
 
 impl Set<'_> {
+	/// Writes native bytes without conversion and replaces the selected clipboard contents.
+	///
+	/// The caller must supply the native encoding, including any required headers and terminators.
+	/// Windows handle-backed formats return [`Error::UnsupportedFormat`].
+	/// X11 writes larger than one native property request return [`Error::ConversionFailure`].
+	/// All platform options on this builder apply.
+	pub fn raw<'a>(
+		self,
+		format: ClipboardFormat,
+		bytes: impl Into<Cow<'a, [u8]>>,
+	) -> Result<(), Error> {
+		self.formats([ClipboardContent::Raw(format, bytes.into())])
+	}
+
+	/// Writes RTF bytes without requiring UTF-8.
+	///
+	/// The bytes must contain a complete RTF document. All platform options on this builder apply.
+	pub fn rtf<'a>(self, bytes: impl Into<Cow<'a, [u8]>>) -> Result<(), Error> {
+		self.formats([ClipboardContent::Rtf(bytes.into())])
+	}
+
+	/// Replaces the clipboard with several representations in one write.
+	///
+	/// All representations are encoded and checked before the clipboard changes.
+	/// Duplicate native identifiers return [`Error::DuplicateFormat`], including conflicts with
+	/// privacy markers. An empty iterator returns [`Error::InvalidFormat`].
+	///
+	/// The backend clears or replaces the clipboard once. An OS failure can leave partial
+	/// contents; this operation does not promise atomic rollback.
+	/// Distinct macOS identifiers can be aliases. For such aliases, the last write takes precedence.
+	/// All privacy options, Linux selection options, and Linux wait options apply.
+	///
+	/// See `cargo run --example formats` for text, HTML, RTF, and custom bytes in one write.
+	pub fn formats<'a>(
+		self,
+		contents: impl IntoIterator<Item = ClipboardContent<'a>>,
+	) -> Result<(), Error> {
+		self.platform.formats(contents.into_iter().collect())
+	}
+
 	/// Completes the "set" operation by placing text onto the clipboard. Any valid UTF-8 string
 	/// is accepted.
 	pub fn text<'a, T: Into<Cow<'a, str>>>(self, text: T) -> Result<(), Error> {

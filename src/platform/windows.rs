@@ -11,6 +11,7 @@ and conditions of the chosen license apply to this file.
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
 use crate::common::{private, Error};
+use crate::{formats::push_unique, ClipboardContent, ClipboardFormat};
 use std::{
 	borrow::Cow,
 	io,
@@ -21,10 +22,10 @@ use std::{
 	time::Duration,
 };
 use windows_sys::Win32::{
-	Foundation::{GetLastError, GlobalFree, HANDLE, HGLOBAL, POINT, S_OK},
+	Foundation::{GetLastError, GlobalFree, SetLastError, HANDLE, HGLOBAL, POINT, S_OK},
 	Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS, VOLUME_NAME_DOS},
 	System::{
-		DataExchange::SetClipboardData,
+		DataExchange::{EnumClipboardFormats, GetClipboardFormatNameW, SetClipboardData},
 		Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND},
 		Ole::CF_HDROP,
 	},
@@ -515,6 +516,81 @@ impl ResultValue for isize {
 /// every operation and then closed afterwards.
 pub(crate) struct Clipboard(());
 
+pub(crate) fn register_format(name: &str) -> Result<ClipboardFormat, Error> {
+	clipboard_win::register_format(name)
+		.map(|id| ClipboardFormat { native: id.get() })
+		.ok_or_else(|| last_error("Could not register clipboard format"))
+}
+
+pub(crate) fn format_name(format: &ClipboardFormat) -> Result<Option<String>, Error> {
+	if format.native < 0xc000 {
+		return Ok(None);
+	}
+	let mut name = [0u16; 256];
+	let len =
+		unsafe { GetClipboardFormatNameW(format.native, name.as_mut_ptr(), name.len() as i32) };
+	if len == 0 {
+		return Err(last_error("Could not read clipboard format name"));
+	}
+	String::from_utf16(&name[..len as usize]).map(Some).map_err(|_| Error::ConversionFailure)
+}
+
+fn validate_raw(format: &ClipboardFormat) -> Result<(), Error> {
+	// Only documented HGLOBAL formats are byte-backed. Bitmap, palette, metafile,
+	// owner-display, private, and GDI-object formats can contain native handles.
+	match format.native {
+		1 | 4..=8 | 10..=13 | 15..=17 | 0x81 | 0xc000..=0xffff => Ok(()),
+		_ => Err(Error::UnsupportedFormat),
+	}
+}
+
+#[test]
+fn raw_format_storage_kinds() {
+	for native in [1, 4, 5, 6, 7, 8, 10, 11, 12, 13, 15, 16, 17, 0x81, 0xc000, 0xffff] {
+		assert!(validate_raw(&ClipboardFormat { native }).is_ok());
+	}
+	for native in [0, 2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8e, 0x200, 0x300] {
+		assert!(matches!(validate_raw(&ClipboardFormat { native }), Err(Error::UnsupportedFormat)));
+	}
+}
+
+struct PreparedData {
+	format: u32,
+	memory: HGLOBAL,
+}
+
+impl PreparedData {
+	fn new(format: ClipboardFormat, bytes: &[u8]) -> Result<Self, Error> {
+		validate_raw(&format)?;
+		// GlobalAlloc can add zero-filled padding. Keep empty byte formats as a
+		// real memory object rather than a delayed-rendering NULL handle.
+		let memory = unsafe { global_alloc(bytes.len().max(1))? };
+		let prepared = Self { format: format.native, memory };
+		unsafe {
+			let destination = global_lock(memory)?;
+			std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination, bytes.len());
+			global_unlock_checked(memory);
+		}
+		Ok(prepared)
+	}
+
+	fn publish(mut self) -> Result<(), Error> {
+		if unsafe { SetClipboardData(self.format, self.memory as HANDLE) }.failure() {
+			return Err(last_error("Could not publish clipboard data"));
+		}
+		self.memory = std::ptr::null_mut();
+		Ok(())
+	}
+}
+
+impl Drop for PreparedData {
+	fn drop(&mut self) {
+		if !self.memory.is_null() {
+			unsafe { GlobalFree(self.memory) };
+		}
+	}
+}
+
 // The other platforms have `Drop` implementation on their
 // clipboard, so Windows should too for consistently.
 impl Drop for Clipboard {
@@ -580,6 +656,35 @@ pub(crate) struct Get<'clipboard> {
 impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
 		Self { clipboard: clipboard.open() }
+	}
+
+	pub(crate) fn formats(self) -> Result<Vec<ClipboardFormat>, Error> {
+		let _clipboard_assertion = self.clipboard?;
+		let mut formats = Vec::new();
+		let mut id = 0;
+		loop {
+			unsafe { SetLastError(0) };
+			id = unsafe { EnumClipboardFormats(id) };
+			if id == 0 {
+				if unsafe { GetLastError() } != 0 {
+					return Err(last_error("Could not enumerate clipboard formats"));
+				}
+				return Ok(formats);
+			}
+			formats.push(ClipboardFormat { native: id });
+		}
+	}
+
+	pub(crate) fn raw(self, format: &ClipboardFormat) -> Result<Vec<u8>, Error> {
+		validate_raw(format)?;
+		let _clipboard_assertion = self.clipboard?;
+		if !clipboard_win::is_format_avail(format.native) {
+			return Err(Error::ContentNotAvailable);
+		}
+		let mut bytes = Vec::new();
+		clipboard_win::raw::get_vec(format.native, &mut bytes)
+			.map_err(|error| Error::unknown(format!("Could not read clipboard bytes: {error}")))?;
+		Ok(bytes)
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
@@ -669,6 +774,55 @@ impl<'clipboard> Set<'clipboard> {
 			exclude_from_cloud: false,
 			exclude_from_history: false,
 		}
+	}
+
+	pub(crate) fn formats(self, contents: Vec<ClipboardContent<'_>>) -> Result<(), Error> {
+		let _clipboard_assertion = self.clipboard?;
+		if contents.is_empty() {
+			return Err(Error::InvalidFormat);
+		}
+		let mut data = Vec::new();
+		for content in contents {
+			let (format, bytes) = match content {
+				ClipboardContent::Text(text) => {
+					if text.contains('\0') {
+						return Err(Error::ConversionFailure);
+					}
+					let bytes =
+						text.encode_utf16().chain(Some(0)).flat_map(u16::to_le_bytes).collect();
+					(ClipboardFormat { native: clipboard_win::formats::CF_UNICODETEXT }, bytes)
+				}
+				ClipboardContent::Html(html) => {
+					(ClipboardFormat::register("HTML Format")?, wrap_html(&html).into_bytes())
+				}
+				ClipboardContent::Rtf(bytes) => (ClipboardFormat::rtf()?, bytes.into_owned()),
+				ClipboardContent::Raw(format, bytes) => (format, bytes.into_owned()),
+			};
+			validate_raw(&format)?;
+			push_unique(&mut data, format, bytes)?;
+		}
+		for (enabled, name) in [
+			(self.exclude_from_monitoring, "ExcludeClipboardContentFromMonitorProcessing"),
+			(self.exclude_from_cloud, "CanUploadToCloudClipboard"),
+			(self.exclude_from_history, "CanIncludeInClipboardHistory"),
+		] {
+			if enabled {
+				push_unique(
+					&mut data,
+					ClipboardFormat::register(name)?,
+					0u32.to_le_bytes().to_vec(),
+				)?;
+			}
+		}
+		let prepared = data
+			.into_iter()
+			.map(|(format, bytes)| PreparedData::new(format, &bytes))
+			.collect::<Result<Vec<_>, _>>()?;
+		clipboard_win::raw::empty().map_err(|error| Error::unknown(error.to_string()))?;
+		for data in prepared {
+			data.publish()?;
+		}
+		Ok(())
 	}
 
 	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {

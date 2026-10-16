@@ -1,6 +1,6 @@
 use std::{
 	borrow::Cow,
-	os::unix::ffi::OsStrExt,
+	os::unix::ffi::{OsStrExt, OsStringExt},
 	path::{Path, PathBuf},
 	time::Instant,
 };
@@ -11,7 +11,7 @@ use percent_encoding::{percent_decode, percent_encode, AsciiSet, CONTROLS};
 
 #[cfg(feature = "image-data")]
 use crate::ImageData;
-use crate::{common::private, Error};
+use crate::{common::private, formats::push_unique, ClipboardContent, ClipboardFormat, Error};
 
 // Magic strings used in `Set::exclude_from_history()` on linux
 const KDE_EXCLUSION_MIME: &str = "x-kde-passwordManagerHint";
@@ -19,6 +19,15 @@ const KDE_EXCLUSION_HINT: &[u8] = b"secret";
 
 const URI_LIST_MIME: &str = "text/uri-list";
 const GNOME_COPIED_FILES_MIME: &str = "x-special/gnome-copied-files";
+const NAUTILUS_CLIPBOARD_MIME: &str = "x-special/nautilus-clipboard";
+
+pub(crate) fn register_format(name: &str) -> Result<ClipboardFormat, Error> {
+	Ok(ClipboardFormat { native: name.to_owned() })
+}
+
+pub(crate) fn format_name(format: &ClipboardFormat) -> Result<Option<String>, Error> {
+	Ok(Some(format.native.clone()))
+}
 
 mod x11;
 
@@ -51,13 +60,47 @@ fn encode_as_png(image: &ImageData) -> Result<Vec<u8>, Error> {
 	Ok(png_bytes)
 }
 
-fn paths_from_uri_list(uri_list: Vec<u8>) -> Vec<PathBuf> {
+fn paths_from_uri_list(uri_list: Vec<u8>) -> Result<Vec<PathBuf>, Error> {
 	uri_list
 		.split(|char| *char == b'\n')
 		.map(|line| line.strip_suffix(b"\r").unwrap_or(line))
-		.filter_map(|line| line.strip_prefix(b"file://"))
-		.filter_map(|s| percent_decode(s).decode_utf8().ok())
-		.map(|decoded| PathBuf::from(decoded.as_ref()))
+		.filter_map(|line| {
+			if line.get(..5).is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"file:")) {
+				Some(&line[5..])
+			} else {
+				None
+			}
+		})
+		.map(|uri| {
+			let path = if let Some(authority) = uri.strip_prefix(b"//") {
+				let slash =
+					authority.iter().position(|b| *b == b'/').ok_or(Error::ConversionFailure)?;
+				let host = &authority[..slash];
+				if !host.is_empty() && !host.eq_ignore_ascii_case(b"localhost") {
+					return Err(Error::ConversionFailure);
+				}
+				&authority[slash..]
+			} else {
+				uri
+			};
+			if !path.starts_with(b"/") || path.contains(&b'?') || path.contains(&b'#') {
+				return Err(Error::ConversionFailure);
+			}
+			for (index, byte) in path.iter().enumerate() {
+				if *byte == b'%'
+					&& (index + 2 >= path.len()
+						|| !path[index + 1].is_ascii_hexdigit()
+						|| !path[index + 2].is_ascii_hexdigit())
+				{
+					return Err(Error::ConversionFailure);
+				}
+			}
+			let decoded = percent_decode(path).collect::<Vec<_>>();
+			if decoded.contains(&0) {
+				return Err(Error::ConversionFailure);
+			}
+			Ok(PathBuf::from(std::ffi::OsString::from_vec(decoded)))
+		})
 		.collect()
 }
 
@@ -83,11 +126,13 @@ fn paths_to_uri_list(file_list: &[impl AsRef<Path>]) -> Result<String, Error> {
 
 	file_list
 		.iter()
-		.filter_map(|path| {
-			path.as_ref().canonicalize().ok().map(|path| {
+		.map(|path| {
+			path.as_ref().canonicalize().map_err(|_| Error::ConversionFailure).map(|path| {
 				format!("file://{}", percent_encode(path.as_os_str().as_bytes(), ASCII_SET))
 			})
 		})
+		.collect::<Result<Vec<_>, _>>()?
+		.into_iter()
 		// Use CRLF ("\r\n") per RFC 2045 section 2.10:
 		// https://www.rfc-editor.org/rfc/rfc2045#section-2.10
 		// Ensures compliance and future-proofing.
@@ -99,6 +144,10 @@ fn gnome_copied_files_from_uri_list(uri_list: &str) -> Vec<u8> {
 	// GNOME's copied-files format uses an action header followed by LF-separated URIs:
 	// https://github.com/linuxmint/nemo/blob/29fbc4b00005234dd92624a5620cc644525ba27c/libnemo-private/nemo-clipboard-monitor.c#L218-L260
 	format!("copy\n{}", uri_list.replace("\r\n", "\n")).into_bytes()
+}
+
+fn nautilus_clipboard_from_uri_list(uri_list: &str) -> Vec<u8> {
+	format!("x-special/nautilus-clipboard\ncopy\n{}", uri_list.replace("\r\n", "\n")).into_bytes()
 }
 
 /// Clipboard selection
@@ -167,6 +216,22 @@ pub(crate) struct Get<'clipboard> {
 impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
 		Self { clipboard, selection: LinuxClipboardKind::Clipboard }
+	}
+
+	pub(crate) fn formats(self) -> Result<Vec<ClipboardFormat>, Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.formats(self.selection),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.formats(self.selection),
+		}
+	}
+
+	pub(crate) fn raw(self, format: &ClipboardFormat) -> Result<Vec<u8>, Error> {
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.raw(format, self.selection),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.raw(format, self.selection),
+		}
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
@@ -250,6 +315,55 @@ impl<'clipboard> Set<'clipboard> {
 			wait: WaitConfig::default(),
 			selection: LinuxClipboardKind::Clipboard,
 			exclude_from_history: false,
+		}
+	}
+
+	pub(crate) fn formats(self, contents: Vec<ClipboardContent<'_>>) -> Result<(), Error> {
+		if contents.is_empty() {
+			return Err(Error::InvalidFormat);
+		}
+		let mut data = Vec::new();
+		for content in contents {
+			let (format, bytes) = match content {
+				ClipboardContent::Text(text) => {
+					let names: &[&str] = match self.clipboard {
+						Clipboard::X11(_) => &[
+							"UTF8_STRING",
+							"text/plain;charset=utf-8",
+							"text/plain;charset=UTF-8",
+							"text/plain",
+						],
+						#[cfg(feature = "wayland-data-control")]
+						Clipboard::WlDataControl(_) => &["text/plain;charset=utf-8", "text/plain"],
+					};
+					for name in names {
+						push_unique(
+							&mut data,
+							ClipboardFormat::register(name)?,
+							text.as_bytes().to_vec(),
+						)?;
+					}
+					continue;
+				}
+				ClipboardContent::Html(html) => {
+					(ClipboardFormat::register("text/html")?, html.into_owned().into_bytes())
+				}
+				ClipboardContent::Rtf(bytes) => (ClipboardFormat::rtf()?, bytes.into_owned()),
+				ClipboardContent::Raw(format, bytes) => (format, bytes.into_owned()),
+			};
+			push_unique(&mut data, format, bytes)?;
+		}
+		if self.exclude_from_history {
+			push_unique(
+				&mut data,
+				ClipboardFormat::register(KDE_EXCLUSION_MIME)?,
+				KDE_EXCLUSION_HINT.to_vec(),
+			)?;
+		}
+		match self.clipboard {
+			Clipboard::X11(clipboard) => clipboard.set_formats(data, self.selection, self.wait),
+			#[cfg(feature = "wayland-data-control")]
+			Clipboard::WlDataControl(clipboard) => clipboard.set_formats(data, self.selection, self.wait),
 		}
 	}
 
@@ -488,7 +602,7 @@ mod tests {
 			PathBuf::from("/tmp/foo?.png"),
 			PathBuf::from("/tmp/white space.txt"),
 		];
-		assert_eq!(paths_from_uri_list(file_list.join("\r\n").into()), paths);
+		assert_eq!(paths_from_uri_list(file_list.join("\r\n").into()).unwrap(), paths);
 	}
 
 	#[test]
@@ -496,7 +610,7 @@ mod tests {
 		let file_list = b"copy\nfile:///tmp/bar.log\nfile:///tmp/white%20space.txt";
 		let paths = vec![PathBuf::from("/tmp/bar.log"), PathBuf::from("/tmp/white space.txt")];
 
-		assert_eq!(paths_from_uri_list(file_list.to_vec()), paths);
+		assert_eq!(paths_from_uri_list(file_list.to_vec()).unwrap(), paths);
 	}
 
 	#[test]
@@ -504,7 +618,7 @@ mod tests {
 		let file_list = b"cut\nfile:///tmp/bar.log\nfile:///tmp/white%20space.txt";
 		let paths = vec![PathBuf::from("/tmp/bar.log"), PathBuf::from("/tmp/white space.txt")];
 
-		assert_eq!(paths_from_uri_list(file_list.to_vec()), paths);
+		assert_eq!(paths_from_uri_list(file_list.to_vec()).unwrap(), paths);
 	}
 
 	#[test]
@@ -515,5 +629,48 @@ mod tests {
 			gnome_copied_files_from_uri_list(uri_list),
 			b"copy\nfile:///tmp/bar.log\nfile:///tmp/white%20space.txt"
 		);
+	}
+	#[test]
+	fn local_uri_hosts_and_escaping() {
+		assert_eq!(
+			paths_from_uri_list(
+				b"# comment\nfile://localhost/home/a%20b\nfile:/home/%ff\nhttps://example.com/"
+					.to_vec()
+			)
+			.unwrap(),
+			vec![
+				PathBuf::from("/home/a b"),
+				PathBuf::from(std::ffi::OsString::from_vec(b"/home/\xff".to_vec()))
+			]
+		);
+		for uri in [
+			"file://remote/home/a",
+			"file:///home/%",
+			"file:///home/%0z",
+			"file:///home/%00",
+			"file:///home/a?query",
+			"file:///home/a#fragment",
+			"file:relative",
+		] {
+			assert!(
+				matches!(
+					paths_from_uri_list(uri.as_bytes().to_vec()),
+					Err(Error::ConversionFailure)
+				),
+				"{uri}"
+			);
+		}
+		assert_eq!(
+			paths_from_uri_list(b"x-special/nautilus-clipboard\ncut\nfile:///home/a".to_vec())
+				.unwrap(),
+			vec![PathBuf::from("/home/a")]
+		);
+	}
+
+	#[test]
+	fn invalid_file_does_not_get_omitted() {
+		let valid = std::env::current_dir().unwrap().join("Cargo.toml");
+		let invalid = valid.join("not-a-directory");
+		assert!(matches!(paths_to_uri_list(&[valid, invalid]), Err(Error::ConversionFailure)));
 	}
 }

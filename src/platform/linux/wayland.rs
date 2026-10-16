@@ -13,13 +13,15 @@ use wl_clipboard_rs::{
 #[cfg(feature = "image-data")]
 use super::encode_as_png;
 use super::{
-	gnome_copied_files_from_uri_list, into_unknown, paths_from_uri_list, paths_to_uri_list,
-	LinuxClipboardKind, WaitConfig, GNOME_COPIED_FILES_MIME, KDE_EXCLUSION_HINT,
-	KDE_EXCLUSION_MIME, URI_LIST_MIME,
+	gnome_copied_files_from_uri_list, into_unknown, nautilus_clipboard_from_uri_list,
+	paths_from_uri_list, paths_to_uri_list, LinuxClipboardKind, WaitConfig,
+	GNOME_COPIED_FILES_MIME, KDE_EXCLUSION_HINT, KDE_EXCLUSION_MIME, NAUTILUS_CLIPBOARD_MIME,
+	URI_LIST_MIME,
 };
 use crate::common::Error;
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
+use crate::ClipboardFormat;
 
 #[cfg(feature = "image-data")]
 const MIME_PNG: &str = "image/png";
@@ -103,6 +105,44 @@ fn handle_clipboard_read<T, F: FnOnce(Vec<u8>) -> Result<T, Error>>(
 }
 
 impl Clipboard {
+	pub(crate) fn formats(
+		&self,
+		selection: LinuxClipboardKind,
+	) -> Result<Vec<ClipboardFormat>, Error> {
+		match paste::get_mime_types(selection.try_into()?, Seat::Unspecified) {
+			Ok(names) => Ok(names.into_iter().map(|native| ClipboardFormat { native }).collect()),
+			Err(PasteError::ClipboardEmpty) => Ok(Vec::new()),
+			Err(error) => Err(handle_paste_error(error)),
+		}
+	}
+
+	pub(crate) fn raw(
+		&self,
+		format: &ClipboardFormat,
+		selection: LinuxClipboardKind,
+	) -> Result<Vec<u8>, Error> {
+		handle_clipboard_read(selection, paste::MimeType::Specific(&format.native), Ok)
+	}
+
+	pub(crate) fn set_formats(
+		&self,
+		data: Vec<(ClipboardFormat, Vec<u8>)>,
+		selection: LinuxClipboardKind,
+		wait: WaitConfig,
+	) -> Result<(), Error> {
+		let sources = data
+			.into_iter()
+			.map(|(format, bytes)| MimeSource {
+				source: Source::Bytes(bytes.into_boxed_slice()),
+				mime_type: MimeType::Specific(format.native),
+			})
+			.collect();
+		let mut opts = options(wait, selection)?;
+		// Raw HTML or RTF must not become an implicit plain-text offer.
+		opts.omit_additional_text_mime_types(true);
+		opts.copy_multi(sources).map_err(handle_copy_error)
+	}
+
 	pub(crate) fn new() -> Result<Self, Error> {
 		// Check if it's possible to communicate with the wayland compositor
 		match is_primary_selection_supported() {
@@ -234,20 +274,17 @@ impl Clipboard {
 		&mut self,
 		selection: LinuxClipboardKind,
 	) -> Result<Vec<PathBuf>, Error> {
-		let read_file_list = |contents| Ok(paths_from_uri_list(contents));
-		match handle_clipboard_read(
-			selection,
-			paste::MimeType::Specific(URI_LIST_MIME),
-			read_file_list,
-		) {
-			Ok(paths) => Ok(paths),
-			Err(Error::ContentNotAvailable) => handle_clipboard_read(
+		for mime in [URI_LIST_MIME, GNOME_COPIED_FILES_MIME, NAUTILUS_CLIPBOARD_MIME] {
+			match handle_clipboard_read(
 				selection,
-				paste::MimeType::Specific(GNOME_COPIED_FILES_MIME),
-				read_file_list,
-			),
-			Err(error) => Err(error),
+				paste::MimeType::Specific(mime),
+				paths_from_uri_list,
+			) {
+				Err(Error::ContentNotAvailable) => continue,
+				result => return result,
+			}
 		}
+		Err(Error::ContentNotAvailable)
 	}
 
 	pub(crate) fn set_file_list(
@@ -260,8 +297,9 @@ impl Clipboard {
 		let opts = options(wait, selection)?;
 		let files = paths_to_uri_list(file_list)?;
 		let gnome_files = gnome_copied_files_from_uri_list(&files);
+		let nautilus_files = nautilus_clipboard_from_uri_list(&files);
 
-		let mut sources = Vec::with_capacity(if exclude_from_history { 3 } else { 2 });
+		let mut sources = Vec::with_capacity(if exclude_from_history { 4 } else { 3 });
 		sources.push(MimeSource {
 			source: Source::Bytes(files.into_bytes().into_boxed_slice()),
 			mime_type: MimeType::Specific(String::from(URI_LIST_MIME)),
@@ -269,6 +307,10 @@ impl Clipboard {
 		sources.push(MimeSource {
 			source: Source::Bytes(gnome_files.into_boxed_slice()),
 			mime_type: MimeType::Specific(String::from(GNOME_COPIED_FILES_MIME)),
+		});
+		sources.push(MimeSource {
+			source: Source::Bytes(nautilus_files.into_boxed_slice()),
+			mime_type: MimeType::Specific(String::from(NAUTILUS_CLIPBOARD_MIME)),
 		});
 
 		add_clipboard_exclusions(exclude_from_history, &mut sources);
