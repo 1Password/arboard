@@ -188,22 +188,20 @@ impl Clipboard {
 	pub(crate) fn get_image(
 		&mut self,
 		selection: LinuxClipboardKind,
+		limits: crate::ImageLimits,
 	) -> Result<ImageData<'static>, Error> {
-		use std::io::Cursor;
-
-		handle_clipboard_read(selection, paste::MimeType::Specific(MIME_PNG), |buffer| {
-			let image = image::io::Reader::new(Cursor::new(buffer))
-				.with_guessed_format()
-				.map_err(|_| Error::ConversionFailure)?
-				.decode()
-				.map_err(|_| Error::ConversionFailure)?;
-			let image = image.into_rgba8();
-
-			Ok(ImageData {
-				width: image.width() as usize,
-				height: image.height() as usize,
-				bytes: image.into_raw().into(),
-			})
+		super::image_formats::read_image(limits, |mime| {
+			match get_contents(
+				selection.try_into()?,
+				Seat::Unspecified,
+				paste::MimeType::Specific(mime),
+			) {
+				Ok((pipe, _)) => super::image_formats::read_bounded(pipe, limits),
+				Err(PasteError::ClipboardEmpty | PasteError::NoMimeType) => {
+					Err(Error::ContentNotAvailable)
+				}
+				Err(error) => Err(handle_paste_error(error)),
+			}
 		})
 	}
 

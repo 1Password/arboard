@@ -12,6 +12,64 @@ Linux, Mac, and Windows.
 
 Please note that this is not an official 1Password product. Feature requests will be considered like any other volunteer-based crate.
 
+## Image formats and read limits
+
+On Linux, image reads prefer PNG, JPEG, WebP, BMP, then GIF.
+The fallback aliases are `image/jpg`, `image/x-ms-bmp`, and `image/x-bmp`, in that order.
+The final fallback is `application/x-qt-image`.
+Qt payloads can contain a supported encoded image, optionally after the QDataStream non-null marker.
+GIF and animated WebP reads return the first image, not an animation.
+Image writes still use PNG.
+
+An unavailable or invalid format permits the next format.
+A transfer error or a limit error stops the read.
+The declared MIME type selects the decoder, except for Qt payloads.
+
+The existing `get_image` example reads these formats without changing the clipboard:
+
+```sh
+cargo run --example get_image
+```
+
+With a 3 × 2 image, it prints `Image: 3 x 2, 24 RGBA bytes`.
+
+The `image_limits` example works on Linux, macOS, and Windows.
+It accepts maximum encoded bytes, width, height, and decoded pixel bytes:
+
+```sh
+cargo run --example image_limits -- 1048576 4096 4096 67108864
+```
+
+Use `clipboard.get().image_limits(limits).image()` to set these optional bounds.
+Construct `ImageLimits` with `ImageLimits::default()`, then set its public fields.
+The default preserves the existing decoder defaults.
+Each bound is inclusive. An excess returns `Error::ImageTooLarge`.
+
+The decoded bound applies separately to the decoder's pixel buffer and the returned RGBA8 buffer.
+Arboard checks these sizes before pixel decode and conversion.
+The bound does not include codec metadata or scratch space.
+It does not cap total process memory or the sum of concurrent allocations.
+
+X11 checks each property transfer and the cumulative INCR payload.
+A property reply can contain up to three bytes beyond the encoded bound due to protocol alignment.
+Wayland reads at most one byte beyond that bound to detect excess data.
+On Windows, arboard checks the native allocation size before its own copy.
+This size includes DIB headers and native padding.
+On macOS, arboard checks the TIFF representation before decode.
+AppKit can allocate or convert that representation before arboard receives it.
+Neither native backend can bound operating system allocations.
+
+The fixture tests require no external image files.
+For native transfer tests, use a disposable X11 or Wayland server with `xclip` or `wl-clipboard`:
+
+```sh
+bash tools/test_image_formats.sh x11 --replace-clipboard
+bash tools/test_image_formats.sh wayland --replace-clipboard
+```
+
+**Warning: These two test commands replace the clipboard contents.**
+They test every supported format, exact bounds, and a large payload for X11 INCR.
+
 ## GNU/Linux
 
 ### Backend Support

@@ -11,6 +11,9 @@ use percent_encoding::{percent_decode, percent_encode, AsciiSet, CONTROLS};
 
 #[cfg(feature = "image-data")]
 use crate::ImageData;
+
+#[cfg(feature = "image-data")]
+mod image_formats;
 use crate::{common::private, Error};
 
 // Magic strings used in `Set::exclude_from_history()` on linux
@@ -178,11 +181,11 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
+	pub(crate) fn image(self, limits: crate::ImageLimits) -> Result<ImageData<'static>, Error> {
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_image(self.selection),
+			Clipboard::X11(clipboard) => clipboard.get_image(self.selection, limits),
 			#[cfg(feature = "wayland-data-control")]
-			Clipboard::WlDataControl(clipboard) => clipboard.get_image(self.selection),
+			Clipboard::WlDataControl(clipboard) => clipboard.get_image(self.selection, limits),
 		}
 	}
 

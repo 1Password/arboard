@@ -45,6 +45,9 @@ pub enum Error {
 	/// converted to the appropriate format.
 	ConversionFailure,
 
+	/// An image exceeds a limit set with `Get::image_limits`.
+	ImageTooLarge,
+
 	/// Any error that doesn't fit the other error types.
 	///
 	/// The `description` field is only meant to help the developer and should not be relied on as a
@@ -59,6 +62,7 @@ impl std::fmt::Display for Error {
 			Error::ClipboardNotSupported => f.write_str("The selected clipboard is not supported with the current system configuration."),
 			Error::ClipboardOccupied => f.write_str("The native clipboard is not accessible due to being held by another party."),
 			Error::ConversionFailure => f.write_str("The image or the text that was about the be transferred to/from the clipboard could not be converted to the appropriate format."),
+			Error::ImageTooLarge => f.write_str("The clipboard image exceeds the configured limits."),
 			Error::Unknown { description } => f.write_fmt(format_args!("Unknown error while interacting with the clipboard: {description}")),
 		}
 	}
@@ -83,6 +87,7 @@ impl std::fmt::Debug for Error {
 			ClipboardNotSupported,
 			ClipboardOccupied,
 			ConversionFailure,
+			ImageTooLarge,
 			Unknown { .. }
 		);
 		f.write_fmt(format_args!("{name} - \"{self}\""))

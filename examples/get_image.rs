@@ -5,5 +5,5 @@ fn main() {
 
 	let img = ctx.get_image().unwrap();
 
-	println!("Image data is:\n{:?}", img.bytes);
+	println!("Image: {} x {}, {} RGBA bytes", img.width, img.height, img.bytes.len());
 }
