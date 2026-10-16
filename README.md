@@ -87,6 +87,67 @@ fn main() {
 }
 ```
 
+## Clipboard notifications
+
+`ClipboardWatcher` observes the regular clipboard without a `Clipboard` instance.
+It never reads clipboard payloads or takes ownership.
+The first event reports the initial state, including an empty clipboard.
+Later events coalesce into one pending notification.
+An event is a hint to read current data, not a snapshot of a write.
+
+```rust,no_run
+use arboard::{ClipboardEvent, ClipboardWatcher};
+use std::time::Duration;
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let watcher = ClipboardWatcher::new()?;
+assert_eq!(watcher.wait()?, ClipboardEvent::Changed);
+println!("{:?}", watcher.wait_timeout(Duration::from_secs(10))?);
+watcher.stop()?;
+assert_eq!(watcher.wait()?, ClipboardEvent::Stopped);
+# Ok(())
+# }
+```
+
+`stop()` and `Drop` wake waits and join the worker.
+Share the watcher through `Arc` to stop it from another thread.
+A native failure reaches the next wait once as an error.
+Subsequent waits return `Stopped`.
+No callback runs under a clipboard lock.
+
+Platform coverage:
+
+| Platform | Mechanism | Limits |
+| --- | --- | --- |
+| Windows | Sequence counter, checked every 50 ms | Delayed rendering can defer changes. An unavailable counter returns an error. |
+| macOS | `changeCount`, checked every 50 ms | Several changes can coalesce. |
+| X11/XWayland | XFixes selection events | Requires XFixes 1.0. Data changes without ownership notifications are not observable. |
+| Wayland | `ext-data-control-v1` or `wlr-data-control-unstable-v1` selection events | Requires `wayland-data-control` and a supported compositor. Observes the first advertised seat. |
+
+The worker checks native event queues every 50 ms.
+Counter wraparound can hide changes.
+Startup requires a response from the native server.
+Wayland device revocation or seat removal ends the watcher with an error.
+With the Wayland feature, a Wayland session never silently falls back to X11.
+An unsupported compositor returns `ClipboardNotSupported`.
+Without that feature, the watcher observes X11/XWayland only.
+The Wayland watcher does not compare MIME lists.
+
+Run `cargo run --example watch`, then copy data in another application.
+Run `cargo run --example watch -- --self-test` to verify changes and stop.
+The self-test overwrites the clipboard.
+Add `--features wayland-data-control` for native Wayland support.
+
+Native tests require a desktop or a test compositor.
+They also require `pbcopy`, PowerShell, `xclip`, or `wl-copy`.
+Run `cargo test --test watcher -- --ignored` to execute them.
+They overwrite the clipboard and fail if the native service is unavailable.
+The default test suite reports these tests as ignored; it does not silently skip them.
+The macOS and Windows CI jobs explicitly run the native watcher test with all features.
+On Linux, `bash tools/test_watchers_linux.sh` starts isolated Xvfb and Sway servers.
+It tests native changes, external writes, shutdown, server disconnection, and missing XFixes support.
+It requires Cargo, Xvfb, Sway, `xclip`, `wl-copy`, and `timeout`.
+
 ## Credits
 
 This crate is a combined effort by 1Password staff and `@ArturKovacs`, the crate's past
