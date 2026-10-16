@@ -244,7 +244,7 @@ impl Clipboard {
 			Err(Error::ContentNotAvailable) => handle_clipboard_read(
 				selection,
 				paste::MimeType::Specific(GNOME_COPIED_FILES_MIME),
-				|contents| Ok(paths_from_uri_list(contents)),
+				read_file_list,
 			),
 			Err(error) => Err(error),
 		}
