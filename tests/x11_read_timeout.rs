@@ -24,7 +24,11 @@ use x11rb::{
 
 #[test]
 fn bounds_reads_from_an_unresponsive_owner() {
-	assert!(std::env::var_os("WAYLAND_DISPLAY").is_none(), "run this test under X11");
+	#[cfg(feature = "wayland-data-control")]
+	if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+		eprintln!("Skipping the X11 fixture because native Wayland may be selected.");
+		return;
+	}
 	let (owner, screen) = x11rb::connect(None).unwrap();
 	let window = owner.generate_id().unwrap();
 	owner
