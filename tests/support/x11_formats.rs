@@ -1,4 +1,4 @@
-use arboard::{Clipboard, ClipboardFormat, GetExtLinux, LinuxClipboardKind};
+use arboard::{Clipboard, ClipboardContent, ClipboardFormat, GetExtLinux, LinuxClipboardKind};
 use x11rb::{
 	connection::Connection,
 	protocol::{
@@ -11,6 +11,54 @@ use x11rb::{
 	wrapper::ConnectionExt as _,
 	CURRENT_TIME,
 };
+
+const TEXT_FORMATS: [&str; 3] =
+	["UTF8_STRING", "text/plain;charset=utf-8", "text/plain;charset=UTF-8"];
+
+pub fn read_text_aliases(clipboard: &mut Clipboard, overridden: &str) {
+	let formats = clipboard.get().formats().unwrap();
+	for name in TEXT_FORMATS {
+		let format = ClipboardFormat::register(name).unwrap();
+		assert!(formats.contains(&format), "The owner must advertise {name}");
+		assert!(clipboard.get().contains(&format).unwrap());
+		let expected = if name == overridden { b"override".as_slice() } else { b"hello" };
+		assert_eq!(clipboard.get().raw(&format).unwrap(), expected, "{name}");
+	}
+}
+
+fn check_text_aliases(clipboard: &mut Clipboard, overridden: &str) {
+	let status = std::process::Command::new(std::env::current_exe().unwrap())
+		.args(["--exact", "native_format_operations", "--nocapture"])
+		.env("ARBOARD_X11_TEXT_ALIAS_OVERRIDE", overridden)
+		.status()
+		.unwrap();
+	read_text_aliases(clipboard, overridden);
+	assert!(status.success(), "A separate process must read each advertised text alias");
+}
+
+pub fn advertised_text_aliases(clipboard: &mut Clipboard) {
+	clipboard.set().text("hello").unwrap();
+	check_text_aliases(clipboard, "");
+	for alias in &TEXT_FORMATS[1..] {
+		for reverse in [false, true] {
+			let mut contents = vec![
+				ClipboardContent::Raw(
+					ClipboardFormat::register("UTF8_STRING").unwrap(),
+					b"hello".as_slice().into(),
+				),
+				ClipboardContent::Raw(
+					ClipboardFormat::register(alias).unwrap(),
+					b"override".as_slice().into(),
+				),
+			];
+			if reverse {
+				contents.reverse();
+			}
+			clipboard.set().formats(contents).unwrap();
+			check_text_aliases(clipboard, alias);
+		}
+	}
+}
 
 pub fn actual_type_is_preserved(clipboard: &mut Clipboard) {
 	let (ready_tx, ready_rx) = std::sync::mpsc::channel();

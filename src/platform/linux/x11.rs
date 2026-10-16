@@ -601,6 +601,21 @@ impl Inner {
 		Ok(false)
 	}
 
+	fn data_for_target<'a>(
+		&self,
+		data: &'a [ClipboardData],
+		target: Atom,
+	) -> Option<&'a ClipboardData> {
+		data.iter().find(|data| data.format == target).or_else(|| {
+			// Advertised UTF-8 aliases share bytes unless the caller supplies their own.
+			if target == self.atoms.UTF8_MIME_0 || target == self.atoms.UTF8_MIME_1 {
+				data.iter().find(|data| data.format == self.atoms.UTF8_STRING)
+			} else {
+				None
+			}
+		})
+	}
+
 	fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<bool> {
 		let selection = match self.kind_of(event.selection) {
 			Some(kind) => kind,
@@ -672,7 +687,7 @@ impl Inner {
 			trace!("Handling request for (probably) the clipboard contents.");
 			let data = self.selection_of(selection).data.read();
 			if let Some(data_list) = &*data {
-				success = match data_list.iter().find(|d| d.format == event.target) {
+				success = match self.data_for_target(data_list, event.target) {
 					Some(data) => {
 						self.server
 							.conn
@@ -1005,7 +1020,12 @@ impl Clipboard {
 	) -> Result<Vec<u8>> {
 		let atom = self.raw_atom(format)?;
 		if self.inner.is_owner(selection)? {
-			return Ok(self.inner.read(&[atom], selection)?.bytes);
+			let data = self.inner.selection_of(selection).data.read();
+			return data
+				.as_deref()
+				.and_then(|data| self.inner.data_for_target(data, atom))
+				.map(|data| data.bytes.clone())
+				.ok_or(Error::ContentNotAvailable);
 		}
 		self.inner.read_single(&XContext::new()?, selection, atom, true)
 	}

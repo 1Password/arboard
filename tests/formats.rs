@@ -8,6 +8,11 @@ mod x11_formats;
 fn native_format_operations() {
 	let mut clipboard = Clipboard::new().expect("A native clipboard is required for this test");
 	#[cfg(all(unix, not(target_os = "macos")))]
+	if let Ok(overridden) = std::env::var("ARBOARD_X11_TEXT_ALIAS_OVERRIDE") {
+		x11_formats::read_text_aliases(&mut clipboard, &overridden);
+		return;
+	}
+	#[cfg(all(unix, not(target_os = "macos")))]
 	if std::env::var_os("ARBOARD_FORMAT_WAIT_READER").is_some() {
 		use arboard::{GetExtLinux, LinuxClipboardKind};
 		let format = ClipboardFormat::register("org.arboard.wait-once").unwrap();
@@ -413,7 +418,8 @@ fn privacy(clipboard: &mut Clipboard, custom: &ClipboardFormat) {
 fn linux(clipboard: &mut Clipboard, custom: &ClipboardFormat) {
 	use arboard::{GetExtLinux, LinuxClipboardKind, SetExtLinux};
 	let targets = ClipboardFormat::register("TARGETS").unwrap();
-	if clipboard.get().contains(&targets).unwrap() {
+	let is_x11 = clipboard.get().contains(&targets).unwrap();
+	if is_x11 {
 		x11_formats::actual_type_is_preserved(clipboard);
 		use x11rb::connection::RequestConnection;
 		assert!(matches!(clipboard.get().raw(&targets), Err(Error::UnsupportedFormat)));
@@ -555,6 +561,9 @@ fn linux(clipboard: &mut Clipboard, custom: &ClipboardFormat) {
 	assert!(status.success());
 	result.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
 	writer.join().unwrap();
+	if is_x11 {
+		x11_formats::advertised_text_aliases(clipboard);
+	}
 }
 
 #[cfg(windows)]

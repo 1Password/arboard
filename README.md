@@ -101,6 +101,7 @@ Use `clipboard.get().formats()` to list formats without data transfer.
 Use `contains` for a presence check and `raw` for native bytes.
 Windows raw access supports documented global-memory formats, not bitmap, palette, or metafile handles.
 X11 raw writes larger than one native property request fail before the clipboard changes.
+X11 text writes also advertise UTF-8 MIME aliases. Raw reads use their `UTF8_STRING` bytes unless an explicit representation overrides an alias.
 Raw reads preserve native terminators and can include zero-filled Windows allocation padding.
 The OS can supply synthesized formats. Native macOS byte reads can combine multiple text items.
 The existing typed text getter still returns the first text item.
