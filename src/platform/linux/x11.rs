@@ -58,6 +58,289 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 static CLIPBOARD: Mutex<Option<GlobalClipboard>> = parking_lot::const_mutex(None);
 
+#[cfg(feature = "image-data")]
+const MAX_IMAGE_TARGETS_BYTES: usize = 64 * 1024;
+
+fn property_length(max_bytes: Option<usize>) -> u32 {
+	max_bytes.map_or(u32::MAX / 4, |limit| {
+		((limit as u64).saturating_add(3) / 4).min(u64::from(u32::MAX / 4)) as u32
+	})
+}
+
+fn check_read_size(size: usize, bytes_after: u32, max_bytes: Option<usize>) -> Result<()> {
+	if max_bytes.is_some_and(|limit| size > limit || bytes_after != 0) {
+		return Err(Error::ImageTooLarge);
+	}
+	Ok(())
+}
+
+#[cfg(test)]
+mod image_limit_tests {
+	use super::*;
+
+	#[test]
+	fn property_bounds() {
+		for (bytes, words) in [(0, 0), (1, 1), (3, 1), (4, 1), (5, 2), (8, 2)] {
+			assert_eq!(property_length(Some(bytes)), words);
+			assert!(check_read_size(bytes, 0, Some(bytes)).is_ok());
+			assert!(matches!(
+				check_read_size(bytes + 1, 0, Some(bytes)),
+				Err(Error::ImageTooLarge)
+			));
+			assert!(matches!(check_read_size(bytes, 1, Some(bytes)), Err(Error::ImageTooLarge)));
+		}
+		assert_eq!(property_length(None), u32::MAX / 4);
+		assert_eq!(property_length(Some(usize::MAX)), u32::MAX / 4);
+	}
+
+	#[test]
+	#[cfg(not(feature = "wayland-data-control"))]
+	fn native_properties_and_incremental_bounds() {
+		let inner = Inner::new().unwrap();
+		let reader = XContext::new().unwrap();
+		let target = inner.atoms.PNG_MIME;
+		let property = inner.atoms.ARBOARD_CLIPBOARD;
+		let notify = SelectionNotifyEvent {
+			response_type: SELECTION_NOTIFY_EVENT,
+			sequence: 0,
+			time: Time::CURRENT_TIME.into(),
+			requestor: reader.win_id,
+			selection: inner.atoms.CLIPBOARD,
+			target,
+			property,
+		};
+		let set = |bytes: &[u8]| {
+			reader
+				.conn
+				.change_property8(PropMode::REPLACE, reader.win_id, property, target, bytes)
+				.unwrap()
+				.check()
+				.unwrap();
+		};
+		for limit in [0, 3, 4, 5] {
+			set(&[1, 2, 3, 4, 5]);
+			let mut state =
+				ReadState { using_incr: false, data: Vec::new(), max_bytes: Some(limit) };
+			let result = inner.handle_read_selection_notify(&reader, target, &mut state, notify);
+			if limit == 5 {
+				assert!(
+					matches!(result, Ok(ReadSelNotifyResult::GotData(bytes)) if bytes == [1, 2, 3, 4, 5])
+				);
+			} else {
+				assert!(matches!(result, Err(Error::ImageTooLarge)));
+			}
+		}
+		reader
+			.conn
+			.change_property32(
+				PropMode::REPLACE,
+				reader.win_id,
+				property,
+				inner.atoms.INCR,
+				&[u32::MAX],
+			)
+			.unwrap()
+			.check()
+			.unwrap();
+		let mut state = ReadState { using_incr: false, data: Vec::new(), max_bytes: Some(5) };
+		assert!(matches!(
+			inner.handle_read_selection_notify(&reader, target, &mut state, notify),
+			Ok(ReadSelNotifyResult::IncrStarted)
+		));
+		assert_eq!(state.data.capacity(), 0);
+		let property_notify = PropertyNotifyEvent {
+			response_type: x11rb::protocol::xproto::PROPERTY_NOTIFY_EVENT,
+			sequence: 0,
+			window: reader.win_id,
+			atom: property,
+			time: Time::CURRENT_TIME.into(),
+			state: Property::NEW_VALUE,
+		};
+		let mut deadline = Instant::now();
+		for chunk in [&[1, 2, 3][..], &[4, 5][..]] {
+			set(chunk);
+			assert!(!inner
+				.handle_read_property_notify(
+					&reader,
+					target,
+					&mut state,
+					&mut deadline,
+					property_notify,
+				)
+				.unwrap());
+		}
+		assert_eq!(state.data, [1, 2, 3, 4, 5]);
+		set(&[6]);
+		assert!(matches!(
+			inner.handle_read_property_notify(
+				&reader,
+				target,
+				&mut state,
+				&mut deadline,
+				property_notify
+			),
+			Err(Error::ImageTooLarge)
+		));
+		assert_eq!(state.data, [1, 2, 3, 4, 5]);
+		set(&[]);
+		assert!(inner
+			.handle_read_property_notify(
+				&reader,
+				target,
+				&mut state,
+				&mut deadline,
+				property_notify,
+			)
+			.unwrap());
+	}
+
+	#[test]
+	#[cfg(all(feature = "image-data", not(feature = "wayland-data-control")))]
+	fn hostile_image_targets_are_bounded() {
+		// Keep Xvfb from resetting when a fixture releases its connections.
+		let _server = XContext::new().unwrap();
+		for (incremental, atom_count) in [
+			(false, 16 * 1024 - 1),
+			(false, 16 * 1024),
+			(false, 16 * 1024 + 1),
+			(true, 16 * 1024 - 1),
+			(true, 16 * 1024),
+			(true, 16 * 1024 + 1),
+		] {
+			let mut inner = Inner::new().unwrap();
+			let owner = XContext::new().unwrap();
+			inner.atoms.CLIPBOARD = owner
+				.conn
+				.intern_atom(
+					false,
+					format!("ARBOARD_IMAGE_TARGETS_TEST_{}", owner.win_id).as_bytes(),
+				)
+				.unwrap()
+				.reply()
+				.unwrap()
+				.atom;
+			owner
+				.conn
+				.set_selection_owner(owner.win_id, inner.atoms.CLIPBOARD, Time::CURRENT_TIME)
+				.unwrap()
+				.check()
+				.unwrap();
+			let targets = inner.atoms.TARGETS;
+			let atom = inner.atoms.ATOM;
+			let incr = inner.atoms.INCR;
+			let text = inner.atoms.UTF8_STRING;
+			let clipboard = Clipboard { inner: Arc::new(inner) };
+			let (done_tx, done_rx) = std::sync::mpsc::channel();
+			let server = std::thread::spawn(move || {
+				let request = loop {
+					if let Event::SelectionRequest(request) = owner.conn.wait_for_event().unwrap() {
+						break request;
+					}
+				};
+				assert_eq!(request.target, targets);
+				if incremental {
+					owner
+						.conn
+						.change_window_attributes(
+							request.requestor,
+							&x11rb::protocol::xproto::ChangeWindowAttributesAux::new()
+								.event_mask(EventMask::PROPERTY_CHANGE),
+						)
+						.unwrap()
+						.check()
+						.unwrap();
+					owner
+						.conn
+						.change_property32(
+							PropMode::REPLACE,
+							request.requestor,
+							request.property,
+							incr,
+							&[u32::MAX],
+						)
+						.unwrap()
+						.check()
+						.unwrap();
+				} else {
+					owner
+						.conn
+						.change_property32(
+							PropMode::REPLACE,
+							request.requestor,
+							request.property,
+							atom,
+							&vec![text; atom_count],
+						)
+						.unwrap()
+						.check()
+						.unwrap();
+				}
+				owner
+					.conn
+					.send_event(
+						false,
+						request.requestor,
+						EventMask::NO_EVENT,
+						SelectionNotifyEvent {
+							response_type: SELECTION_NOTIFY_EVENT,
+							sequence: 0,
+							time: request.time,
+							requestor: request.requestor,
+							selection: request.selection,
+							target: request.target,
+							property: request.property,
+						},
+					)
+					.unwrap();
+				owner.conn.flush().unwrap();
+				if incremental {
+					let first_chunk = atom_count.min(16 * 1024);
+					for count in [first_chunk, atom_count - first_chunk] {
+						loop {
+							if let Event::PropertyNotify(event) =
+								owner.conn.wait_for_event().unwrap()
+							{
+								if event.atom == request.property && event.state == Property::DELETE
+								{
+									break;
+								}
+							}
+						}
+						owner
+							.conn
+							.change_property32(
+								PropMode::REPLACE,
+								request.requestor,
+								request.property,
+								atom,
+								&vec![text; count],
+							)
+							.unwrap()
+							.check()
+							.unwrap();
+					}
+				}
+				done_rx.recv().unwrap();
+			});
+			let limits =
+				crate::ImageLimits { max_encoded_bytes: Some(0), ..crate::ImageLimits::default() };
+			let result = clipboard.get_image(LinuxClipboardKind::Clipboard, limits);
+			done_tx.send(()).unwrap();
+			server.join().unwrap();
+			if atom_count > 16 * 1024 {
+				assert!(
+					matches!(result, Err(Error::ImageTooLarge)),
+					"incremental={incremental}, atoms={atom_count}: {result:?}"
+				);
+			} else {
+				assert!(
+					matches!(result, Err(Error::ContentNotAvailable)),
+					"incremental={incremental}, atoms={atom_count}: {result:?}"
+				);
+			}
+		}
+	}
+}
 x11rb::atom_manager! {
 	pub Atoms: AtomCookies {
 		CLIPBOARD,
@@ -207,6 +490,12 @@ enum ReadSelNotifyResult {
 	EventNotRecognized,
 }
 
+struct ReadState {
+	using_incr: bool,
+	data: Vec<u8>,
+	max_bytes: Option<usize>,
+}
+
 impl Inner {
 	fn new() -> Result<Self> {
 		let server = XContext::new()?;
@@ -305,6 +594,15 @@ impl Inner {
 	/// The first format from `formats`, which the clipboard owner supports will be the
 	/// format of the return value.
 	fn read(&self, formats: &[Atom], selection: LinuxClipboardKind) -> Result<ClipboardData> {
+		self.read_limited(formats, selection, None)
+	}
+
+	fn read_limited(
+		&self,
+		formats: &[Atom],
+		selection: LinuxClipboardKind,
+		max_bytes: Option<usize>,
+	) -> Result<ClipboardData> {
 		// if we are the current owner, we can get the current clipboard ourselves
 		if self.is_owner(selection)? {
 			let data = self.selection_of(selection).data.read();
@@ -312,6 +610,7 @@ impl Inner {
 				for data in data_list {
 					for format in formats {
 						if *format == data.format {
+							check_read_size(data.bytes.len(), 0, max_bytes)?;
 							return Ok(data.clone());
 						}
 					}
@@ -326,7 +625,7 @@ impl Inner {
 
 		trace!("Trying to get the clipboard data.");
 		for format in formats {
-			match self.read_single(&reader, selection, *format) {
+			match self.read_single(&reader, selection, *format, max_bytes) {
 				Ok(bytes) => {
 					return Ok(ClipboardData { bytes, format: *format });
 				}
@@ -344,6 +643,7 @@ impl Inner {
 		reader: &XContext,
 		selection: LinuxClipboardKind,
 		target_format: Atom,
+		max_bytes: Option<usize>,
 	) -> Result<Vec<u8>> {
 		// Delete the property so that we can detect (using property notify)
 		// when the selection owner receives our request.
@@ -367,8 +667,7 @@ impl Inner {
 
 		trace!("Finished `convert_selection`");
 
-		let mut incr_data: Vec<u8> = Vec::new();
-		let mut using_incr = false;
+		let mut state = ReadState { using_incr: false, data: Vec::new(), max_bytes };
 
 		let mut timeout_end = Instant::now() + LONG_TIMEOUT_DUR;
 
@@ -388,8 +687,7 @@ impl Inner {
 					let result = self.handle_read_selection_notify(
 						reader,
 						target_format,
-						&mut using_incr,
-						&mut incr_data,
+						&mut state,
 						event,
 					)?;
 					match result {
@@ -410,13 +708,12 @@ impl Inner {
 					let result = self.handle_read_property_notify(
 						reader,
 						target_format,
-						using_incr,
-						&mut incr_data,
+						&mut state,
 						&mut timeout_end,
 						event,
 					)?;
 					if result {
-						return Ok(incr_data);
+						return Ok(state.data);
 					}
 				}
 				_ => log::trace!("An unexpected event arrived while reading the clipboard."),
@@ -497,8 +794,7 @@ impl Inner {
 		&self,
 		reader: &XContext,
 		target_format: u32,
-		using_incr: &mut bool,
-		incr_data: &mut Vec<u8>,
+		state: &mut ReadState,
 		event: SelectionNotifyEvent,
 	) -> Result<ReadSelNotifyResult> {
 		// The property being set to NONE means that the `convert_selection`
@@ -513,14 +809,21 @@ impl Inner {
 			log::info!("Received a SelectionNotify for a selection other than CLIPBOARD, PRIMARY or SECONDARY. This is unexpected.");
 			return Ok(ReadSelNotifyResult::EventNotRecognized);
 		}
-		if *using_incr {
+		if state.using_incr {
 			log::warn!("Received a SelectionNotify while already expecting INCR segments.");
 			return Ok(ReadSelNotifyResult::EventNotRecognized);
 		}
 		// request the selection
 		let mut reply = reader
 			.conn
-			.get_property(true, event.requestor, event.property, event.target, 0, u32::MAX / 4)
+			.get_property(
+				true,
+				event.requestor,
+				event.property,
+				if target_format == self.atoms.TARGETS { self.atoms.ATOM } else { event.target },
+				0,
+				property_length(state.max_bytes),
+			)
 			.map_err(into_unknown)?
 			.reply()
 			.map_err(into_unknown)?;
@@ -528,7 +831,10 @@ impl Inner {
 		// trace!("Property.type: {:?}", self.atom_name(reply.type_));
 
 		// we found something
-		if reply.type_ == target_format {
+		if reply.type_ == target_format
+			|| (target_format == self.atoms.TARGETS && reply.type_ == self.atoms.ATOM)
+		{
+			check_read_size(reply.value.len(), reply.bytes_after, state.max_bytes)?;
 			Ok(ReadSelNotifyResult::GotData(reply.value))
 		} else if reply.type_ == self.atoms.INCR {
 			// Note that we call the get_property again because we are
@@ -537,27 +843,23 @@ impl Inner {
 			// property type. But the type didn't match in the previous call.
 			reply = reader
 				.conn
-				.get_property(
-					true,
-					event.requestor,
-					event.property,
-					self.atoms.INCR,
-					0,
-					u32::MAX / 4,
-				)
+				.get_property(true, event.requestor, event.property, self.atoms.INCR, 0, 1)
 				.map_err(into_unknown)?
 				.reply()
 				.map_err(into_unknown)?;
 			log::trace!("Receiving INCR segments");
-			*using_incr = true;
-			if reply.value_len == 4 {
+			state.using_incr = true;
+			if state.max_bytes.is_none() && reply.value_len == 4 {
 				let min_data_len = reply.value32().and_then(|mut vals| vals.next()).unwrap_or(0);
-				incr_data.reserve(min_data_len as usize);
+				state.data.reserve(min_data_len as usize);
 			}
 			Ok(ReadSelNotifyResult::IncrStarted)
 		} else {
 			// this should never happen, we have sent a request only for supported types
-			Err(Error::unknown("incorrect type received from clipboard"))
+			Err(Error::unknown(format!(
+				"incorrect type received from clipboard: expected {target_format}, received {}",
+				reply.type_
+			)))
 		}
 	}
 
@@ -566,32 +868,44 @@ impl Inner {
 		&self,
 		reader: &XContext,
 		target_format: u32,
-		using_incr: bool,
-		incr_data: &mut Vec<u8>,
+		state: &mut ReadState,
 		timeout_end: &mut Instant,
 		event: PropertyNotifyEvent,
 	) -> Result<bool> {
 		if event.atom != self.atoms.ARBOARD_CLIPBOARD || event.state != Property::NEW_VALUE {
 			return Ok(false);
 		}
-		if !using_incr {
+		if !state.using_incr {
 			// This must mean the selection owner received our request, and is
 			// now preparing the data
 			return Ok(false);
 		}
 		let reply = reader
 			.conn
-			.get_property(true, event.window, event.atom, target_format, 0, u32::MAX / 4)
+			.get_property(
+				true,
+				event.window,
+				event.atom,
+				if target_format == self.atoms.TARGETS { self.atoms.ATOM } else { target_format },
+				0,
+				property_length(
+					state.max_bytes.map(|limit| limit.saturating_sub(state.data.len())),
+				),
+			)
 			.map_err(into_unknown)?
 			.reply()
 			.map_err(into_unknown)?;
 
-		// log::trace!("Received segment. value_len {}", reply.value_len,);
+		check_read_size(
+			reply.value.len(),
+			reply.bytes_after,
+			state.max_bytes.map(|limit| limit.saturating_sub(state.data.len())),
+		)?;
 		if reply.value_len == 0 {
 			// This indicates that all the data has been sent.
 			return Ok(true);
 		}
-		incr_data.extend(reply.value);
+		state.data.extend(reply.value);
 
 		// Let's reset our timeout, since we received a valid chunk.
 		*timeout_end = Instant::now() + SHORT_TIMEOUT_DUR;
@@ -1046,21 +1360,51 @@ impl Clipboard {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub(crate) fn get_image(&self, selection: LinuxClipboardKind) -> Result<ImageData<'static>> {
-		let formats = [self.inner.atoms.PNG_MIME];
-		let bytes = self.inner.read(&formats, selection)?.bytes;
-
-		let cursor = std::io::Cursor::new(&bytes);
-		let mut reader = image::io::Reader::new(cursor);
-		reader.set_format(image::ImageFormat::Png);
-		let image = match reader.decode() {
-			Ok(img) => img.into_rgba8(),
-			Err(_e) => return Err(Error::ConversionFailure),
+	pub(crate) fn get_image(
+		&self,
+		selection: LinuxClipboardKind,
+		limits: crate::ImageLimits,
+	) -> Result<ImageData<'static>> {
+		let targets = if self.inner.is_owner(selection)? {
+			None
+		} else {
+			match self.inner.read_limited(
+				&[self.inner.atoms.TARGETS],
+				selection,
+				Some(MAX_IMAGE_TARGETS_BYTES),
+			) {
+				Ok(data) => {
+					if data.bytes.len() % 4 != 0 {
+						return Err(Error::ConversionFailure);
+					}
+					Some(data.bytes)
+				}
+				// Some owners do not implement TARGETS. Preserve direct conversion for them.
+				Err(Error::ContentNotAvailable) => None,
+				Err(error) => return Err(error),
+			}
 		};
-		let (w, h) = image.dimensions();
-		let image_data =
-			ImageData { width: w as usize, height: h as usize, bytes: image.into_raw().into() };
-		Ok(image_data)
+		super::image_formats::read_image(limits, |mime| {
+			let atom = self
+				.inner
+				.server
+				.conn
+				.intern_atom(false, mime.as_bytes())
+				.map_err(into_unknown)?
+				.reply()
+				.map_err(into_unknown)?
+				.atom;
+			if targets.as_ref().is_some_and(|targets| {
+				!targets
+					.chunks_exact(4)
+					.any(|bytes| u32::from_ne_bytes(bytes.try_into().unwrap()) == atom)
+			}) {
+				return Err(Error::ContentNotAvailable);
+			}
+			self.inner
+				.read_limited(&[atom], selection, limits.max_encoded_bytes)
+				.map(|data| data.bytes)
+		})
 	}
 
 	#[cfg(feature = "image-data")]

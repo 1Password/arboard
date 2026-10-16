@@ -82,7 +82,7 @@ log = "0.4"
 x11rb = { version = "0.13" }
 wl-clipboard-rs = { version = "0.9.3", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = [
-    "png",
+    "png", "jpeg", "webp", "bmp", "gif",
 ] }
 parking_lot = "0.12"
 percent-encoding = "2.3.1"
@@ -93,4 +93,8 @@ required-features = ["image-data"]
 
 [[example]]
 name = "set_image"
+required-features = ["image-data"]
+
+[[example]]
+name = "image_limits"
 required-features = ["image-data"]
