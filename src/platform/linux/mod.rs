@@ -162,16 +162,26 @@ impl Clipboard {
 pub(crate) struct Get<'clipboard> {
 	clipboard: &'clipboard mut Clipboard,
 	selection: LinuxClipboardKind,
+	read_timeout: Option<std::time::Duration>,
 }
 
 impl<'clipboard> Get<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
-		Self { clipboard, selection: LinuxClipboardKind::Clipboard }
+		Self { clipboard, selection: LinuxClipboardKind::Clipboard, read_timeout: None }
+	}
+
+	fn check_read_timeout(&self) -> Result<(), Error> {
+		#[cfg(feature = "wayland-data-control")]
+		if self.read_timeout.is_some() && matches!(self.clipboard, Clipboard::WlDataControl(_)) {
+			return Err(Error::ClipboardNotSupported);
+		}
+		Ok(())
 	}
 
 	pub(crate) fn text(self) -> Result<String, Error> {
+		self.check_read_timeout()?;
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_text(self.selection),
+			Clipboard::X11(clipboard) => clipboard.get_text(self.selection, self.read_timeout),
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_text(self.selection),
 		}
@@ -179,24 +189,27 @@ impl<'clipboard> Get<'clipboard> {
 
 	#[cfg(feature = "image-data")]
 	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
+		self.check_read_timeout()?;
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_image(self.selection),
+			Clipboard::X11(clipboard) => clipboard.get_image(self.selection, self.read_timeout),
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_image(self.selection),
 		}
 	}
 
 	pub(crate) fn html(self) -> Result<String, Error> {
+		self.check_read_timeout()?;
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_html(self.selection),
+			Clipboard::X11(clipboard) => clipboard.get_html(self.selection, self.read_timeout),
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_html(self.selection),
 		}
 	}
 
 	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {
+		self.check_read_timeout()?;
 		match self.clipboard {
-			Clipboard::X11(clipboard) => clipboard.get_file_list(self.selection),
+			Clipboard::X11(clipboard) => clipboard.get_file_list(self.selection, self.read_timeout),
 			#[cfg(feature = "wayland-data-control")]
 			Clipboard::WlDataControl(clipboard) => clipboard.get_file_list(self.selection),
 		}
@@ -205,6 +218,18 @@ impl<'clipboard> Get<'clipboard> {
 
 /// Linux-specific extensions to the [`Get`](super::Get) builder.
 pub trait GetExtLinux: private::Sealed {
+	/// Sets the total X11 selection-transfer timeout for this read.
+	///
+	/// The timeout starts when the read executes, not when this builder is configured.
+	/// It covers all format attempts and incremental chunks without resetting.
+	/// A zero timeout returns [`Error::Timeout`]. Without this option, existing
+	/// per-format and incremental-transfer timeouts remain unchanged.
+	///
+	/// This does not interrupt synchronous X server requests or image decoding.
+	/// On the native Wayland backend, a configured timeout returns
+	/// [`Error::ClipboardNotSupported`] rather than being ignored.
+	fn read_timeout(self, timeout: std::time::Duration) -> Self;
+
 	/// Sets the clipboard the operation will retrieve data from.
 	///
 	/// If wayland support is enabled and available, attempting to use the Secondary clipboard will
@@ -213,6 +238,11 @@ pub trait GetExtLinux: private::Sealed {
 }
 
 impl GetExtLinux for crate::Get<'_> {
+	fn read_timeout(mut self, timeout: std::time::Duration) -> Self {
+		self.platform.read_timeout = Some(timeout);
+		self
+	}
+
 	fn clipboard(mut self, selection: LinuxClipboardKind) -> Self {
 		self.platform.selection = selection;
 		self
