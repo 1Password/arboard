@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, path::PathBuf};
 
 use crate::Error;
 
@@ -71,8 +71,7 @@ impl ClipboardFormat {
 ///
 /// Typed variants use native encodings. Raw data passes through without conversion.
 /// Use [`crate::Set::formats`] to publish several representations together.
-/// This enum does not convert images or file lists; use their existing typed setters,
-/// or supply an encoded native representation with [`Self::Raw`].
+/// Images and files use the same native formats as their typed setters.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum ClipboardContent<'a> {
@@ -82,8 +81,30 @@ pub enum ClipboardContent<'a> {
 	Html(Cow<'a, str>),
 	/// RTF bytes. These need not be UTF-8.
 	Rtf(Cow<'a, [u8]>),
+	/// RGBA pixels, encoded in the native image formats.
+	#[cfg(feature = "image-data")]
+	Image(crate::ImageData<'a>),
+	/// File paths. Every path must resolve before the clipboard changes.
+	///
+	/// Linux offers URI, GNOME, and Nautilus representations. Windows offers `CF_HDROP`.
+	/// macOS offers one file URL per item, with other representations on the first item.
+	Files(Cow<'a, [PathBuf]>),
 	/// Native bytes with their format identity.
 	Raw(ClipboardFormat, Cow<'a, [u8]>),
+}
+
+#[cfg(feature = "image-data")]
+pub(crate) fn validate_image(image: &crate::ImageData<'_>) -> Result<(), Error> {
+	let length = image.width.checked_mul(image.height).and_then(|pixels| pixels.checked_mul(4));
+	if image.width == 0
+		|| image.height == 0
+		|| image.width > u32::MAX as usize
+		|| image.height > u32::MAX as usize
+		|| length != Some(image.bytes.len())
+	{
+		return Err(Error::ConversionFailure);
+	}
+	Ok(())
 }
 
 pub(crate) fn push_unique(

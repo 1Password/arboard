@@ -295,6 +295,7 @@ impl Set<'_> {
 	/// All privacy options, Linux selection options, and Linux wait options apply.
 	///
 	/// See `cargo run --example formats` for text, HTML, RTF, and custom bytes in one write.
+	/// The example also shows mixed text/image and text/file writes.
 	pub fn formats<'a>(
 		self,
 		contents: impl IntoIterator<Item = ClipboardContent<'a>>,

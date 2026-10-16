@@ -1,8 +1,22 @@
 use arboard::{Clipboard, ClipboardContent, ClipboardFormat, Error};
 
+#[cfg(all(unix, not(target_os = "macos")))]
+#[path = "support/x11_formats.rs"]
+mod x11_formats;
+
 #[test]
 fn native_format_operations() {
 	let mut clipboard = Clipboard::new().expect("A native clipboard is required for this test");
+	#[cfg(all(unix, not(target_os = "macos")))]
+	if std::env::var_os("ARBOARD_FORMAT_WAIT_READER").is_some() {
+		use arboard::{GetExtLinux, LinuxClipboardKind};
+		let format = ClipboardFormat::register("org.arboard.wait-once").unwrap();
+		assert_eq!(
+			clipboard.get().clipboard(LinuxClipboardKind::Primary).raw(&format).unwrap(),
+			[9]
+		);
+		return;
+	}
 	let custom = ClipboardFormat::register("org.arboard.test").unwrap();
 	let absent = ClipboardFormat::register("org.arboard.absent").unwrap();
 	assert_eq!(custom, ClipboardFormat::register("org.arboard.test").unwrap());
@@ -99,8 +113,171 @@ fn native_format_operations() {
 	windows(&mut clipboard, &custom);
 	#[cfg(target_os = "macos")]
 	macos(&mut clipboard, &custom);
+	mixed_files(&mut clipboard);
+	#[cfg(feature = "image-data")]
+	mixed_images(&mut clipboard);
 	clipboard.clear().unwrap();
 	assert!(clipboard.get().formats().unwrap().is_empty());
+}
+
+fn private_set(clipboard: &mut Clipboard) -> arboard::Set<'_> {
+	#[cfg(target_os = "macos")]
+	use arboard::SetExtApple;
+	#[cfg(all(unix, not(target_os = "macos")))]
+	use arboard::SetExtLinux;
+	#[cfg(windows)]
+	use arboard::SetExtWindows;
+	let set = clipboard.set().exclude_from_history();
+	#[cfg(windows)]
+	let set = set.exclude_from_cloud().exclude_from_monitoring();
+	set
+}
+
+fn assert_private(clipboard: &mut Clipboard) {
+	#[cfg(target_os = "macos")]
+	let names = ["org.nspasteboard.ConcealedType"];
+	#[cfg(all(unix, not(target_os = "macos")))]
+	let names = ["x-kde-passwordManagerHint"];
+	#[cfg(windows)]
+	let names = [
+		"CanIncludeInClipboardHistory",
+		"CanUploadToCloudClipboard",
+		"ExcludeClipboardContentFromMonitorProcessing",
+	];
+	for name in names {
+		assert!(clipboard.get().contains(&ClipboardFormat::register(name).unwrap()).unwrap());
+	}
+}
+
+fn mixed_files(clipboard: &mut Clipboard) {
+	let root = std::env::current_dir().unwrap();
+	let files = vec![root.join("Cargo.toml"), root.join("README.md")];
+	for files in [&files[..1], files.as_slice()] {
+		private_set(clipboard)
+			.formats([
+				ClipboardContent::Text("files alternative".into()),
+				ClipboardContent::Files(files.into()),
+			])
+			.unwrap();
+		assert_eq!(clipboard.get().text().unwrap(), "files alternative");
+		assert_eq!(
+			clipboard
+				.get()
+				.file_list()
+				.unwrap()
+				.iter()
+				.map(|path| path.canonicalize().unwrap())
+				.collect::<Vec<_>>(),
+			files.iter().map(|path| path.canonicalize().unwrap()).collect::<Vec<_>>()
+		);
+		assert_private(clipboard);
+	}
+	#[cfg(target_os = "macos")]
+	{
+		let pasteboard = unsafe { objc2_app_kit::NSPasteboard::generalPasteboard() };
+		let items = unsafe { pasteboard.pasteboardItems() }.unwrap();
+		assert_eq!(items.len(), 2);
+		let marker = objc2_foundation::NSString::from_str("org.nspasteboard.ConcealedType");
+		for item in items {
+			assert!(unsafe { item.dataForType(&marker) }.is_some());
+		}
+	}
+
+	#[cfg(target_os = "macos")]
+	let formats = vec![ClipboardFormat::register("public.file-url").unwrap()];
+	#[cfg(all(unix, not(target_os = "macos")))]
+	let formats = ["text/uri-list", "x-special/gnome-copied-files", "x-special/nautilus-clipboard"]
+		.map(|name| ClipboardFormat::register(name).unwrap())
+		.to_vec();
+	#[cfg(windows)]
+	let formats = vec![ClipboardFormat::from_windows_id(15).unwrap()];
+	for format in formats {
+		assert!(clipboard.get().contains(&format).unwrap());
+		assert!(matches!(
+			clipboard.set().formats([
+				ClipboardContent::Files(files.as_slice().into()),
+				ClipboardContent::Raw(format, [].as_slice().into()),
+			]),
+			Err(Error::DuplicateFormat)
+		));
+		assert_eq!(clipboard.get().text().unwrap(), "files alternative");
+	}
+	for invalid in [vec![], vec![files[0].clone(), files[0].join("not-a-directory")]] {
+		assert!(matches!(
+			clipboard.set().formats([
+				ClipboardContent::Text("must not replace contents".into()),
+				ClipboardContent::Files(invalid.into()),
+			]),
+			Err(Error::ConversionFailure)
+		));
+		assert_eq!(clipboard.get().text().unwrap(), "files alternative");
+	}
+}
+
+#[cfg(feature = "image-data")]
+fn mixed_images(clipboard: &mut Clipboard) {
+	let image = arboard::ImageData {
+		width: 2,
+		height: 2,
+		bytes: vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 127, 63, 31, 255].into(),
+	};
+	private_set(clipboard)
+		.formats([
+			ClipboardContent::Text("image alternative".into()),
+			ClipboardContent::Image(image.clone()),
+		])
+		.unwrap();
+	assert_eq!(clipboard.get().text().unwrap(), "image alternative");
+	let actual = clipboard.get().image().unwrap();
+	assert_eq!((actual.width, actual.height), (image.width, image.height));
+	assert_eq!(actual.bytes, image.bytes);
+	assert_private(clipboard);
+	#[cfg(target_os = "macos")]
+	let formats = vec![ClipboardFormat::register("public.tiff").unwrap()];
+	#[cfg(all(unix, not(target_os = "macos")))]
+	let formats = vec![ClipboardFormat::register("image/png").unwrap()];
+	#[cfg(windows)]
+	let formats = vec![
+		ClipboardFormat::register("PNG").unwrap(),
+		ClipboardFormat::from_windows_id(17).unwrap(),
+	];
+	for format in formats {
+		assert!(clipboard.get().contains(&format).unwrap());
+		assert!(matches!(
+			clipboard.set().formats([
+				ClipboardContent::Image(image.clone()),
+				ClipboardContent::Raw(format, [].as_slice().into()),
+			]),
+			Err(Error::DuplicateFormat)
+		));
+		assert_eq!(clipboard.get().text().unwrap(), "image alternative");
+	}
+	for invalid in [
+		arboard::ImageData { width: 2, height: 1, bytes: vec![0; 3].into() },
+		arboard::ImageData { width: 0, height: 1, bytes: vec![].into() },
+		arboard::ImageData { width: usize::MAX, height: 2, bytes: vec![0; 4].into() },
+	] {
+		assert!(matches!(
+			clipboard.set().formats([
+				ClipboardContent::Text("must not replace contents".into()),
+				ClipboardContent::Image(invalid),
+			]),
+			Err(Error::ConversionFailure)
+		));
+		assert_eq!(clipboard.get().text().unwrap(), "image alternative");
+	}
+	let root = std::env::current_dir().unwrap();
+	private_set(clipboard)
+		.formats([
+			ClipboardContent::Text("image and files".into()),
+			ClipboardContent::Image(image.clone()),
+			ClipboardContent::Files(vec![root.join("Cargo.toml"), root.join("README.md")].into()),
+		])
+		.unwrap();
+	assert_eq!(clipboard.get().text().unwrap(), "image and files");
+	assert_eq!(clipboard.get().image().unwrap().bytes, image.bytes);
+	assert_eq!(clipboard.get().file_list().unwrap().len(), 2);
+	assert_private(clipboard);
 }
 
 #[cfg(target_os = "macos")]
@@ -180,6 +357,7 @@ fn linux(clipboard: &mut Clipboard, custom: &ClipboardFormat) {
 	use arboard::{GetExtLinux, LinuxClipboardKind, SetExtLinux};
 	let targets = ClipboardFormat::register("TARGETS").unwrap();
 	if clipboard.get().contains(&targets).unwrap() {
+		x11_formats::actual_type_is_preserved(clipboard);
 		use x11rb::connection::RequestConnection;
 		assert!(matches!(clipboard.get().raw(&targets), Err(Error::UnsupportedFormat)));
 		assert!(matches!(
@@ -275,10 +453,64 @@ fn linux(clipboard: &mut Clipboard, custom: &ClipboardFormat) {
 	clipboard.set().clipboard(LinuxClipboardKind::Primary).text("replacement").unwrap();
 	result.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
 	writer.join().unwrap();
+
+	let start = std::time::Instant::now();
+	let deadline = start + std::time::Duration::from_millis(150);
+	clipboard
+		.set()
+		.clipboard(LinuxClipboardKind::Primary)
+		.wait_until(deadline)
+		.raw(waiting, [8].as_slice())
+		.unwrap();
+	assert!(std::time::Instant::now() >= deadline, "A deadline write must wait without readers");
+	clipboard.set().clipboard(LinuxClipboardKind::Primary).text("replacement").unwrap();
+
+	let once = ClipboardFormat::register("org.arboard.wait-once").unwrap();
+	let writer_format = once.clone();
+	let (finished, result) = std::sync::mpsc::channel();
+	let writer = std::thread::spawn(move || {
+		Clipboard::new()
+			.unwrap()
+			.set()
+			.clipboard(LinuxClipboardKind::Primary)
+			.wait_once()
+			.raw(writer_format, [9].as_slice())
+			.unwrap();
+		finished.send(()).unwrap();
+	});
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+	while !clipboard.get().clipboard(LinuxClipboardKind::Primary).contains(&once).unwrap() {
+		assert!(std::time::Instant::now() < deadline);
+		std::thread::sleep(std::time::Duration::from_millis(5));
+	}
+	assert!(
+		matches!(result.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)),
+		"A single-request write must wait for a reader"
+	);
+	let status = std::process::Command::new(std::env::current_exe().unwrap())
+		.args(["--exact", "native_format_operations", "--nocapture"])
+		.env("ARBOARD_FORMAT_WAIT_READER", "1")
+		.status()
+		.unwrap();
+	assert!(status.success());
+	result.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+	writer.join().unwrap();
 }
 
 #[cfg(windows)]
 fn windows(clipboard: &mut Clipboard, custom: &ClipboardFormat) {
+	let prefix = "org.arboard.boundary.";
+	for units in [51, 52, 53] {
+		for name in [
+			format!("{prefix}{}", "a".repeat(units - prefix.len())),
+			format!("{prefix}{}😀", "b".repeat(units - prefix.len() - 2)),
+		] {
+			assert_eq!(name.encode_utf16().count(), units);
+			let format = ClipboardFormat::register(&name).unwrap();
+			assert_eq!(format.name().unwrap().as_deref(), Some(name.as_str()));
+			assert_eq!(ClipboardFormat::register(&name).unwrap(), format);
+		}
+	}
 	let text = ClipboardFormat::from_windows_id(13).unwrap();
 	assert_eq!(text.windows_id(), 13);
 	assert_eq!(text.name().unwrap(), None);

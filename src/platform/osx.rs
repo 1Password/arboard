@@ -19,7 +19,7 @@ use objc2::{
 	ClassType,
 };
 use objc2_app_kit::{
-	NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString,
+	NSPasteboard, NSPasteboardItem, NSPasteboardTypeHTML, NSPasteboardTypeString,
 	NSPasteboardURLReadingFileURLsOnlyKey,
 };
 use objc2_foundation::{ns_string, NSArray, NSData, NSDictionary, NSNumber, NSString, NSURL};
@@ -325,6 +325,7 @@ impl<'clipboard> Set<'clipboard> {
 		}
 		autoreleasepool(|_| {
 			let mut data = Vec::new();
+			let mut additional_files = Vec::new();
 			for content in contents {
 				let (format, bytes) = match content {
 					ClipboardContent::Text(text) => (
@@ -338,6 +339,38 @@ impl<'clipboard> Set<'clipboard> {
 						(ClipboardFormat::register("public.html")?, html.into_bytes())
 					}
 					ClipboardContent::Rtf(bytes) => (ClipboardFormat::rtf()?, bytes.into_owned()),
+					#[cfg(feature = "image-data")]
+					ClipboardContent::Image(image) => {
+						crate::formats::validate_image(&image)?;
+						let image =
+							image_from_pixels(image.bytes.into_owned(), image.width, image.height)?;
+						let tiff = unsafe { image.TIFFRepresentation() }
+							.ok_or(Error::ConversionFailure)?;
+						// The immutable TIFF data remains alive throughout this copy.
+						(
+							ClipboardFormat::register("public.tiff")?,
+							unsafe { tiff.as_bytes_unchecked() }.to_vec(),
+						)
+					}
+					ClipboardContent::Files(files) => {
+						let urls = files
+							.iter()
+							.map(|path| {
+								let path =
+									path.canonicalize().map_err(|_| Error::ConversionFailure)?;
+								let path = path.to_str().ok_or(Error::ConversionFailure)?;
+								let url =
+									unsafe { NSURL::fileURLWithPath(&NSString::from_str(path)) };
+								let text = unsafe { url.absoluteString() }
+									.ok_or(Error::ConversionFailure)?;
+								Ok(text.to_string().into_bytes())
+							})
+							.collect::<Result<Vec<_>, Error>>()?;
+						let mut urls = urls.into_iter();
+						let first = urls.next().ok_or(Error::ConversionFailure)?;
+						additional_files.extend(urls);
+						(ClipboardFormat::register("public.file-url")?, first)
+					}
 					ClipboardContent::Raw(format, bytes) => (format, bytes.into_owned()),
 				};
 				push_unique(&mut data, format, bytes)?;
@@ -355,6 +388,43 @@ impl<'clipboard> Set<'clipboard> {
 					(NSString::from_str(&format.native), NSData::with_bytes(&bytes))
 				})
 				.collect();
+			if !additional_files.is_empty() {
+				let first = unsafe { NSPasteboardItem::new() };
+				for (name, bytes) in &prepared {
+					if !unsafe { first.setData_forType(bytes, name) } {
+						return Err(Error::UnsupportedFormat);
+					}
+				}
+				let mut items = vec![ProtocolObject::from_retained(first)];
+				for url in additional_files {
+					let item = unsafe { NSPasteboardItem::new() };
+					if !unsafe {
+						item.setData_forType(
+							&NSData::with_bytes(&url),
+							ns_string!("public.file-url"),
+						)
+					} {
+						return Err(Error::UnsupportedFormat);
+					}
+					if self.exclude_from_history
+						&& !unsafe {
+							item.setData_forType(
+								&NSData::with_bytes(&[]),
+								ns_string!("org.nspasteboard.ConcealedType"),
+							)
+						} {
+						return Err(Error::UnsupportedFormat);
+					}
+					items.push(ProtocolObject::from_retained(item));
+				}
+				let items = NSArray::from_retained_slice(&items);
+				self.clipboard.clear();
+				return if unsafe { self.clipboard.pasteboard.writeObjects(&items) } {
+					Ok(())
+				} else {
+					Err(Error::unknown("NSPasteboard#writeObjects: returned false"))
+				};
+			}
 			self.clipboard.clear();
 			for (name, bytes) in prepared {
 				if !unsafe { self.clipboard.pasteboard.setData_forType(Some(&bytes), &name) } {

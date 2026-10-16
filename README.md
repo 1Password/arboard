@@ -109,13 +109,19 @@ Run `cargo run --example get_raw -- NATIVE_FORMAT` to write native bytes to stan
 Use `clipboard.set().formats(...)` for one write with several representations.
 The typed HTML variant adds native headers. The RTF variant accepts non-UTF-8 bytes.
 Raw variants require the complete native encoding.
-This API does not convert images or file lists in a combined write.
-Use their existing typed setters, or supply encoded native bytes.
+`ClipboardContent::Image` accepts RGBA pixels with the existing `image-data` feature.
+It offers PNG on Linux, TIFF on macOS, and PNG plus `CF_DIBV5` on Windows.
+`ClipboardContent::Files` accepts file paths and prepares all paths before the write.
+On macOS, each file occupies one item; the first item also holds the other representations.
+Privacy markers apply to every file item.
+Run the `formats` example to verify mixed text/image and text/file writes.
 
 The setter prepares data before it clears or replaces the clipboard once.
 It rejects duplicate native identities, including conflicts with privacy markers.
 An OS failure can leave partial contents. The API does not promise rollback.
 All privacy, Linux selection, and Linux wait options apply to combined writes.
+`wait_once` blocks until a reader retrieves data. `wait_until` blocks until replacement or its deadline.
+After the deadline, the process can continue to serve the data while it remains alive.
 Discovery and presence checks are snapshots; another application can change the clipboard before a read.
 
 Linux file lists support URI lists, GNOME copied files, and Nautilus clipboard data.

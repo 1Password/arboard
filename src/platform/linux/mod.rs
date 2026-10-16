@@ -349,6 +349,22 @@ impl<'clipboard> Set<'clipboard> {
 					(ClipboardFormat::register("text/html")?, html.into_owned().into_bytes())
 				}
 				ClipboardContent::Rtf(bytes) => (ClipboardFormat::rtf()?, bytes.into_owned()),
+				#[cfg(feature = "image-data")]
+				ClipboardContent::Image(image) => {
+					crate::formats::validate_image(&image)?;
+					(ClipboardFormat::register("image/png")?, encode_as_png(&image)?)
+				}
+				ClipboardContent::Files(files) => {
+					let uris = paths_to_uri_list(files.as_ref())?;
+					for (name, bytes) in [
+						(URI_LIST_MIME, uris.as_bytes().to_vec()),
+						(GNOME_COPIED_FILES_MIME, gnome_copied_files_from_uri_list(&uris)),
+						(NAUTILUS_CLIPBOARD_MIME, nautilus_clipboard_from_uri_list(&uris)),
+					] {
+						push_unique(&mut data, ClipboardFormat::register(name)?, bytes)?;
+					}
+					continue;
+				}
 				ClipboardContent::Raw(format, bytes) => (format, bytes.into_owned()),
 			};
 			push_unique(&mut data, format, bytes)?;

@@ -25,7 +25,10 @@ use windows_sys::Win32::{
 	Foundation::{GetLastError, GlobalFree, SetLastError, HANDLE, HGLOBAL, POINT, S_OK},
 	Storage::FileSystem::{GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS, VOLUME_NAME_DOS},
 	System::{
-		DataExchange::{EnumClipboardFormats, GetClipboardFormatNameW, SetClipboardData},
+		DataExchange::{
+			EnumClipboardFormats, GetClipboardFormatNameW, RegisterClipboardFormatW,
+			SetClipboardData,
+		},
 		Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND},
 		Ole::CF_HDROP,
 	},
@@ -35,7 +38,6 @@ use windows_sys::Win32::{
 #[cfg(feature = "image-data")]
 mod image_data {
 	use super::*;
-	use crate::common::ScopeGuard;
 	use image::codecs::bmp::BmpDecoder;
 	use image::codecs::png::PngDecoder;
 	use image::codecs::png::PngEncoder;
@@ -43,11 +45,9 @@ mod image_data {
 	use image::ExtendedColorType;
 	use image::ImageDecoder;
 	use image::ImageEncoder;
-	use std::{convert::TryInto, mem::size_of, ptr::copy_nonoverlapping};
+	use std::{convert::TryInto, mem::size_of};
 	use windows_sys::Win32::{
-		Graphics::Gdi::{
-			DeleteObject, BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, HGDIOBJ, LCS_GM_IMAGES,
-		},
+		Graphics::Gdi::{BITMAPV5HEADER, BI_BITFIELDS, BI_RGB, LCS_GM_IMAGES},
 		System::Ole::CF_DIBV5,
 	};
 
@@ -55,6 +55,18 @@ mod image_data {
 		_open_clipboard: OpenClipboard,
 		image: ImageData,
 	) -> Result<(), Error> {
+		let bytes = encode_dibv5(image)?;
+		PreparedData::new(ClipboardFormat { native: CF_DIBV5 as u32 }, &bytes)?.publish()
+	}
+
+	pub(super) fn encode_dibv5(image: ImageData) -> Result<Vec<u8>, Error> {
+		crate::formats::validate_image(&image)?;
+		if image.width > i32::MAX as usize
+			|| image.height > i32::MAX as usize
+			|| image.bytes.len() > u32::MAX as usize
+		{
+			return Err(Error::ConversionFailure);
+		}
 		// This constant is missing in windows-rs
 		// https://github.com/microsoft/windows-rs/issues/2711
 		#[allow(non_upper_case_globals)]
@@ -95,42 +107,25 @@ mod image_data {
 		// that has a negative height in its header.
 		let image = flip_v(image);
 
-		let data_size = header_size + image.bytes.len();
-		let hdata = unsafe { global_alloc(data_size)? };
-		unsafe {
-			let data_ptr = global_lock(hdata)?;
-			let _unlock = ScopeGuard::new(|| global_unlock_checked(hdata));
-
-			copy_nonoverlapping::<u8>(
-				(&header as *const BITMAPV5HEADER).cast(),
-				data_ptr,
-				header_size,
-			);
-
-			// Not using the `add` function, because that has a restriction, that the result cannot overflow isize
-			let pixels_dst = data_ptr.add(header_size);
-			copy_nonoverlapping::<u8>(image.bytes.as_ptr(), pixels_dst, image.bytes.len());
-
-			let dst_pixels_slice = std::slice::from_raw_parts_mut(pixels_dst, image.bytes.len());
-
-			// If the non-allocating version of the function failed, we need to assign the new bytes to
-			// the global allocation.
-			if let Cow::Owned(new_pixels) = rgba_to_win(dst_pixels_slice) {
-				// SAFETY: `data_ptr` is valid to write to and has no outstanding mutable borrows, and
-				// `new_pixels` will be the same length as the original bytes.
-				copy_nonoverlapping::<u8>(new_pixels.as_ptr(), data_ptr, new_pixels.len())
-			}
+		let mut bytes = Vec::with_capacity(header_size + image.bytes.len());
+		// BITMAPV5HEADER contains only initialized 32-bit fields and has no padding.
+		bytes.extend_from_slice(unsafe {
+			std::slice::from_raw_parts((&header as *const BITMAPV5HEADER).cast::<u8>(), header_size)
+		});
+		bytes.extend_from_slice(&image.bytes);
+		if let Cow::Owned(pixels) = unsafe { rgba_to_win(&mut bytes[header_size..]) } {
+			bytes[header_size..].copy_from_slice(&pixels);
 		}
-
-		if unsafe { SetClipboardData(CF_DIBV5 as u32, hdata as HANDLE) }.failure() {
-			unsafe { DeleteObject(hdata as HGDIOBJ) };
-			Err(last_error("SetClipboardData failed with error"))
-		} else {
-			Ok(())
-		}
+		Ok(bytes)
 	}
 
 	pub(super) fn add_png_file(image: &ImageData) -> Result<(), Error> {
+		let bytes = encode_png(image)?;
+		PreparedData::new(ClipboardFormat::register("PNG")?, &bytes)?.publish()
+	}
+
+	pub(super) fn encode_png(image: &ImageData) -> Result<Vec<u8>, Error> {
+		crate::formats::validate_image(image)?;
 		// Try encoding the image as PNG.
 		let mut buf = Vec::new();
 		let encoder = PngEncoder::new(&mut buf);
@@ -144,26 +139,21 @@ mod image_data {
 			)
 			.map_err(|_| Error::ConversionFailure)?;
 
-		// Register PNG format.
-		let format_id = match clipboard_win::register_format("PNG") {
-			Some(format_id) => format_id.into(),
-			None => return Err(last_error("Cannot register PNG clipboard format.")),
+		Ok(buf)
+	}
+
+	#[test]
+	fn encoded_image_formats_round_trip() {
+		let image = ImageData {
+			width: 2,
+			height: 2,
+			bytes: vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 127, 63, 31, 255].into(),
 		};
-
-		let data_size = buf.len();
-		let hdata = unsafe { global_alloc(data_size)? };
-
-		unsafe {
-			let pixels_dst = global_lock(hdata)?;
-			copy_nonoverlapping::<u8>(buf.as_ptr(), pixels_dst, data_size);
-			global_unlock_checked(hdata);
-		}
-
-		if unsafe { SetClipboardData(format_id, hdata as HANDLE) }.failure() {
-			unsafe { DeleteObject(hdata as HGDIOBJ) };
-			Err(last_error("SetClipboardData failed with error"))
-		} else {
-			Ok(())
+		let png = encode_png(&image).unwrap();
+		let mut dib = encode_dibv5(image.clone()).unwrap();
+		for decoded in [read_png(&png).unwrap(), read_cf_dibv5(&mut dib).unwrap()] {
+			assert_eq!((decoded.width, decoded.height), (image.width, image.height));
+			assert_eq!(decoded.bytes, image.bytes);
 		}
 	}
 
@@ -517,9 +507,13 @@ impl ResultValue for isize {
 pub(crate) struct Clipboard(());
 
 pub(crate) fn register_format(name: &str) -> Result<ClipboardFormat, Error> {
-	clipboard_win::register_format(name)
-		.map(|id| ClipboardFormat { native: id.get() })
-		.ok_or_else(|| last_error("Could not register clipboard format"))
+	let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+	let native = unsafe { RegisterClipboardFormatW(name.as_ptr()) };
+	if native == 0 {
+		Err(last_error("Could not register clipboard format"))
+	} else {
+		Ok(ClipboardFormat { native })
+	}
 }
 
 pub(crate) fn format_name(format: &ClipboardFormat) -> Result<Option<String>, Error> {
@@ -568,8 +562,8 @@ impl PreparedData {
 		let prepared = Self { format: format.native, memory };
 		unsafe {
 			let destination = global_lock(memory)?;
+			let _unlock = crate::common::ScopeGuard::new(|| global_unlock_checked(memory));
 			std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination, bytes.len());
-			global_unlock_checked(memory);
 		}
 		Ok(prepared)
 	}
@@ -796,6 +790,23 @@ impl<'clipboard> Set<'clipboard> {
 					(ClipboardFormat::register("HTML Format")?, wrap_html(&html).into_bytes())
 				}
 				ClipboardContent::Rtf(bytes) => (ClipboardFormat::rtf()?, bytes.into_owned()),
+				#[cfg(feature = "image-data")]
+				ClipboardContent::Image(image) => {
+					push_unique(
+						&mut data,
+						ClipboardFormat::register("PNG")?,
+						image_data::encode_png(&image)?,
+					)?;
+					push_unique(
+						&mut data,
+						ClipboardFormat { native: clipboard_win::formats::CF_DIBV5 },
+						image_data::encode_dibv5(image)?,
+					)?;
+					continue;
+				}
+				ClipboardContent::Files(files) => {
+					(ClipboardFormat { native: CF_HDROP as u32 }, encode_files(&files)?)
+				}
 				ClipboardContent::Raw(format, bytes) => (format, bytes.into_owned()),
 			};
 			validate_raw(&format)?;
@@ -1074,6 +1085,32 @@ fn wrap_html(ctn: &str) -> String {
 
 /// Given a file path attempt to open it and call GetFinalPathNameByHandleW,
 /// on success return the final path as a NULL terminated u16 Vec
+fn encode_files(files: &[PathBuf]) -> Result<Vec<u8>, Error> {
+	if files.is_empty() {
+		return Err(Error::ConversionFailure);
+	}
+	let header = DROPFILES {
+		pFiles: std::mem::size_of::<DROPFILES>() as u32,
+		pt: POINT { x: 0, y: 0 },
+		fNC: 0,
+		fWide: 1,
+	};
+	// DROPFILES contains initialized 32-bit fields and has no padding.
+	let mut bytes = unsafe {
+		std::slice::from_raw_parts(
+			(&header as *const DROPFILES).cast::<u8>(),
+			std::mem::size_of::<DROPFILES>(),
+		)
+	}
+	.to_vec();
+	for file in files {
+		let path = to_final_path_wide(file).ok_or(Error::ConversionFailure)?;
+		bytes.extend(path.into_iter().flat_map(u16::to_le_bytes));
+	}
+	bytes.extend_from_slice(&0u16.to_le_bytes());
+	Ok(bytes)
+}
+
 fn to_final_path_wide(p: &Path) -> Option<Vec<u16>> {
 	let file = std::fs::OpenOptions::new()
 		// No read or write permissions are necessary

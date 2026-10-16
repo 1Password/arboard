@@ -130,6 +130,11 @@ impl Clipboard {
 		selection: LinuxClipboardKind,
 		wait: WaitConfig,
 	) -> Result<(), Error> {
+		let deadline = match wait {
+			WaitConfig::Until(deadline) => Some(deadline),
+			_ => None,
+		};
+		let wait_once = matches!(wait, WaitConfig::Once);
 		let sources = data
 			.into_iter()
 			.map(|(format, bytes)| MimeSource {
@@ -140,6 +145,41 @@ impl Clipboard {
 		let mut opts = options(wait, selection)?;
 		// Raw HTML or RTF must not become an implicit plain-text offer.
 		opts.omit_additional_text_mime_types(true);
+		if wait_once {
+			opts.foreground(true);
+		}
+		if let Some(deadline) = deadline {
+			use std::sync::mpsc;
+			opts.foreground(true);
+			let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+			let (done_tx, done_rx) = mpsc::sync_channel(1);
+			std::thread::Builder::new()
+				.spawn(move || match opts.prepare_copy_multi(sources) {
+					Ok(copy) => {
+						if ready_tx.send(Ok(())).is_err() {
+							return;
+						}
+						let result = copy.serve().map_err(handle_copy_error);
+						if let Err(mpsc::SendError(Err(error))) = done_tx.send(result) {
+							log::warn!(
+								"Clipboard transfer failed after the wait deadline: {error}"
+							);
+						}
+					}
+					Err(error) => {
+						let _ = ready_tx.send(Err(handle_copy_error(error)));
+					}
+				})
+				.map_err(into_unknown)?;
+			ready_rx.recv().map_err(into_unknown)??;
+			return match done_rx
+				.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+			{
+				Ok(result) => result,
+				Err(mpsc::RecvTimeoutError::Timeout) => Ok(()),
+				Err(error) => Err(into_unknown(error)),
+			};
+		}
 		opts.copy_multi(sources).map_err(handle_copy_error)
 	}
 

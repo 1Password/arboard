@@ -328,7 +328,7 @@ impl Inner {
 
 		trace!("Trying to get the clipboard data.");
 		for format in formats {
-			match self.read_single(&reader, selection, *format) {
+			match self.read_single(&reader, selection, *format, false) {
 				Ok(bytes) => {
 					return Ok(ClipboardData { bytes, format: *format });
 				}
@@ -346,6 +346,7 @@ impl Inner {
 		reader: &XContext,
 		selection: LinuxClipboardKind,
 		target_format: Atom,
+		raw: bool,
 	) -> Result<Vec<u8>> {
 		// Delete the property so that we can detect (using property notify)
 		// when the selection owner receives our request.
@@ -371,6 +372,11 @@ impl Inner {
 
 		let mut incr_data: Vec<u8> = Vec::new();
 		let mut using_incr = false;
+		let mut transfer_type = if raw {
+			None
+		} else {
+			Some(if target_format == self.atoms.TARGETS { self.atoms.ATOM } else { target_format })
+		};
 
 		let mut timeout_end = Instant::now() + LONG_TIMEOUT_DUR;
 
@@ -391,6 +397,7 @@ impl Inner {
 						reader,
 						target_format,
 						&mut using_incr,
+						raw,
 						event,
 					)?;
 					match result {
@@ -410,7 +417,7 @@ impl Inner {
 				Event::PropertyNotify(event) => {
 					let result = self.handle_read_property_notify(
 						reader,
-						target_format,
+						&mut transfer_type,
 						using_incr,
 						&mut incr_data,
 						&mut timeout_end,
@@ -499,6 +506,7 @@ impl Inner {
 		reader: &XContext,
 		target_format: u32,
 		using_incr: &mut bool,
+		raw: bool,
 		event: SelectionNotifyEvent,
 	) -> Result<ReadSelNotifyResult> {
 		// The property being set to NONE means that the `convert_selection`
@@ -528,10 +536,12 @@ impl Inner {
 		// trace!("Property.type: {:?}", self.atom_name(reply.type_));
 
 		// we found something
-		if reply.type_ == target_format
-			|| (target_format == self.atoms.TARGETS
-				&& reply.type_ == self.atoms.ATOM
-				&& reply.format == 32)
+		if reply.type_ != self.atoms.INCR
+			&& (reply.type_ == target_format
+				|| (raw && reply.type_ != NONE && [8, 16, 32].contains(&reply.format))
+				|| (target_format == self.atoms.TARGETS
+					&& reply.type_ == self.atoms.ATOM
+					&& reply.format == 32))
 		{
 			Ok(ReadSelNotifyResult::GotData(reply.value))
 		} else if reply.type_ == self.atoms.INCR {
@@ -549,7 +559,7 @@ impl Inner {
 	fn handle_read_property_notify(
 		&self,
 		reader: &XContext,
-		target_format: u32,
+		transfer_type: &mut Option<Atom>,
 		using_incr: bool,
 		incr_data: &mut Vec<u8>,
 		timeout_end: &mut Instant,
@@ -563,14 +573,19 @@ impl Inner {
 			// now preparing the data
 			return Ok(false);
 		}
-		let property_type =
-			if target_format == self.atoms.TARGETS { self.atoms.ATOM } else { target_format };
 		let reply = reader
 			.conn
-			.get_property(true, event.window, event.atom, property_type, 0, u32::MAX / 4)
+			.get_property(true, event.window, event.atom, AtomEnum::ANY, 0, u32::MAX / 4)
 			.map_err(into_unknown)?
 			.reply()
 			.map_err(into_unknown)?;
+		if reply.type_ == NONE
+			|| ![8, 16, 32].contains(&reply.format)
+			|| transfer_type.is_some_and(|expected| expected != reply.type_)
+		{
+			return Err(Error::ConversionFailure);
+		}
+		*transfer_type = Some(reply.type_);
 
 		// log::trace!("Received segment. value_len {}", reply.value_len,);
 		if reply.value_len == 0 {
@@ -586,12 +601,12 @@ impl Inner {
 		Ok(false)
 	}
 
-	fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<()> {
+	fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<bool> {
 		let selection = match self.kind_of(event.selection) {
 			Some(kind) => kind,
 			None => {
 				warn!("Received a selection request to a selection other than the CLIPBOARD, PRIMARY or SECONDARY. This is unexpected.");
-				return Ok(());
+				return Ok(false);
 			}
 		};
 
@@ -702,7 +717,8 @@ impl Inner {
 			)
 			.map_err(into_unknown)?;
 
-		self.server.conn.flush().map_err(into_unknown)
+		self.server.conn.flush().map_err(into_unknown)?;
+		Ok(success && event.target != self.atoms.TARGETS)
 	}
 
 	fn ask_clipboard_manager_to_request_our_data(&self) -> Result<()> {
@@ -850,12 +866,15 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 					context.atom_name_dbg(event.target),
 				);
 				// Someone is requesting the clipboard content from us.
-				if let Err(e) = context.handle_selection_request(event) {
-					error!("Failed to handle selection request: {e}");
-					continue;
-				}
+				let served = match context.handle_selection_request(event) {
+					Ok(served) => served,
+					Err(e) => {
+						error!("Failed to handle selection request: {e}");
+						continue;
+					}
+				};
 
-				if let Some(selection) = context.kind_of(event.selection) {
+				if let Some(selection) = context.kind_of(event.selection).filter(|_| served) {
 					let selection = context.selection_of(selection);
 
 					// It is important that this mutex is locked at the time of calling
@@ -872,7 +891,7 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 				if *handover_state == ManagerHandoverState::InProgress {
 					// Only set written, when the actual contents were written,
 					// not just a response to what TARGETS we have.
-					if event.target != context.atoms.TARGETS {
+					if served {
 						trace!("The contents were written to the clipboard manager.");
 						written = true;
 						// if we have written and notified, make sure to notify that we are done
@@ -964,7 +983,7 @@ impl Clipboard {
 			return Ok(Vec::new());
 		}
 		let reader = XContext::new()?;
-		let bytes = self.inner.read_single(&reader, selection, self.inner.atoms.TARGETS)?;
+		let bytes = self.inner.read_single(&reader, selection, self.inner.atoms.TARGETS, false)?;
 		if bytes.len() % 4 != 0 {
 			return Err(Error::ConversionFailure);
 		}
@@ -985,7 +1004,10 @@ impl Clipboard {
 		selection: LinuxClipboardKind,
 	) -> Result<Vec<u8>> {
 		let atom = self.raw_atom(format)?;
-		Ok(self.inner.read(&[atom], selection)?.bytes)
+		if self.inner.is_owner(selection)? {
+			return Ok(self.inner.read(&[atom], selection)?.bytes);
+		}
+		self.inner.read_single(&XContext::new()?, selection, atom, true)
 	}
 
 	pub(crate) fn set_formats(

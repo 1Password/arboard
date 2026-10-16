@@ -40,5 +40,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	clipboard.set().raw(custom.clone(), [3, 2, 1].as_slice())?;
 	assert!(clipboard.get().raw(&custom)?.starts_with(&[3, 2, 1]));
 	println!("Standalone RTF and raw byte writes also succeeded.");
+	#[cfg(feature = "image-data")]
+	{
+		let image = arboard::ImageData {
+			width: 2,
+			height: 1,
+			bytes: vec![255, 0, 0, 255, 0, 255, 0, 255].into(),
+		};
+		clipboard.set().formats([
+			ClipboardContent::Text("Red and green pixels".into()),
+			ClipboardContent::Image(image.clone()),
+		])?;
+		assert_eq!(clipboard.get().image()?.bytes, image.bytes);
+		println!("Mixed image and text: {}", clipboard.get().text()?);
+	}
+	let root = std::env::current_dir()?;
+	let files = vec![root.join("Cargo.toml"), root.join("README.md")];
+	clipboard.set().formats([
+		ClipboardContent::Text("Two project files".into()),
+		ClipboardContent::Files(files.into()),
+	])?;
+	assert_eq!(clipboard.get().file_list()?.len(), 2);
+	println!("Mixed files and text: {}", clipboard.get().text()?);
 	Ok(())
 }
