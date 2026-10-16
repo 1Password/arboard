@@ -47,10 +47,14 @@ Each bound is inclusive. An excess returns `Error::ImageTooLarge`.
 
 The decoded bound applies separately to the decoder's pixel buffer and the returned RGBA8 buffer.
 Arboard checks these sizes before pixel decode and conversion.
+The bound also applies to a GIF frame buffer before cropping to its logical canvas.
 The bound does not include codec metadata or scratch space.
 It does not cap total process memory or the sum of concurrent allocations.
 
 X11 checks each property transfer and the cumulative INCR payload.
+Image negotiation has a separate 64 KiB bound for the X11 TARGETS response.
+An oversized response returns `Error::ImageTooLarge`, even without an encoded payload bound.
+Arboard searches this bounded response directly without an additional atom buffer.
 A property reply can contain up to three bytes beyond the encoded bound due to protocol alignment.
 Wayland reads at most one byte beyond that bound to detect excess data.
 On Windows, arboard checks the native allocation size before its own copy.

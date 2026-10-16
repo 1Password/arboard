@@ -58,6 +58,9 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 static CLIPBOARD: Mutex<Option<GlobalClipboard>> = parking_lot::const_mutex(None);
 
+#[cfg(feature = "image-data")]
+const MAX_IMAGE_TARGETS_BYTES: usize = 64 * 1024;
+
 fn property_length(max_bytes: Option<usize>) -> u32 {
 	max_bytes.map_or(u32::MAX / 4, |limit| {
 		((limit as u64).saturating_add(3) / 4).min(u64::from(u32::MAX / 4)) as u32
@@ -189,6 +192,153 @@ mod image_limit_tests {
 				property_notify,
 			)
 			.unwrap());
+	}
+
+	#[test]
+	#[cfg(all(feature = "image-data", not(feature = "wayland-data-control")))]
+	fn hostile_image_targets_are_bounded() {
+		// Keep Xvfb from resetting when a fixture releases its connections.
+		let _server = XContext::new().unwrap();
+		for (incremental, atom_count) in [
+			(false, 16 * 1024 - 1),
+			(false, 16 * 1024),
+			(false, 16 * 1024 + 1),
+			(true, 16 * 1024 - 1),
+			(true, 16 * 1024),
+			(true, 16 * 1024 + 1),
+		] {
+			let mut inner = Inner::new().unwrap();
+			let owner = XContext::new().unwrap();
+			inner.atoms.CLIPBOARD = owner
+				.conn
+				.intern_atom(
+					false,
+					format!("ARBOARD_IMAGE_TARGETS_TEST_{}", owner.win_id).as_bytes(),
+				)
+				.unwrap()
+				.reply()
+				.unwrap()
+				.atom;
+			owner
+				.conn
+				.set_selection_owner(owner.win_id, inner.atoms.CLIPBOARD, Time::CURRENT_TIME)
+				.unwrap()
+				.check()
+				.unwrap();
+			let targets = inner.atoms.TARGETS;
+			let atom = inner.atoms.ATOM;
+			let incr = inner.atoms.INCR;
+			let text = inner.atoms.UTF8_STRING;
+			let clipboard = Clipboard { inner: Arc::new(inner) };
+			let (done_tx, done_rx) = std::sync::mpsc::channel();
+			let server = std::thread::spawn(move || {
+				let request = loop {
+					if let Event::SelectionRequest(request) = owner.conn.wait_for_event().unwrap() {
+						break request;
+					}
+				};
+				assert_eq!(request.target, targets);
+				if incremental {
+					owner
+						.conn
+						.change_window_attributes(
+							request.requestor,
+							&x11rb::protocol::xproto::ChangeWindowAttributesAux::new()
+								.event_mask(EventMask::PROPERTY_CHANGE),
+						)
+						.unwrap()
+						.check()
+						.unwrap();
+					owner
+						.conn
+						.change_property32(
+							PropMode::REPLACE,
+							request.requestor,
+							request.property,
+							incr,
+							&[u32::MAX],
+						)
+						.unwrap()
+						.check()
+						.unwrap();
+				} else {
+					owner
+						.conn
+						.change_property32(
+							PropMode::REPLACE,
+							request.requestor,
+							request.property,
+							atom,
+							&vec![text; atom_count],
+						)
+						.unwrap()
+						.check()
+						.unwrap();
+				}
+				owner
+					.conn
+					.send_event(
+						false,
+						request.requestor,
+						EventMask::NO_EVENT,
+						SelectionNotifyEvent {
+							response_type: SELECTION_NOTIFY_EVENT,
+							sequence: 0,
+							time: request.time,
+							requestor: request.requestor,
+							selection: request.selection,
+							target: request.target,
+							property: request.property,
+						},
+					)
+					.unwrap();
+				owner.conn.flush().unwrap();
+				if incremental {
+					let first_chunk = atom_count.min(16 * 1024);
+					for count in [first_chunk, atom_count - first_chunk] {
+						loop {
+							if let Event::PropertyNotify(event) =
+								owner.conn.wait_for_event().unwrap()
+							{
+								if event.atom == request.property && event.state == Property::DELETE
+								{
+									break;
+								}
+							}
+						}
+						owner
+							.conn
+							.change_property32(
+								PropMode::REPLACE,
+								request.requestor,
+								request.property,
+								atom,
+								&vec![text; count],
+							)
+							.unwrap()
+							.check()
+							.unwrap();
+					}
+				}
+				done_rx.recv().unwrap();
+			});
+			let limits =
+				crate::ImageLimits { max_encoded_bytes: Some(0), ..crate::ImageLimits::default() };
+			let result = clipboard.get_image(LinuxClipboardKind::Clipboard, limits);
+			done_tx.send(()).unwrap();
+			server.join().unwrap();
+			if atom_count > 16 * 1024 {
+				assert!(
+					matches!(result, Err(Error::ImageTooLarge)),
+					"incremental={incremental}, atoms={atom_count}: {result:?}"
+				);
+			} else {
+				assert!(
+					matches!(result, Err(Error::ContentNotAvailable)),
+					"incremental={incremental}, atoms={atom_count}: {result:?}"
+				);
+			}
+		}
 	}
 }
 x11rb::atom_manager! {
@@ -1218,17 +1368,16 @@ impl Clipboard {
 		let targets = if self.inner.is_owner(selection)? {
 			None
 		} else {
-			match self.inner.read(&[self.inner.atoms.TARGETS], selection) {
+			match self.inner.read_limited(
+				&[self.inner.atoms.TARGETS],
+				selection,
+				Some(MAX_IMAGE_TARGETS_BYTES),
+			) {
 				Ok(data) => {
 					if data.bytes.len() % 4 != 0 {
 						return Err(Error::ConversionFailure);
 					}
-					Some(
-						data.bytes
-							.chunks_exact(4)
-							.map(|bytes| u32::from_ne_bytes(bytes.try_into().unwrap()))
-							.collect::<Vec<_>>(),
-					)
+					Some(data.bytes)
 				}
 				// Some owners do not implement TARGETS. Preserve direct conversion for them.
 				Err(Error::ContentNotAvailable) => None,
@@ -1245,7 +1394,11 @@ impl Clipboard {
 				.reply()
 				.map_err(into_unknown)?
 				.atom;
-			if targets.as_ref().is_some_and(|targets| !targets.contains(&atom)) {
+			if targets.as_ref().is_some_and(|targets| {
+				!targets
+					.chunks_exact(4)
+					.any(|bytes| u32::from_ne_bytes(bytes.try_into().unwrap()) == atom)
+			}) {
 				return Err(Error::ContentNotAvailable);
 			}
 			self.inner

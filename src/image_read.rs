@@ -16,6 +16,8 @@ use std::io::Cursor;
 ///
 /// On X11, each property reply is bounded before transfer, with up to three
 /// padding bytes. Incremental transfers check the cumulative size before append.
+/// Image negotiation has a separate 64 KiB bound for the TARGETS response.
+/// An oversized TARGETS response also returns [`Error::ImageTooLarge`].
 /// Wayland reads at most one byte past the encoded limit to detect excess data.
 /// On Windows, the encoded bound includes the native allocation's padding and
 /// DIB header. The bound is checked before arboard copies that allocation.
@@ -49,6 +51,7 @@ pub struct ImageLimits {
 	///
 	/// Before pixel decode, arboard checks both the decoder's output size and
 	/// `width * height * 4` for the returned RGBA8 pixels.
+	/// The bound also applies to a GIF frame buffer before cropping to its canvas.
 	/// This is not a sum of live allocations or a bound on codec scratch space.
 	pub max_decoded_bytes: Option<u64>,
 }
@@ -110,18 +113,46 @@ pub(crate) fn decode(
 	// Preserve ImageReader::decode's existing allocation budget.
 	let mut decoder_limits = ::image::io::Limits::default();
 	decoder_limits.reserve(decoder.total_bytes()).map_err(|_| Error::ConversionFailure)?;
+	// GIF frames can exceed the logical canvas. Bound the extra frame allocation
+	// inside the decoder before it crops the frame into the output buffer.
+	let frame_allocation_limit = if format == ImageFormat::Gif {
+		limits
+			.max_decoded_bytes
+			.filter(|&limit| decoder_limits.max_alloc.map_or(true, |default| limit <= default))
+	} else {
+		None
+	};
+	if let Some(limit) = frame_allocation_limit {
+		decoder_limits.max_alloc = Some(limit);
+	}
 	decoder.set_limits(decoder_limits).map_err(|_| Error::ConversionFailure)?;
-	decode_pixels(decoder, limits)
+	decode_pixels_with_error(decoder, limits, |error| match error {
+		::image::ImageError::Limits(error)
+			if frame_allocation_limit.is_some()
+				&& matches!(error.kind(), ::image::error::LimitErrorKind::InsufficientMemory) =>
+		{
+			Error::ImageTooLarge
+		}
+		_ => Error::ConversionFailure,
+	})
 }
 
+#[cfg(windows)]
 pub(crate) fn decode_pixels(
 	decoder: impl ImageDecoder,
 	limits: ImageLimits,
 ) -> Result<ImageData<'static>, Error> {
+	decode_pixels_with_error(decoder, limits, |_| Error::ConversionFailure)
+}
+
+fn decode_pixels_with_error(
+	decoder: impl ImageDecoder,
+	limits: ImageLimits,
+	map_error: impl FnOnce(::image::ImageError) -> Error,
+) -> Result<ImageData<'static>, Error> {
 	let (width, height) = decoder.dimensions();
 	limits.check_dimensions(width, height, decoder.total_bytes())?;
-	let rgba =
-		DynamicImage::from_decoder(decoder).map_err(|_| Error::ConversionFailure)?.into_rgba8();
+	let rgba = DynamicImage::from_decoder(decoder).map_err(map_error)?.into_rgba8();
 	Ok(ImageData { width: width as usize, height: height as usize, bytes: rgba.into_raw().into() })
 }
 

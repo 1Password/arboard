@@ -148,6 +148,50 @@ mod tests {
 	}
 
 	#[test]
+	fn gif_frame_allocation_respects_decoded_limit() {
+		let mut bytes = GIF.to_vec();
+		bytes[6..10].copy_from_slice(&[1, 0, 1, 0]);
+		let limits = ImageLimits {
+			max_width: Some(1),
+			max_height: Some(1),
+			max_decoded_bytes: Some(4),
+			..ImageLimits::default()
+		};
+		for limit in [4, 23] {
+			assert!(matches!(
+				decode_payload(
+					&bytes,
+					Some(ImageFormat::Gif),
+					ImageLimits { max_decoded_bytes: Some(limit), ..limits },
+				),
+				Err(Error::ImageTooLarge)
+			));
+		}
+		for limit in [None, Some(24)] {
+			let image = decode_payload(
+				&bytes,
+				Some(ImageFormat::Gif),
+				ImageLimits { max_decoded_bytes: limit, ..limits },
+			)
+			.unwrap();
+			assert_eq!((image.width, image.height, image.bytes.len()), (1, 1, 4));
+		}
+		let mut requested = Vec::new();
+		assert!(matches!(
+			read_image(limits, |mime| {
+				requested.push(mime.to_owned());
+				if mime == "image/gif" {
+					Ok(bytes.clone())
+				} else {
+					Err(Error::ContentNotAvailable)
+				}
+			}),
+			Err(Error::ImageTooLarge)
+		));
+		assert_eq!(requested.last().unwrap(), "image/gif");
+	}
+
+	#[test]
 	fn absence_conversion_and_transfer_errors_stay_distinct() {
 		assert!(matches!(
 			read_image(ImageLimits::default(), |_| Err(Error::ContentNotAvailable)),
