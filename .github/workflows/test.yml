@@ -118,6 +118,34 @@ jobs:
       - name: Check soundness
         run: cargo miri test windows --features image-data
 
+  linux-clipboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: x11
+            features: --no-default-features
+          - backend: x11
+            features: --all-features
+          - backend: wayland
+            features: --no-default-features --features wayland-data-control
+          - backend: wayland
+            features: --all-features
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Build isolated clipboard environment
+        run: docker build -t arboard-linux-tests -f .github/containers/linux-tests.Dockerfile .
+      - name: Exercise native clipboard clients
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace:ro" \
+            -e CARGO_TARGET_DIR=/home/tester/target \
+            arboard-linux-tests \
+            bash .github/scripts/linux-clipboard-tests.sh \
+            ${{ matrix.backend }} ${{ matrix.features }}
+
   semver:
     runs-on: ubuntu-latest
     steps:
