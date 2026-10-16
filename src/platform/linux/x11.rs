@@ -56,6 +56,13 @@ use crate::{common::ScopeGuard, Error};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+fn check_read_deadline(deadline: Option<Instant>) -> Result<()> {
+	if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+		return Err(Error::Timeout);
+	}
+	Ok(())
+}
+
 static CLIPBOARD: Mutex<Option<GlobalClipboard>> = parking_lot::const_mutex(None);
 
 x11rb::atom_manager! {
@@ -304,7 +311,20 @@ impl Inner {
 	/// `formats` must be a slice of atoms, where each atom represents a target format.
 	/// The first format from `formats`, which the clipboard owner supports will be the
 	/// format of the return value.
-	fn read(&self, formats: &[Atom], selection: LinuxClipboardKind) -> Result<ClipboardData> {
+	fn read(
+		&self,
+		formats: &[Atom],
+		selection: LinuxClipboardKind,
+		timeout: Option<Duration>,
+	) -> Result<ClipboardData> {
+		let deadline = timeout
+			.map(|timeout| {
+				Instant::now()
+					.checked_add(timeout)
+					.ok_or_else(|| Error::unknown("The clipboard read timeout is too large"))
+			})
+			.transpose()?;
+		check_read_deadline(deadline)?;
 		// if we are the current owner, we can get the current clipboard ourselves
 		if self.is_owner(selection)? {
 			let data = self.selection_of(selection).data.read();
@@ -312,6 +332,7 @@ impl Inner {
 				for data in data_list {
 					for format in formats {
 						if *format == data.format {
+							check_read_deadline(deadline)?;
 							return Ok(data.clone());
 						}
 					}
@@ -326,7 +347,8 @@ impl Inner {
 
 		trace!("Trying to get the clipboard data.");
 		for format in formats {
-			match self.read_single(&reader, selection, *format) {
+			check_read_deadline(deadline)?;
+			match self.read_single(&reader, selection, *format, deadline) {
 				Ok(bytes) => {
 					return Ok(ClipboardData { bytes, format: *format });
 				}
@@ -344,6 +366,7 @@ impl Inner {
 		reader: &XContext,
 		selection: LinuxClipboardKind,
 		target_format: Atom,
+		deadline: Option<Instant>,
 	) -> Result<Vec<u8>> {
 		// Delete the property so that we can detect (using property notify)
 		// when the selection owner receives our request.
@@ -370,7 +393,7 @@ impl Inner {
 		let mut incr_data: Vec<u8> = Vec::new();
 		let mut using_incr = false;
 
-		let mut timeout_end = Instant::now() + LONG_TIMEOUT_DUR;
+		let mut timeout_end = deadline.unwrap_or_else(|| Instant::now() + LONG_TIMEOUT_DUR);
 
 		while Instant::now() < timeout_end {
 			let event = reader.conn.poll_for_event().map_err(into_unknown)?;
@@ -393,12 +416,17 @@ impl Inner {
 						event,
 					)?;
 					match result {
-						ReadSelNotifyResult::GotData(data) => return Ok(data),
+						ReadSelNotifyResult::GotData(data) => {
+							check_read_deadline(deadline)?;
+							return Ok(data);
+						}
 						ReadSelNotifyResult::IncrStarted => {
 							// This means we received an indication that an the
 							// data is going to be sent INCRementally. Let's
 							// reset our timeout.
-							timeout_end += SHORT_TIMEOUT_DUR;
+							if deadline.is_none() {
+								timeout_end += SHORT_TIMEOUT_DUR;
+							}
 						}
 						ReadSelNotifyResult::EventNotRecognized => (),
 					}
@@ -415,7 +443,11 @@ impl Inner {
 						&mut timeout_end,
 						event,
 					)?;
+					if let Some(deadline) = deadline {
+						timeout_end = deadline;
+					}
 					if result {
+						check_read_deadline(deadline)?;
 						return Ok(incr_data);
 					}
 				}
@@ -423,6 +455,7 @@ impl Inner {
 			}
 		}
 		log::info!("Time-out hit while reading the clipboard.");
+		check_read_deadline(deadline)?;
 		Err(Error::ContentNotAvailable)
 	}
 
@@ -970,7 +1003,11 @@ impl Clipboard {
 		self.inner.clear(selection)
 	}
 
-	pub(crate) fn get_text(&self, selection: LinuxClipboardKind) -> Result<String> {
+	pub(crate) fn get_text(
+		&self,
+		selection: LinuxClipboardKind,
+		timeout: Option<Duration>,
+	) -> Result<String> {
 		let formats = [
 			self.inner.atoms.UTF8_STRING,
 			self.inner.atoms.UTF8_MIME_0,
@@ -979,7 +1016,7 @@ impl Clipboard {
 			self.inner.atoms.TEXT,
 			self.inner.atoms.TEXT_MIME_UNKNOWN,
 		];
-		let result = self.inner.read(&formats, selection)?;
+		let result = self.inner.read(&formats, selection, timeout)?;
 		if result.format == self.inner.atoms.STRING {
 			// ISO Latin-1
 			// See: https://stackoverflow.com/questions/28169745/what-are-the-options-to-convert-iso-8859-1-latin-1-to-a-string-utf-8
@@ -1007,9 +1044,13 @@ impl Clipboard {
 		self.inner.write(data, selection, wait)
 	}
 
-	pub(crate) fn get_html(&self, selection: LinuxClipboardKind) -> Result<String> {
+	pub(crate) fn get_html(
+		&self,
+		selection: LinuxClipboardKind,
+		timeout: Option<Duration>,
+	) -> Result<String> {
 		let formats = [self.inner.atoms.HTML];
-		let result = self.inner.read(&formats, selection)?;
+		let result = self.inner.read(&formats, selection, timeout)?;
 		String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)
 	}
 
@@ -1046,9 +1087,13 @@ impl Clipboard {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub(crate) fn get_image(&self, selection: LinuxClipboardKind) -> Result<ImageData<'static>> {
+	pub(crate) fn get_image(
+		&self,
+		selection: LinuxClipboardKind,
+		timeout: Option<Duration>,
+	) -> Result<ImageData<'static>> {
 		let formats = [self.inner.atoms.PNG_MIME];
-		let bytes = self.inner.read(&formats, selection)?.bytes;
+		let bytes = self.inner.read(&formats, selection, timeout)?.bytes;
 
 		let cursor = std::io::Cursor::new(&bytes);
 		let mut reader = image::io::Reader::new(cursor);
@@ -1081,9 +1126,13 @@ impl Clipboard {
 		self.inner.write(data, selection, wait)
 	}
 
-	pub(crate) fn get_file_list(&self, selection: LinuxClipboardKind) -> Result<Vec<PathBuf>> {
+	pub(crate) fn get_file_list(
+		&self,
+		selection: LinuxClipboardKind,
+		timeout: Option<Duration>,
+	) -> Result<Vec<PathBuf>> {
 		let formats = [self.inner.atoms.URI_LIST, self.inner.atoms.GNOME_COPIED_FILES];
-		let result = self.inner.read(&formats, selection)?;
+		let result = self.inner.read(&formats, selection, timeout)?;
 
 		Ok(paths_from_uri_list(result.bytes))
 	}

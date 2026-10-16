@@ -37,6 +37,26 @@ Wayland environment. It is recommended to enable `XWayland` for these cases. If 
 an isolated sandbox, such as Flatpak or Snap, you'll need to expose the X11 socket to the application
 _in addition_ to the Wayland communication interface.
 
+### X11 read timeouts
+
+Use `GetExtLinux::read_timeout` to bound the selection transfer for one read:
+
+```rust,no_run
+use arboard::{Clipboard, GetExtLinux};
+use std::time::Duration;
+
+let mut clipboard = Clipboard::new()?;
+let text = clipboard.get().read_timeout(Duration::from_millis(250)).text()?;
+# Ok::<(), arboard::Error>(())
+```
+
+The timeout covers all requested formats and incremental chunks. Expiration returns
+`Error::Timeout`. Synchronous X server requests and image decoding are outside this bound.
+Native Wayland returns `Error::ClipboardNotSupported` when this option is set.
+Without this option, existing read timeouts remain unchanged.
+
+Run `cargo run --example read_timeout` under X11 to try a bounded text read.
+
 ### Clipboard Ownership
 
 Some apps and users may notice that sometimes values copied to a Linux clipboard with this crate vanish
