@@ -88,6 +88,8 @@ pub enum ClipboardContent<'a> {
 	///
 	/// Linux offers URI, GNOME, and Nautilus representations. Windows offers `CF_HDROP`.
 	/// macOS offers one file URL per item, with other representations on the first item.
+	/// With multiple files, macOS converts known legacy type names to UTIs.
+	/// Unknown names must already be valid UTIs; otherwise the write returns `UnsupportedFormat`.
 	Files(Cow<'a, [PathBuf]>),
 	/// Native bytes with their format identity.
 	Raw(ClipboardFormat, Cow<'a, [u8]>),

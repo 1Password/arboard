@@ -29,6 +29,35 @@ use std::{
 	path::{Path, PathBuf},
 };
 
+fn canonical_item_type(name: &Retained<NSString>) -> Result<Retained<NSString>, Error> {
+	#[link(name = "CoreServices", kind = "framework")]
+	extern "C" {
+		static kUTTagClassNSPboardType: *const NSString;
+		fn UTTypeCreatePreferredIdentifierForTag(
+			tag_class: *const NSString,
+			tag: *const NSString,
+			conforming_to: *const NSString,
+		) -> *mut NSString;
+		fn UTTypeIsDynamic(identifier: *const NSString) -> u8;
+	}
+
+	// CFString and NSString are toll-free bridged. The Create rule transfers ownership.
+	let identifier = unsafe {
+		Retained::from_raw(UTTypeCreatePreferredIdentifierForTag(
+			kUTTagClassNSPboardType,
+			&**name,
+			std::ptr::null(),
+		))
+	}
+	.ok_or(Error::ConversionFailure)?;
+	// Unknown tags produce dynamic UTIs. Keep their original native identities instead.
+	if unsafe { UTTypeIsDynamic(&*identifier) } != 0 {
+		Ok(name.clone())
+	} else {
+		Ok(identifier)
+	}
+}
+
 /// Returns an NSImage object on success.
 #[cfg(feature = "image-data")]
 fn image_from_pixels(
@@ -391,7 +420,8 @@ impl<'clipboard> Set<'clipboard> {
 			if !additional_files.is_empty() {
 				let first = unsafe { NSPasteboardItem::new() };
 				for (name, bytes) in &prepared {
-					if !unsafe { first.setData_forType(bytes, name) } {
+					let name = canonical_item_type(name)?;
+					if !unsafe { first.setData_forType(bytes, &name) } {
 						return Err(Error::UnsupportedFormat);
 					}
 				}

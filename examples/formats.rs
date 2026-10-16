@@ -58,9 +58,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 	let files = vec![root.join("Cargo.toml"), root.join("README.md")];
 	clipboard.set().formats([
 		ClipboardContent::Text("Two project files".into()),
-		ClipboardContent::Files(files.into()),
+		ClipboardContent::Files(files.as_slice().into()),
 	])?;
 	assert_eq!(clipboard.get().file_list()?.len(), 2);
 	println!("Mixed files and text: {}", clipboard.get().text()?);
+	#[cfg(target_os = "macos")]
+	{
+		clipboard.set().formats([
+			ClipboardContent::Raw(
+				ClipboardFormat::register("NSStringPboardType")?,
+				b"Legacy text with files".as_slice().into(),
+			),
+			ClipboardContent::Files(files.into()),
+		])?;
+		assert_eq!(clipboard.get().text()?, "Legacy text with files");
+		assert_eq!(clipboard.get().file_list()?.len(), 2);
+		println!("Legacy macOS string bytes and two files are available together.");
+	}
 	Ok(())
 }

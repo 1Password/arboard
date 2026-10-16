@@ -114,10 +114,67 @@ fn native_format_operations() {
 	#[cfg(target_os = "macos")]
 	macos(&mut clipboard, &custom);
 	mixed_files(&mut clipboard);
+	#[cfg(target_os = "macos")]
+	macos_legacy_files(&mut clipboard);
 	#[cfg(feature = "image-data")]
 	mixed_images(&mut clipboard);
 	clipboard.clear().unwrap();
 	assert!(clipboard.get().formats().unwrap().is_empty());
+}
+
+#[cfg(target_os = "macos")]
+fn macos_legacy_files(clipboard: &mut Clipboard) {
+	let root = std::env::current_dir().unwrap();
+	let files = vec![root.join("Cargo.toml"), root.join("README.md")];
+	let legacy = ClipboardFormat::register("NSStringPboardType").unwrap();
+	let canonical = ClipboardFormat::register("public.utf8-plain-text").unwrap();
+	let custom = ClipboardFormat::register("org.arboard.legacy-files").unwrap();
+	for count in 0..=2 {
+		let mut contents = vec![ClipboardContent::Raw(legacy.clone(), b"hello".as_slice().into())];
+		if count != 0 {
+			contents.push(ClipboardContent::Files(files[..count].into()));
+		}
+		clipboard.set().formats(contents).unwrap();
+		assert_eq!(clipboard.get().raw(&legacy).unwrap(), b"hello");
+		assert_eq!(clipboard.get().text().unwrap(), "hello");
+		if count != 0 {
+			assert_eq!(clipboard.get().file_list().unwrap().len(), count);
+		}
+	}
+	for (first, last) in [(&legacy, &canonical), (&canonical, &legacy)] {
+		private_set(clipboard)
+			.formats([
+				ClipboardContent::Raw(first.clone(), b"first".as_slice().into()),
+				ClipboardContent::Files(files.as_slice().into()),
+				ClipboardContent::Raw(last.clone(), b"last".as_slice().into()),
+				ClipboardContent::Raw(custom.clone(), b"custom".as_slice().into()),
+			])
+			.unwrap();
+		assert_eq!(clipboard.get().raw(&legacy).unwrap(), b"last");
+		assert_eq!(clipboard.get().raw(&canonical).unwrap(), b"last");
+		assert_eq!(clipboard.get().text().unwrap(), "last");
+		assert_eq!(clipboard.get().file_list().unwrap().len(), 2);
+		assert_eq!(clipboard.get().raw(&custom).unwrap(), b"custom");
+		assert_private(clipboard);
+	}
+	let pasteboard = unsafe { objc2_app_kit::NSPasteboard::generalPasteboard() };
+	let change_count = unsafe { pasteboard.changeCount() };
+	assert!(matches!(
+		clipboard.set().formats([
+			ClipboardContent::Text("must not replace contents".into()),
+			ClipboardContent::Files(files.as_slice().into()),
+			ClipboardContent::Raw(
+				ClipboardFormat::register("not a valid pasteboard type").unwrap(),
+				b"unsupported".as_slice().into()
+			),
+		]),
+		Err(Error::UnsupportedFormat)
+	));
+	assert_eq!(unsafe { pasteboard.changeCount() }, change_count);
+	assert_eq!(clipboard.get().text().unwrap(), "last");
+	assert_eq!(clipboard.get().file_list().unwrap().len(), 2);
+	assert_eq!(clipboard.get().raw(&custom).unwrap(), b"custom");
+	assert_private(clipboard);
 }
 
 fn private_set(clipboard: &mut Clipboard) -> arboard::Set<'_> {
