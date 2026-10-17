@@ -1,8 +1,8 @@
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "emscripten"))))]
 mod linux;
 #[cfg(all(
 	unix,
-	not(any(target_os = "macos", target_os = "android", target_os = "emscripten"))
+	not(any(target_os = "macos", target_os = "emscripten"))
 ))]
 pub use linux::*;
 
