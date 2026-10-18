@@ -174,8 +174,10 @@ mod image_data {
 	// transparency bytes in the alpha channel.
 	//
 	// Apparently, it's our job as the consumer to do the right thing. This method fiddles
-	// with the header a bit in these cases, then `image` handles the rest.
-	fn maybe_tweak_header(dibv5: &mut [u8]) {
+	// with the header a bit in these cases, then `image` handles the rest. Return
+	// the original pixel offset when changing the compression, so the decoder
+	// does not infer a different layout from the modified header.
+	fn maybe_tweak_header(dibv5: &mut [u8]) -> Result<Option<u32>, Error> {
 		assert!(dibv5.len() >= size_of::<BITMAPV5HEADER>());
 		let src = dibv5.as_mut_ptr().cast::<BITMAPV5HEADER>();
 		let mut header = unsafe { std::ptr::read_unaligned(src) };
@@ -184,6 +186,19 @@ mod image_data {
 			&& header.bV5Compression == BI_RGB
 			&& header.bV5AlphaMask == 0xff000000
 		{
+			if header.bV5Size != size_of::<BITMAPV5HEADER>() as u32 {
+				return Err(Error::ConversionFailure);
+			}
+			// Even a true-color BI_RGB bitmap can have an optional color table.
+			// It has no post-header bitfield masks. In a packed DIB, any color
+			// profile follows the pixels and does not affect their offset.
+			let pixel_offset = header
+				.bV5ClrUsed
+				.checked_mul(4)
+				.and_then(|size| header.bV5Size.checked_add(size))
+				.filter(|&offset| u64::from(offset) <= dibv5.len() as u64)
+				.ok_or(Error::ConversionFailure)?;
+
 			header.bV5Compression = BI_BITFIELDS;
 			if header.bV5RedMask == 0 && header.bV5GreenMask == 0 && header.bV5BlueMask == 0 {
 				header.bV5RedMask = 0xff0000;
@@ -192,7 +207,9 @@ mod image_data {
 			}
 
 			unsafe { std::ptr::write_unaligned(src, header) };
+			return Ok(Some(pixel_offset));
 		}
+		Ok(None)
 	}
 
 	pub(super) fn read_cf_dibv5(dibv5: &mut [u8]) -> Result<ImageData<'static>, Error> {
@@ -203,10 +220,30 @@ mod image_data {
 		if dibv5.len() < header_size {
 			return Err(Error::unknown("When reading the DIBV5 data, it contained fewer bytes than the BITMAPV5HEADER size. This is invalid."));
 		}
-		maybe_tweak_header(dibv5);
-
-		let decoder = BmpDecoder::new_without_file_header(std::io::Cursor::new(&*dibv5))
-			.map_err(|_| Error::ConversionFailure)?;
+		let mut bmp = Vec::new();
+		let decoder = if let Some(pixel_offset) = maybe_tweak_header(dibv5)? {
+			// Changing BI_RGB to BI_BITFIELDS preserves alpha, but must not move
+			// the pixels. Some image versions infer an extra 12 bytes of masks
+			// for BITFIELDS DIBs. A BMP file header makes the original offset
+			// explicit instead of relying on that inference.
+			const FILE_HEADER_SIZE: u32 = 14;
+			let file_size = u32::try_from(dibv5.len())
+				.ok()
+				.and_then(|size| size.checked_add(FILE_HEADER_SIZE))
+				.ok_or(Error::ConversionFailure)?;
+			let pixel_offset =
+				pixel_offset.checked_add(FILE_HEADER_SIZE).ok_or(Error::ConversionFailure)?;
+			bmp.reserve(file_size as usize);
+			bmp.extend_from_slice(b"BM");
+			bmp.extend_from_slice(&file_size.to_le_bytes());
+			bmp.extend_from_slice(&[0; 4]); // Reserved fields.
+			bmp.extend_from_slice(&pixel_offset.to_le_bytes());
+			bmp.extend_from_slice(dibv5);
+			BmpDecoder::new(std::io::Cursor::new(bmp.as_slice()))
+		} else {
+			BmpDecoder::new_without_file_header(std::io::Cursor::new(&*dibv5))
+		}
+		.map_err(|_| Error::ConversionFailure)?;
 		let (width, height) = decoder.dimensions();
 		let bytes = DynamicImage::from_decoder(decoder)
 			.map_err(|_| Error::ConversionFailure)?
@@ -368,6 +405,111 @@ mod image_data {
 		let _converted = unsafe { rgba_to_win(&mut data) };
 		let _converted = unsafe { win_to_rgba(&mut data) };
 		assert_eq!(data, DATA);
+	}
+
+	#[cfg(test)]
+	const RGB32_DIBV5_PIXELS: &[u8] =
+		&[10, 20, 30, 255, 40, 50, 60, 128, 70, 80, 90, 0, 100, 110, 120, 64];
+
+	#[cfg(test)]
+	fn rgb32_dibv5(height: i32, colors_used: u32) -> Vec<u8> {
+		// Synthetic 2x2 BI_RGB image with the same header layout as PixPin and
+		// Chromium: zero RGB masks, a high-byte alpha mask, and no extra masks.
+		let mut raw = vec![0; 124];
+		raw[0..4].copy_from_slice(&124u32.to_le_bytes());
+		raw[4..8].copy_from_slice(&2i32.to_le_bytes());
+		raw[8..12].copy_from_slice(&height.to_le_bytes());
+		raw[12..14].copy_from_slice(&1u16.to_le_bytes());
+		raw[14..16].copy_from_slice(&32u16.to_le_bytes());
+		raw[20..24].copy_from_slice(&16u32.to_le_bytes());
+		raw[32..36].copy_from_slice(&colors_used.to_le_bytes());
+		raw[52..56].copy_from_slice(&0xff000000u32.to_le_bytes());
+		raw[56..60].copy_from_slice(&0x73524742u32.to_le_bytes()); // LCS_sRGB.
+		for _ in 0..colors_used {
+			raw.extend_from_slice(&[1, 2, 3, 0]);
+		}
+		let top = [30, 20, 10, 255, 60, 50, 40, 128];
+		let bottom = [90, 80, 70, 0, 120, 110, 100, 64];
+		if height < 0 {
+			raw.extend_from_slice(&top);
+			raw.extend_from_slice(&bottom);
+		} else {
+			raw.extend_from_slice(&bottom);
+			raw.extend_from_slice(&top);
+		}
+		raw
+	}
+
+	#[test]
+	fn pixpin_dibv5() {
+		for height in [2, -2] {
+			for image_size in [0u32, 16] {
+				for trailing_bytes in [0, 16] {
+					let mut raw = rgb32_dibv5(height, 0);
+					raw[20..24].copy_from_slice(&image_size.to_le_bytes());
+					// Extra allocation space must not hide an incorrect pixel offset.
+					raw.resize(raw.len() + trailing_bytes, 0x7f);
+					let image = read_cf_dibv5(&mut raw).unwrap();
+					assert_eq!((image.width, image.height), (2, 2));
+					assert_eq!(image.bytes, RGB32_DIBV5_PIXELS);
+				}
+			}
+		}
+	}
+
+	#[test]
+	fn rgb32_dibv5_with_color_table() {
+		let mut raw = rgb32_dibv5(2, 2);
+		let image = read_cf_dibv5(&mut raw).unwrap();
+		assert_eq!(image.bytes, RGB32_DIBV5_PIXELS);
+	}
+
+	#[test]
+	fn rgb32_dibv5_with_custom_masks() {
+		let mut raw = rgb32_dibv5(2, 0);
+		// Preserve the existing behavior for explicitly supplied channel masks.
+		raw[40..44].copy_from_slice(&0x000000ffu32.to_le_bytes());
+		raw[44..48].copy_from_slice(&0x0000ff00u32.to_le_bytes());
+		raw[48..52].copy_from_slice(&0x00ff0000u32.to_le_bytes());
+		let image = read_cf_dibv5(&mut raw).unwrap();
+		assert_eq!(
+			image.bytes.as_ref(),
+			&[30, 20, 10, 255, 60, 50, 40, 128, 90, 80, 70, 0, 120, 110, 100, 64]
+		);
+	}
+
+	#[test]
+	fn rgb32_dibv5_without_alpha() {
+		let mut raw = rgb32_dibv5(2, 0);
+		raw[52..56].copy_from_slice(&0u32.to_le_bytes());
+		let before = raw.clone();
+		let image = read_cf_dibv5(&mut raw).unwrap();
+		assert_eq!(raw, before);
+		assert_eq!(
+			image.bytes.as_ref(),
+			&[10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255]
+		);
+	}
+
+	#[test]
+	fn rgb32_dibv5_invalid_data() {
+		let mut short_header = rgb32_dibv5(2, 0);
+		short_header.truncate(123);
+		assert!(read_cf_dibv5(&mut short_header).is_err());
+
+		let mut short_pixels = rgb32_dibv5(2, 0);
+		short_pixels.pop();
+		assert!(read_cf_dibv5(&mut short_pixels).is_err());
+
+		let mut wrong_header_size = rgb32_dibv5(2, 0);
+		wrong_header_size[0..4].copy_from_slice(&40u32.to_le_bytes());
+		assert!(read_cf_dibv5(&mut wrong_header_size).is_err());
+
+		for colors_used in [5u32, u32::MAX / 4, u32::MAX] {
+			let mut invalid_table = rgb32_dibv5(2, 0);
+			invalid_table[32..36].copy_from_slice(&colors_used.to_le_bytes());
+			assert!(read_cf_dibv5(&mut invalid_table).is_err());
+		}
 	}
 
 	#[test]

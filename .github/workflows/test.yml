@@ -91,6 +91,11 @@ jobs:
         run: cargo test --no-default-features --features wayland-data-control
       - name: Run tests with all features
         run: cargo test --all-features
+      - name: Run image tests with the latest compatible image dependency
+        if: runner.os == 'Windows'
+        run: |
+          cargo update -p image
+          cargo test --no-default-features --features image-data -- --test-threads=1
 
   miri:
     needs: clippy
