@@ -102,6 +102,7 @@ thread_local! {
 // `SelectionNotify`. Multiple seconds long.
 const LONG_TIMEOUT_DUR: Duration = Duration::from_millis(4000);
 const SHORT_TIMEOUT_DUR: Duration = Duration::from_millis(10);
+const MAX_HANDOVER_DURATION: Duration = Duration::from_millis(100);
 
 #[derive(Debug, PartialEq, Eq)]
 enum ManagerHandoverState {
@@ -770,6 +771,23 @@ impl Inner {
 			}
 		}
 
+		// Per the `ClipboardManager` specification, if nothing owns the `CLIPBOARD_MANAGER`
+		// selection then no clipboard manager is running and clipboard persistence isn't
+		// available. The X server would reject the conversion right away, so don't wait for
+		// a handover that can never happen.
+		let manager = self
+			.server
+			.conn
+			.get_selection_owner(self.atoms.CLIPBOARD_MANAGER)
+			.map_err(into_unknown)?
+			.reply()
+			.map_err(into_unknown)?
+			.owner;
+		if manager == NONE {
+			trace!("No clipboard manager is running, skipping the handover");
+			return Ok(());
+		}
+
 		// It's important that we lock the state before sending the request
 		// because we don't want the request server thread to lock the state
 		// after the request but before we can lock it here.
@@ -789,11 +807,10 @@ impl Inner {
 		self.server.conn.flush().map_err(into_unknown)?;
 
 		*handover_state = ManagerHandoverState::InProgress;
-		let max_handover_duration = Duration::from_millis(100);
 
 		// Note that we are using a parking_lot condvar here, which doesn't wake up
 		// spuriously
-		let result = self.handover_cv.wait_for(&mut handover_state, max_handover_duration);
+		let result = self.handover_cv.wait_for(&mut handover_state, MAX_HANDOVER_DURATION);
 
 		if *handover_state == ManagerHandoverState::Finished {
 			return Ok(());
@@ -1204,5 +1221,37 @@ impl Drop for Clipboard {
 				}
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn handover_without_clipboard_manager_returns_immediately() {
+		let clipboard = Clipboard::new().unwrap();
+		let inner = &clipboard.inner;
+
+		let manager = inner
+			.server
+			.conn
+			.get_selection_owner(inner.atoms.CLIPBOARD_MANAGER)
+			.unwrap()
+			.reply()
+			.unwrap()
+			.owner;
+		if manager != NONE {
+			// A clipboard manager is running, so the handover is expected to happen.
+			return;
+		}
+
+		clipboard
+			.set_text("handover".into(), LinuxClipboardKind::Clipboard, WaitConfig::None, false)
+			.unwrap();
+
+		let start = Instant::now();
+		inner.ask_clipboard_manager_to_request_our_data().unwrap();
+		assert!(start.elapsed() < MAX_HANDOVER_DURATION);
 	}
 }
