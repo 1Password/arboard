@@ -84,7 +84,7 @@ wl-clipboard-rs = { version = "0.9.3", optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = [
     "png",
 ] }
-parking_lot = "0.12"
+parking_lot = ">=0.12, <0.14"
 percent-encoding = "2.3.1"
 
 [[example]]

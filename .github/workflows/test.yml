@@ -56,6 +56,10 @@ jobs:
         if: ${{ matrix.rust_version == 'stable' }}
         run: cargo clippy --verbose --no-default-features --features wayland-data-control -- -D warnings -D clippy::dbg_macro
 
+      - name: Pin `parking_lot` to an MSRV-compatible version
+        if: ${{ matrix.rust_version != 'stable' }}
+        run: cargo update -p parking_lot --precise 0.12.5
+
       - name: Run `cargo clippy` with all features
         run: cargo clippy --verbose --all-features -- -D warnings -D clippy::dbg_macro
 
