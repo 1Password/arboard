@@ -770,6 +770,32 @@ impl Inner {
 			}
 		}
 
+		// Per the `ClipboardManager` specification, if nothing owns the `CLIPBOARD_MANAGER`
+		// selection then no clipboard manager is running and clipboard persistence isn't
+		// available.
+		//
+		// From https://freedesktop.org/wiki/ClipboardManager/#responsibilitiesofclipboardmanagers:
+		// > Clipboard managers will acquire ownership of a selection named CLIPBOARD_MANAGER
+		//
+		// From https://freedesktop.org/wiki/ClipboardManager/#responsibilitiesofclipboardowners:
+		// > If there is no clipboard manager, or if the SAVE_TARGETS conversion fails, the
+		// > application should simply exit.
+		//
+		// GTK performs the same check before it asks the clipboard manager to store the clipboard:
+		// https://gitlab.gnome.org/GNOME/gtk/-/blob/1ef7621a27abf0fb0f3aa719b895868b55766156/gdk/x11/gdkclipboard-x11.c#L645
+		let manager = self
+			.server
+			.conn
+			.get_selection_owner(self.atoms.CLIPBOARD_MANAGER)
+			.map_err(into_unknown)?
+			.reply()
+			.map_err(into_unknown)?
+			.owner;
+		if manager == NONE {
+			trace!("No clipboard manager is running, skipping the handover");
+			return Ok(());
+		}
+
 		// It's important that we lock the state before sending the request
 		// because we don't want the request server thread to lock the state
 		// after the request but before we can lock it here.
