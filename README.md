@@ -12,6 +12,34 @@ Linux, Mac, and Windows.
 
 Please note that this is not an official 1Password product. Feature requests will be considered like any other volunteer-based crate.
 
+## Diagnostics
+
+Arboard routes its diagnostic messages through `log`, including the debug-only
+clipboard ownership warning. The application controls the logger, output destination,
+and severity filter. Without an initialized logger, these messages produce no output.
+Errors returned by clipboard operations remain available through `Result`.
+
+For example, an application can configure `env_logger` to write arboard diagnostics
+to a file. Add `env_logger` and `log` to the application's dependencies.
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let file = std::fs::File::create("clipboard.log")?;
+    env_logger::Builder::new()
+        .filter_module("arboard", log::LevelFilter::Debug)
+        .target(env_logger::Target::Pipe(Box::new(file)))
+        .try_init()?;
+    Ok(())
+}
+```
+
+Initialize the logger once, before creating a clipboard. If the application already
+has a logger, configure that logger instead. This configuration does not capture
+native operating system diagnostics or panic output.
+
+Run `cargo run --example log_to_file -- clipboard.log` to try this configuration.
+The example replaces the clipboard text with a sample message.
+
 ## GNU/Linux
 
 ### Backend Support
