@@ -38,9 +38,7 @@ mod image_data {
 	use image::codecs::bmp::BmpDecoder;
 	use image::codecs::png::PngDecoder;
 	use image::codecs::png::PngEncoder;
-	use image::DynamicImage;
 	use image::ExtendedColorType;
-	use image::ImageDecoder;
 	use image::ImageEncoder;
 	use std::{convert::TryInto, mem::size_of, ptr::copy_nonoverlapping};
 	use windows_sys::Win32::{
@@ -195,10 +193,14 @@ mod image_data {
 		}
 	}
 
-	pub(super) fn read_cf_dibv5(dibv5: &mut [u8]) -> Result<ImageData<'static>, Error> {
+	pub(super) fn read_cf_dibv5(
+		dibv5: &mut [u8],
+		limits: crate::ImageLimits,
+	) -> Result<ImageData<'static>, Error> {
 		// The DIBV5 format is a BITMAPV5HEADER followed by the pixel data according to
 		// https://docs.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats
 
+		limits.check_encoded(dibv5.len())?;
 		let header_size = size_of::<BITMAPV5HEADER>();
 		if dibv5.len() < header_size {
 			return Err(Error::unknown("When reading the DIBV5 data, it contained fewer bytes than the BITMAPV5HEADER size. This is invalid."));
@@ -207,26 +209,39 @@ mod image_data {
 
 		let decoder = BmpDecoder::new_without_file_header(std::io::Cursor::new(&*dibv5))
 			.map_err(|_| Error::ConversionFailure)?;
-		let (width, height) = decoder.dimensions();
-		let bytes = DynamicImage::from_decoder(decoder)
-			.map_err(|_| Error::ConversionFailure)?
-			.into_rgba8()
-			.into_raw();
-
-		Ok(ImageData { width: width as usize, height: height as usize, bytes: bytes.into() })
+		crate::image_read::decode_pixels(decoder, limits)
 	}
 
-	pub(super) fn read_png(data: &[u8]) -> Result<ImageData<'static>, Error> {
-		let decoder =
-			PngDecoder::new(std::io::Cursor::new(data)).map_err(|_| Error::ConversionFailure)?;
-		let (width, height) = decoder.dimensions();
+	pub(super) fn read_png(
+		data: &[u8],
+		limits: crate::ImageLimits,
+	) -> Result<ImageData<'static>, Error> {
+		limits.check_encoded(data.len())?;
+		let decoder = PngDecoder::with_limits(
+			std::io::Cursor::new(data),
+			limits.decoder_limits(image::io::Limits::no_limits()),
+		)
+		.map_err(crate::image_read::decode_error)?;
+		crate::image_read::decode_pixels(decoder, limits)
+	}
 
-		let bytes = DynamicImage::from_decoder(decoder)
-			.map_err(|_| Error::ConversionFailure)?
-			.into_rgba8()
-			.into_raw();
+	pub(super) fn read_native(format: u32, limits: crate::ImageLimits) -> Result<Vec<u8>, Error> {
+		use windows_sys::Win32::System::{DataExchange::GetClipboardData, Memory::GlobalSize};
 
-		Ok(ImageData { width: width as usize, height: height as usize, bytes: bytes.into() })
+		// The caller holds the clipboard lock for this entire operation.
+		let handle = unsafe { GetClipboardData(format) } as HGLOBAL;
+		if handle.is_null() {
+			return Err(Error::unknown("failed to read clipboard image data"));
+		}
+		let size = unsafe { GlobalSize(handle) };
+		limits.check_encoded(size)?;
+		let data = unsafe { GlobalLock(handle) };
+		if data.is_null() {
+			return Err(Error::unknown("failed to lock clipboard image data"));
+		}
+		let _unlock = ScopeGuard::new(|| unsafe { global_unlock_checked(handle) });
+		// SAFETY: The locked allocation contains `size` bytes and remains locked during this copy.
+		Ok(unsafe { std::slice::from_raw_parts(data.cast::<u8>(), size) }.to_vec())
 	}
 
 	/// Converts the RGBA (u8) pixel data into the bitmap-native ARGB (u32)
@@ -370,6 +385,45 @@ mod image_data {
 		assert_eq!(data, DATA);
 	}
 
+	#[cfg(test)]
+	fn assert_dib_limits(raw: &[u8]) {
+		let limits = crate::ImageLimits {
+			max_encoded_bytes: Some(raw.len()),
+			max_width: Some(5),
+			max_height: Some(5),
+			max_decoded_bytes: Some(100),
+		};
+		assert_eq!(read_cf_dibv5(&mut raw.to_vec(), limits).unwrap().bytes.len(), 100);
+		for smaller in [
+			crate::ImageLimits { max_encoded_bytes: Some(raw.len() - 1), ..limits },
+			crate::ImageLimits { max_width: Some(4), ..limits },
+			crate::ImageLimits { max_height: Some(4), ..limits },
+			crate::ImageLimits { max_decoded_bytes: Some(99), ..limits },
+		] {
+			assert!(matches!(read_cf_dibv5(&mut raw.to_vec(), smaller), Err(Error::ImageTooLarge)));
+		}
+	}
+
+	#[test]
+	fn png_read_limits() {
+		let bytes = include_bytes!("../../tests/fixtures/red.png");
+		let limits = crate::ImageLimits {
+			max_encoded_bytes: Some(bytes.len()),
+			max_width: Some(3),
+			max_height: Some(2),
+			max_decoded_bytes: Some(24),
+		};
+		assert_eq!(read_png(bytes, limits).unwrap().bytes.len(), 24);
+		for smaller in [
+			crate::ImageLimits { max_encoded_bytes: Some(bytes.len() - 1), ..limits },
+			crate::ImageLimits { max_width: Some(2), ..limits },
+			crate::ImageLimits { max_height: Some(1), ..limits },
+			crate::ImageLimits { max_decoded_bytes: Some(23), ..limits },
+		] {
+			assert!(matches!(read_png(bytes, smaller), Err(Error::ImageTooLarge)));
+		}
+	}
+
 	#[test]
 	fn firefox_dibv5() {
 		// A 5x5 sample of https://commons.wikimedia.org/wiki/File:PNG_transparency_demonstration_1.png
@@ -385,8 +439,9 @@ mod image_data {
 			114, 56, 71, 123, 65, 0,
 		];
 
+		assert_dib_limits(&raw);
 		let before = raw.clone();
-		let image = read_cf_dibv5(&mut raw).unwrap();
+		let image = read_cf_dibv5(&mut raw, crate::ImageLimits::default()).unwrap();
 
 		// Not expecting any header fiddling to happen here. This is a bitmap in 24-bit format, with a header
 		// that says as much
@@ -424,8 +479,9 @@ mod image_data {
 			53, 152, 60, 114, 60, 162, 68, 123, 68, 174,
 		];
 
+		assert_dib_limits(&raw);
 		let before = raw.clone();
-		let image = read_cf_dibv5(&mut raw).unwrap();
+		let image = read_cf_dibv5(&mut raw, crate::ImageLimits::default()).unwrap();
 
 		// Chrome's header is dodgy. Expect that we fiddled with it.
 		assert_ne!(raw, before);
@@ -622,25 +678,22 @@ impl<'clipboard> Get<'clipboard> {
 	}
 
 	#[cfg(feature = "image-data")]
-	pub(crate) fn image(self) -> Result<ImageData<'static>, Error> {
+	pub(crate) fn image(self, limits: crate::ImageLimits) -> Result<ImageData<'static>, Error> {
 		let _clipboard_assertion = self.clipboard?;
-		let mut data = Vec::new();
 
 		let png_format: Option<u32> = clipboard_win::register_format("PNG").map(From::from);
 		if let Some(id) = png_format.filter(|&id| clipboard_win::is_format_avail(id)) {
 			// Looks like PNG is available! Let's try it
-			clipboard_win::raw::get_vec(id, &mut data)
-				.map_err(|_| Error::unknown("failed to read clipboard PNG data"))?;
-			return image_data::read_png(&data);
+			let data = image_data::read_native(id, limits)?;
+			return image_data::read_png(&data, limits);
 		}
 
 		if !clipboard_win::is_format_avail(clipboard_win::formats::CF_DIBV5) {
 			return Err(Error::ContentNotAvailable);
 		}
 
-		clipboard_win::raw::get_vec(clipboard_win::formats::CF_DIBV5, &mut data)
-			.map_err(|_| Error::unknown("failed to read clipboard image data"))?;
-		image_data::read_cf_dibv5(&mut data)
+		let mut data = image_data::read_native(clipboard_win::formats::CF_DIBV5, limits)?;
+		image_data::read_cf_dibv5(&mut data, limits)
 	}
 
 	pub(crate) fn file_list(self) -> Result<Vec<PathBuf>, Error> {

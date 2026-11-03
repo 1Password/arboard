@@ -18,6 +18,10 @@ use std::{
 pub use common::Error;
 #[cfg(feature = "image-data")]
 pub use common::ImageData;
+#[cfg(feature = "image-data")]
+mod image_read;
+#[cfg(feature = "image-data")]
+pub use crate::image_read::ImageLimits;
 
 mod platform;
 
@@ -164,7 +168,11 @@ impl Clipboard {
 
 	/// Begins a "get" operation to retrieve data from the clipboard.
 	pub fn get(&mut self) -> Get<'_> {
-		Get { platform: platform::Get::new(&mut self.platform) }
+		Get {
+			platform: platform::Get::new(&mut self.platform),
+			#[cfg(feature = "image-data")]
+			image_limits: ImageLimits::default(),
+		}
 	}
 
 	/// Begins a "set" operation to set the clipboard's contents.
@@ -182,6 +190,8 @@ impl Clipboard {
 #[must_use]
 pub struct Get<'clipboard> {
 	pub(crate) platform: platform::Get<'clipboard>,
+	#[cfg(feature = "image-data")]
+	image_limits: ImageLimits,
 }
 
 impl Get<'_> {
@@ -198,7 +208,17 @@ impl Get<'_> {
 	/// other application will be of a supported format.
 	#[cfg(feature = "image-data")]
 	pub fn image(self) -> Result<ImageData<'static>, Error> {
-		self.platform.image()
+		self.platform.image(self.image_limits)
+	}
+
+	/// Sets limits for this image read. Text and other reads ignore these limits.
+	///
+	/// An image that exceeds a limit returns [`Error::ImageTooLarge`].
+	/// See [`ImageLimits`] for the exact bounds and platform restrictions.
+	#[cfg(feature = "image-data")]
+	pub fn image_limits(mut self, limits: ImageLimits) -> Self {
+		self.image_limits = limits;
+		self
 	}
 
 	/// Completes the "get" operation by fetching HTML from the clipboard.
@@ -408,6 +428,25 @@ mod tests {
 			ctx.set_image(img_data.clone()).unwrap();
 			let got = ctx.get_image().unwrap();
 			assert_eq!(img_data.bytes, got.bytes);
+			let limits = ImageLimits {
+				max_encoded_bytes: None,
+				max_width: Some(2),
+				max_height: Some(2),
+				max_decoded_bytes: Some(16),
+			};
+			assert_eq!(ctx.get().image_limits(limits).image().unwrap().bytes, img_data.bytes);
+			for smaller in [
+				ImageLimits { max_encoded_bytes: Some(0), ..limits },
+				ImageLimits { max_width: Some(1), ..limits },
+				ImageLimits { max_height: Some(1), ..limits },
+				ImageLimits { max_decoded_bytes: Some(15), ..limits },
+			] {
+				assert!(matches!(
+					ctx.get().image_limits(smaller).image(),
+					Err(Error::ImageTooLarge)
+				));
+			}
+			assert_eq!(ctx.get_image().unwrap().bytes, img_data.bytes);
 
 			#[rustfmt::skip]
 			let big_bytes = vec![
