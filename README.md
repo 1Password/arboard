@@ -87,6 +87,31 @@ fn main() {
 }
 ```
 
+## Linux integration tests
+
+The Linux integration tests exchange clipboard data with independent native clients.
+They require an isolated display and replace its clipboard contents.
+The script also runs library tests under the isolated display. It excludes the legacy
+`tests::all_tests` aggregate, which assumes a clipboard manager. Native macOS and
+Windows CI still run that aggregate.
+
+Build the test container:
+
+```sh
+docker build -t arboard-linux-tests -f .github/containers/linux-tests.Dockerfile .
+```
+
+Run the X11 tests:
+
+```sh
+docker run --rm -v "$PWD:/workspace:ro" \
+    -e CARGO_TARGET_DIR=/home/tester/target arboard-linux-tests \
+    bash .github/scripts/linux-clipboard-tests.sh x11 --all-features
+```
+
+Replace `x11` with `wayland` to run the same tests under a headless compositor.
+Missing clients, unavailable protocols, and compositor startup failures fail the tests.
+
 ## Credits
 
 This crate is a combined effort by 1Password staff and `@ArturKovacs`, the crate's past
