@@ -18,7 +18,12 @@ image-data = [
     "windows-sys",
     "core-graphics",
 ]
-wayland-data-control = ["wl-clipboard-rs"]
+wayland-data-control = [
+    "wl-clipboard-rs",
+    "dep:wayland-client",
+    "dep:wayland-protocols",
+    "dep:wayland-protocols-wlr",
+]
 
 # For backwards compat
 core-graphics = ["dep:objc2-core-graphics"]
@@ -79,8 +84,11 @@ image = { version = "0.25", optional = true, default-features = false, features 
 
 [target.'cfg(all(unix, not(any(target_os="macos", target_os="android", target_os="emscripten"))))'.dependencies]
 log = "0.4"
-x11rb = { version = "0.13" }
+x11rb = { version = "0.13", features = ["xfixes"] }
 wl-clipboard-rs = { version = "0.9.3", optional = true }
+wayland-client = { version = "0.31.11", optional = true }
+wayland-protocols = { version = "0.32.9", features = ["client", "staging"], optional = true }
+wayland-protocols-wlr = { version = "0.3.9", features = ["client"], optional = true }
 image = { version = "0.25", optional = true, default-features = false, features = [
     "png",
 ] }

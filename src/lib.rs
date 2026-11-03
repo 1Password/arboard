@@ -21,6 +21,9 @@ pub use common::ImageData;
 
 mod platform;
 
+mod watcher;
+pub use watcher::{ClipboardEvent, ClipboardWatcher};
+
 #[cfg(all(
 	unix,
 	not(any(target_os = "macos", target_os = "android", target_os = "emscripten")),
