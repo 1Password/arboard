@@ -11,6 +11,7 @@ and conditions of the chosen license apply to this file.
 #[cfg(feature = "image-data")]
 use crate::common::ImageData;
 use crate::common::{private, Error};
+use crate::{formats::push_unique, ClipboardContent, ClipboardFormat};
 use objc2::{
 	msg_send,
 	rc::{autoreleasepool, Retained},
@@ -18,15 +19,44 @@ use objc2::{
 	ClassType,
 };
 use objc2_app_kit::{
-	NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString,
+	NSPasteboard, NSPasteboardItem, NSPasteboardTypeHTML, NSPasteboardTypeString,
 	NSPasteboardURLReadingFileURLsOnlyKey,
 };
-use objc2_foundation::{ns_string, NSArray, NSDictionary, NSNumber, NSString, NSURL};
+use objc2_foundation::{ns_string, NSArray, NSData, NSDictionary, NSNumber, NSString, NSURL};
 use std::{
 	borrow::Cow,
 	panic::{RefUnwindSafe, UnwindSafe},
 	path::{Path, PathBuf},
 };
+
+fn canonical_item_type(name: &Retained<NSString>) -> Result<Retained<NSString>, Error> {
+	#[link(name = "CoreServices", kind = "framework")]
+	extern "C" {
+		static kUTTagClassNSPboardType: *const NSString;
+		fn UTTypeCreatePreferredIdentifierForTag(
+			tag_class: *const NSString,
+			tag: *const NSString,
+			conforming_to: *const NSString,
+		) -> *mut NSString;
+		fn UTTypeIsDynamic(identifier: *const NSString) -> u8;
+	}
+
+	// CFString and NSString are toll-free bridged. The Create rule transfers ownership.
+	let identifier = unsafe {
+		Retained::from_raw(UTTypeCreatePreferredIdentifierForTag(
+			kUTTagClassNSPboardType,
+			&**name,
+			std::ptr::null(),
+		))
+	}
+	.ok_or(Error::ConversionFailure)?;
+	// Unknown tags produce dynamic UTIs. Keep their original native identities instead.
+	if unsafe { UTTypeIsDynamic(&*identifier) } != 0 {
+		Ok(name.clone())
+	} else {
+		Ok(identifier)
+	}
+}
 
 /// Returns an NSImage object on success.
 #[cfg(feature = "image-data")]
@@ -100,6 +130,14 @@ fn image_from_pixels(
 
 pub(crate) struct Clipboard {
 	pasteboard: Retained<NSPasteboard>,
+}
+
+pub(crate) fn register_format(name: &str) -> Result<ClipboardFormat, Error> {
+	Ok(ClipboardFormat { native: name.to_owned() })
+}
+
+pub(crate) fn format_name(format: &ClipboardFormat) -> Result<Option<String>, Error> {
+	Ok(Some(format.native.clone()))
 }
 
 unsafe impl Send for Clipboard {}
@@ -212,6 +250,28 @@ impl<'clipboard> Get<'clipboard> {
 		Self { clipboard }
 	}
 
+	pub(crate) fn formats(self) -> Result<Vec<ClipboardFormat>, Error> {
+		autoreleasepool(|_| {
+			Ok(unsafe { self.clipboard.pasteboard.types() }
+				.map(|types| {
+					types.iter().map(|name| ClipboardFormat { native: name.to_string() }).collect()
+				})
+				.unwrap_or_default())
+		})
+	}
+
+	pub(crate) fn raw(self, format: &ClipboardFormat) -> Result<Vec<u8>, Error> {
+		autoreleasepool(|_| {
+			let name = NSString::from_str(&format.native);
+			// NSPasteboard also resolves legacy names returned by types().
+			// NSPasteboardItem accepts only UTI names.
+			let data = unsafe { self.clipboard.pasteboard.dataForType(&name) }
+				.ok_or(Error::ContentNotAvailable)?;
+			// The retained data remains alive and unchanged during the copy.
+			Ok(unsafe { data.as_bytes_unchecked() }.to_vec())
+		})
+	}
+
 	pub(crate) fn text(self) -> Result<String, Error> {
 		unsafe { self.clipboard.string_from_type(NSPasteboardTypeString) }
 	}
@@ -286,6 +346,123 @@ pub(crate) struct Set<'clipboard> {
 impl<'clipboard> Set<'clipboard> {
 	pub(crate) fn new(clipboard: &'clipboard mut Clipboard) -> Self {
 		Self { clipboard, exclude_from_history: false }
+	}
+
+	pub(crate) fn formats(self, contents: Vec<ClipboardContent<'_>>) -> Result<(), Error> {
+		if contents.is_empty() {
+			return Err(Error::InvalidFormat);
+		}
+		autoreleasepool(|_| {
+			let mut data = Vec::new();
+			let mut additional_files = Vec::new();
+			for content in contents {
+				let (format, bytes) = match content {
+					ClipboardContent::Text(text) => (
+						ClipboardFormat::register("public.utf8-plain-text")?,
+						text.into_owned().into_bytes(),
+					),
+					ClipboardContent::Html(html) => {
+						let html = format!(
+							r#"<html><head><meta http-equiv="content-type" content="text/html; charset=utf-8"></head><body>{html}</body></html>"#
+						);
+						(ClipboardFormat::register("public.html")?, html.into_bytes())
+					}
+					ClipboardContent::Rtf(bytes) => (ClipboardFormat::rtf()?, bytes.into_owned()),
+					#[cfg(feature = "image-data")]
+					ClipboardContent::Image(image) => {
+						crate::formats::validate_image(&image)?;
+						let image =
+							image_from_pixels(image.bytes.into_owned(), image.width, image.height)?;
+						let tiff = unsafe { image.TIFFRepresentation() }
+							.ok_or(Error::ConversionFailure)?;
+						// The immutable TIFF data remains alive throughout this copy.
+						(
+							ClipboardFormat::register("public.tiff")?,
+							unsafe { tiff.as_bytes_unchecked() }.to_vec(),
+						)
+					}
+					ClipboardContent::Files(files) => {
+						let urls = files
+							.iter()
+							.map(|path| {
+								let path =
+									path.canonicalize().map_err(|_| Error::ConversionFailure)?;
+								let path = path.to_str().ok_or(Error::ConversionFailure)?;
+								let url =
+									unsafe { NSURL::fileURLWithPath(&NSString::from_str(path)) };
+								let text = unsafe { url.absoluteString() }
+									.ok_or(Error::ConversionFailure)?;
+								Ok(text.to_string().into_bytes())
+							})
+							.collect::<Result<Vec<_>, Error>>()?;
+						let mut urls = urls.into_iter();
+						let first = urls.next().ok_or(Error::ConversionFailure)?;
+						additional_files.extend(urls);
+						(ClipboardFormat::register("public.file-url")?, first)
+					}
+					ClipboardContent::Raw(format, bytes) => (format, bytes.into_owned()),
+				};
+				push_unique(&mut data, format, bytes)?;
+			}
+			if self.exclude_from_history {
+				push_unique(
+					&mut data,
+					ClipboardFormat::register("org.nspasteboard.ConcealedType")?,
+					Vec::new(),
+				)?;
+			}
+			let prepared: Vec<_> = data
+				.into_iter()
+				.map(|(format, bytes)| {
+					(NSString::from_str(&format.native), NSData::with_bytes(&bytes))
+				})
+				.collect();
+			if !additional_files.is_empty() {
+				let first = unsafe { NSPasteboardItem::new() };
+				for (name, bytes) in &prepared {
+					let name = canonical_item_type(name)?;
+					if !unsafe { first.setData_forType(bytes, &name) } {
+						return Err(Error::UnsupportedFormat);
+					}
+				}
+				let mut items = vec![ProtocolObject::from_retained(first)];
+				for url in additional_files {
+					let item = unsafe { NSPasteboardItem::new() };
+					if !unsafe {
+						item.setData_forType(
+							&NSData::with_bytes(&url),
+							ns_string!("public.file-url"),
+						)
+					} {
+						return Err(Error::UnsupportedFormat);
+					}
+					if self.exclude_from_history
+						&& !unsafe {
+							item.setData_forType(
+								&NSData::with_bytes(&[]),
+								ns_string!("org.nspasteboard.ConcealedType"),
+							)
+						} {
+						return Err(Error::UnsupportedFormat);
+					}
+					items.push(ProtocolObject::from_retained(item));
+				}
+				let items = NSArray::from_retained_slice(&items);
+				self.clipboard.clear();
+				return if unsafe { self.clipboard.pasteboard.writeObjects(&items) } {
+					Ok(())
+				} else {
+					Err(Error::unknown("NSPasteboard#writeObjects: returned false"))
+				};
+			}
+			self.clipboard.clear();
+			for (name, bytes) in prepared {
+				if !unsafe { self.clipboard.pasteboard.setData_forType(Some(&bytes), &name) } {
+					return Err(Error::unknown("NSPasteboard#setData:forType: returned false"));
+				}
+			}
+			Ok(())
+		})
 	}
 
 	pub(crate) fn text(self, data: Cow<'_, str>) -> Result<(), Error> {

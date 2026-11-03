@@ -18,6 +18,15 @@ use std::borrow::Cow;
 /// gives a more detailed explanation for each error kind.
 #[non_exhaustive]
 pub enum Error {
+	/// The native format name or identifier is invalid, or a format write is empty.
+	InvalidFormat,
+
+	/// The native format does not support raw byte access.
+	UnsupportedFormat,
+
+	/// A combined write contains the same native format more than once.
+	DuplicateFormat,
+
 	/// The clipboard contents were not available in the requested format.
 	/// This could either be due to the clipboard being empty or the clipboard contents having
 	/// an incompatible format to the requested one (eg when calling `get_image` on text)
@@ -55,6 +64,9 @@ pub enum Error {
 impl std::fmt::Display for Error {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
+			Error::InvalidFormat => f.write_str("The native clipboard format is invalid."),
+			Error::UnsupportedFormat => f.write_str("The native clipboard format does not support raw byte access."),
+			Error::DuplicateFormat => f.write_str("The write contains a duplicate clipboard format."),
 			Error::ContentNotAvailable => f.write_str("The clipboard contents were not available in the requested format or the clipboard is empty."),
 			Error::ClipboardNotSupported => f.write_str("The selected clipboard is not supported with the current system configuration."),
 			Error::ClipboardOccupied => f.write_str("The native clipboard is not accessible due to being held by another party."),
@@ -79,6 +91,9 @@ impl std::fmt::Debug for Error {
 			}
 		}
 		let name = kind_to_str!(
+			InvalidFormat,
+			UnsupportedFormat,
+			DuplicateFormat,
 			ContentNotAvailable,
 			ClipboardNotSupported,
 			ClipboardOccupied,
