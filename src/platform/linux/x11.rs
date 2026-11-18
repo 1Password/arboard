@@ -29,12 +29,12 @@ use std::{
 use log::{error, trace, warn};
 use parking_lot::{Condvar, Mutex, MutexGuard, RwLock};
 use x11rb::{
-	connection::Connection,
+	connection::{Connection, RequestConnection as _},
 	protocol::{
 		xproto::{
-			Atom, AtomEnum, ConnectionExt as _, CreateWindowAux, EventMask, PropMode, Property,
-			PropertyNotifyEvent, SelectionNotifyEvent, SelectionRequestEvent, Time, WindowClass,
-			SELECTION_NOTIFY_EVENT,
+			Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, CreateWindowAux,
+			EventMask, PropMode, Property, PropertyNotifyEvent, SelectionNotifyEvent,
+			SelectionRequestEvent, Time, Window, WindowClass, SELECTION_NOTIFY_EVENT,
 		},
 		Event,
 	},
@@ -102,6 +102,13 @@ thread_local! {
 // `SelectionNotify`. Multiple seconds long.
 const LONG_TIMEOUT_DUR: Duration = Duration::from_millis(4000);
 const SHORT_TIMEOUT_DUR: Duration = Duration::from_millis(10);
+/// How long a requestor may take to ask for the next part of an INCR transfer before we give up on it.
+const INCR_TIMEOUT_DUR: Duration = LONG_TIMEOUT_DUR;
+/// Room for the `ChangeProperty` request's own fields (24 bytes, 28 with BIG-REQUESTS), rounded up.
+const CHANGE_PROPERTY_HEADER_BYTES: usize = 32;
+/// The size of each part of an INCR transfer, as in GTK. Readers wait only a short time for the next part
+/// (ours `SHORT_TIMEOUT_DUR`), so a part must be quick to write.
+const INCR_PART_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 enum ManagerHandoverState {
@@ -199,6 +206,22 @@ struct ClipboardData {
 
 	/// The atom representing the format in which the data is encoded.
 	format: Atom,
+}
+
+/// Data too large for one `ChangeProperty` request, being sent to a requestor in parts with the
+/// INCR protocol (ICCCM 2.7.2). The requestor deletes the property each time it has read a part.
+struct IncrTransfer {
+	requestor: Window,
+	property: Atom,
+	selection: Atom,
+	target: Atom,
+	data: Vec<u8>,
+	/// How many bytes of `data` were written so far. Once all of it was, an empty part ends the transfer.
+	sent: usize,
+	/// Our last write to the property has not come back as a `NewValue` event yet. A `Delete` before it was
+	/// for an older value of the property, not a request for the next part.
+	awaiting_new_value: bool,
+	last_activity: Instant,
 }
 
 enum ReadSelNotifyResult {
@@ -600,16 +623,29 @@ impl Inner {
 		Ok(false)
 	}
 
-	fn handle_selection_request(&self, event: SelectionRequestEvent) -> Result<()> {
+	/// The most data a single `ChangeProperty` request can carry on this connection.
+	fn max_property_bytes(&self) -> usize {
+		self.server.conn.maximum_request_bytes().saturating_sub(CHANGE_PROPERTY_HEADER_BYTES)
+	}
+
+	/// Answers a selection request. Returns `Ok(false)` when the data is too large for one request and an
+	/// INCR transfer was started instead (it was added to `incr`), and `Ok(true)` when the request is done.
+	/// The caller drops any transfer still pending into the same property first.
+	fn handle_selection_request(
+		&self,
+		event: SelectionRequestEvent,
+		incr: &mut Vec<IncrTransfer>,
+	) -> Result<bool> {
 		let selection = match self.kind_of(event.selection) {
 			Some(kind) => kind,
 			None => {
 				warn!("Received a selection request to a selection other than the CLIPBOARD, PRIMARY or SECONDARY. This is unexpected.");
-				return Ok(());
+				return Ok(true);
 			}
 		};
 
 		let success;
+		let mut done = true;
 		// we are asked for a list of supported conversion targets
 		if event.target == self.atoms.TARGETS {
 			trace!("Handling TARGETS, dst property is {}", self.atom_name_dbg(event.property));
@@ -672,6 +708,45 @@ impl Inner {
 			let data = self.selection_of(selection).data.read();
 			if let Some(data_list) = &*data {
 				success = match data_list.iter().find(|d| d.format == event.target) {
+					Some(data) if data.bytes.len() > self.max_property_bytes() => {
+						trace!("Starting an INCR transfer of {} bytes", data.bytes.len());
+						// We need to see when the requestor deletes the property, so select that before
+						// it can happen. Only that: `serve_requests` takes any `DestroyNotify` to mean
+						// that our own window is gone.
+						self.server
+							.conn
+							.change_window_attributes(
+								event.requestor,
+								&ChangeWindowAttributesAux::new()
+									.event_mask(EventMask::PROPERTY_CHANGE),
+							)
+							.map_err(into_unknown)?;
+						// The value of an INCR property is a lower bound on the size of the data.
+						let size = u32::try_from(data.bytes.len()).unwrap_or(u32::MAX);
+						self.server
+							.conn
+							.change_property32(
+								PropMode::REPLACE,
+								event.requestor,
+								event.property,
+								self.atoms.INCR,
+								&[size],
+							)
+							.map_err(into_unknown)?;
+						self.server.conn.flush().map_err(into_unknown)?;
+						incr.push(IncrTransfer {
+							requestor: event.requestor,
+							property: event.property,
+							selection: event.selection,
+							target: event.target,
+							data: data.bytes.clone(),
+							sent: 0,
+							awaiting_new_value: true,
+							last_activity: Instant::now(),
+						});
+						done = false;
+						true
+					}
 					Some(data) => {
 						self.server
 							.conn
@@ -716,6 +791,41 @@ impl Inner {
 			)
 			.map_err(into_unknown)?;
 
+		self.server.conn.flush().map_err(into_unknown)?;
+		Ok(done)
+	}
+
+	/// Sends the next part of an INCR transfer after the requestor deleted the property.
+	/// Returns `Ok(true)` once the final, empty part was sent.
+	fn continue_incr(&self, transfer: &mut IncrTransfer) -> Result<bool> {
+		let rest = &transfer.data[transfer.sent..];
+		let part = &rest[..rest.len().min(INCR_PART_BYTES).min(self.max_property_bytes())];
+		self.server
+			.conn
+			.change_property8(
+				PropMode::REPLACE,
+				transfer.requestor,
+				transfer.property,
+				transfer.target,
+				part,
+			)
+			.map_err(into_unknown)?;
+		self.server.conn.flush().map_err(into_unknown)?;
+		transfer.sent += part.len();
+		transfer.awaiting_new_value = true;
+		transfer.last_activity = Instant::now();
+		Ok(part.is_empty())
+	}
+
+	/// Stops the `PropertyNotify` events we selected on a requestor's window for INCR transfers.
+	fn stop_watching(&self, requestor: Window) -> Result<()> {
+		self.server
+			.conn
+			.change_window_attributes(
+				requestor,
+				&ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT),
+			)
+			.map_err(into_unknown)?;
 		self.server.conn.flush().map_err(into_unknown)
 	}
 
@@ -844,6 +954,62 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 		clip.handover_cv.notify_all();
 	}
 
+	// Removes the INCR transfers `keep` rejects, and stops watching each window no transfer is left for.
+	fn forget(context: &Inner, incr: &mut Vec<IncrTransfer>, keep: impl Fn(&IncrTransfer) -> bool) {
+		let mut windows = Vec::new();
+		incr.retain(|t| {
+			keep(t) || {
+				windows.push(t.requestor);
+				false
+			}
+		});
+		windows.sort_unstable();
+		windows.dedup();
+		for window in windows {
+			if !incr.iter().any(|t| t.requestor == window) {
+				if let Err(e) = context.stop_watching(window) {
+					warn!("Failed to stop watching an INCR requestor: {e}");
+				}
+			}
+		}
+	}
+
+	// What happens once a requestor has all the data it asked for.
+	fn served(
+		context: &Arc<Inner>,
+		selection: Atom,
+		target: Atom,
+		written: &mut bool,
+		notified: bool,
+	) {
+		if let Some(selection) = context.kind_of(selection) {
+			let selection = context.selection_of(selection);
+
+			// It is important that this mutex is locked at the time of calling
+			// `notify_all` to prevent notifications getting lost in case the sleeping
+			// thread has unlocked its `data_guard` and is just about to sleep.
+			let _guard = selection.mutex.lock();
+			// Notify a thread that's waiting on the data to be served once.
+			selection.data_served.notify_all();
+		}
+
+		// if we are in the progress of saving to the clipboard manager
+		// make sure we save that we have finished writing
+		let handover_state = context.handover_state.lock();
+		if *handover_state == ManagerHandoverState::InProgress {
+			// Only set written, when the actual contents were written,
+			// not just a response to what TARGETS we have.
+			if target != context.atoms.TARGETS {
+				trace!("The contents were written to the clipboard manager.");
+				*written = true;
+				// if we have written and notified, make sure to notify that we are done
+				if notified {
+					handover_finished(context, handover_state);
+				}
+			}
+		}
+	}
+
 	trace!("Started serve requests thread.");
 
 	let _guard = ScopeGuard::new(|| {
@@ -852,9 +1018,23 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 
 	let mut written = false;
 	let mut notified = false;
+	let mut incr: Vec<IncrTransfer> = Vec::new();
 
 	loop {
-		match context.server.conn.wait_for_event().map_err(into_unknown)? {
+		let event = context.server.conn.wait_for_event().map_err(into_unknown)?;
+		// A requestor that stopped reading an INCR transfer won't send more events for it. The transfer this
+		// event is for is kept: its requestor is still reading.
+		if !incr.is_empty() {
+			let current = match &event {
+				Event::PropertyNotify(e) => Some((e.window, e.atom)),
+				_ => None,
+			};
+			forget(&context, &mut incr, |t| {
+				Some((t.requestor, t.property)) == current
+					|| t.last_activity.elapsed() < INCR_TIMEOUT_DUR
+			});
+		}
+		match event {
 			Event::DestroyNotify(_) => {
 				// This window is being destroyed.
 				trace!("Clipboard server window is being destroyed x_x");
@@ -889,36 +1069,47 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
 					context.atom_name_dbg(event.selection),
 					context.atom_name_dbg(event.target),
 				);
+				// A new request into a property ends any transfer still pending there.
+				forget(&context, &mut incr, |t| {
+					(t.requestor, t.property) != (event.requestor, event.property)
+				});
 				// Someone is requesting the clipboard content from us.
-				if let Err(e) = context.handle_selection_request(event) {
-					error!("Failed to handle selection request: {e}");
+				match context.handle_selection_request(event, &mut incr) {
+					Ok(true) => {
+						served(&context, event.selection, event.target, &mut written, notified)
+					}
+					// The data is sent in parts as the requestor reads them, see `PropertyNotify` below.
+					Ok(false) => {}
+					Err(e) => error!("Failed to handle selection request: {e}"),
+				}
+			}
+			// Our write to the property of an INCR transfer arrived.
+			Event::PropertyNotify(event) if event.state == Property::NEW_VALUE => {
+				let key = (event.window, event.atom);
+				if let Some(t) = incr.iter_mut().find(|t| (t.requestor, t.property) == key) {
+					t.awaiting_new_value = false;
+				}
+			}
+			// A requestor read a part of an INCR transfer and deleted the property, asking for the next.
+			Event::PropertyNotify(event) if event.state == Property::DELETE => {
+				let Some(i) = incr.iter().position(|t| {
+					(t.requestor, t.property) == (event.window, event.atom) && !t.awaiting_new_value
+				}) else {
 					continue;
-				}
-
-				if let Some(selection) = context.kind_of(event.selection) {
-					let selection = context.selection_of(selection);
-
-					// It is important that this mutex is locked at the time of calling
-					// `notify_all` to prevent notifications getting lost in case the sleeping
-					// thread has unlocked its `data_guard` and is just about to sleep.
-					let _guard = selection.mutex.lock();
-					// Notify a thread that's waiting on the data to be served once.
-					selection.data_served.notify_all();
-				}
-
-				// if we are in the progress of saving to the clipboard manager
-				// make sure we save that we have finished writing
-				let handover_state = context.handover_state.lock();
-				if *handover_state == ManagerHandoverState::InProgress {
-					// Only set written, when the actual contents were written,
-					// not just a response to what TARGETS we have.
-					if event.target != context.atoms.TARGETS {
-						trace!("The contents were written to the clipboard manager.");
-						written = true;
-						// if we have written and notified, make sure to notify that we are done
-						if notified {
-							handover_finished(&context, handover_state);
-						}
+				};
+				let result = context.continue_incr(&mut incr[i]);
+				let (selection, target, sent) = (incr[i].selection, incr[i].target, incr[i].sent);
+				let key = (event.window, event.atom);
+				match result {
+					Ok(false) => {}
+					Ok(true) => {
+						trace!("Finished an INCR transfer of {sent} bytes");
+						forget(&context, &mut incr, |t| (t.requestor, t.property) != key);
+						served(&context, selection, target, &mut written, notified);
+					}
+					Err(e) => {
+						error!("Failed to send the next part of an INCR transfer: {e}");
+						forget(&context, &mut incr, |t| (t.requestor, t.property) != key);
 					}
 				}
 			}
