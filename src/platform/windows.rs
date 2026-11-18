@@ -903,12 +903,12 @@ fn wrap_html(ctn: &str) -> String {
 	let h_end_frag = "\r\nEndFragment:";
 	let c_start_frag = "\r\n<html>\r\n<body>\r\n<!--StartFragment-->\r\n";
 	let c_end_frag = "\r\n<!--EndFragment-->\r\n</body>\r\n</html>";
+	// Each of the four offsets is written as 10 digits.
 	let h_len = h_version.len()
-		+ h_start_html.len()
-		+ 10 + h_end_html.len()
-		+ 10 + h_start_frag.len()
-		+ 10 + h_end_frag.len()
-		+ 10;
+		+ (h_start_html.len() + 10)
+		+ (h_end_html.len() + 10)
+		+ (h_start_frag.len() + 10)
+		+ (h_end_frag.len() + 10);
 	let n_start_html = h_len + 2;
 	let n_start_frag = h_len + c_start_frag.len();
 	let n_end_frag = n_start_frag + ctn.len();
